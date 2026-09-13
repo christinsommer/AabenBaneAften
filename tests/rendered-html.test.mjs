@@ -29,7 +29,7 @@ test("Cloudflare Worker renders and authenticates against isolated D1", { timeou
     await db.prepare("INSERT INTO match_requests (event_id,creator_player_id,invited_member_nos,accepted_player_ids) SELECT id,1,'[\"test-player\",\"someone\",\"another\"]','[1,2]' FROM events WHERE date='2026-09-11'").run();
     await db.prepare("INSERT INTO substitutions (event_id,match_id,outgoing_player_id,replacement_player_id,status) SELECT event_id,id,1,2,'replaced' FROM matches LIMIT 1").run();
     await db.prepare("INSERT INTO feedback (match_id,author_player_id,subject_player_id,balance) SELECT id,1,2,'even' FROM matches LIMIT 1").run();
-    const resetToken = "reset-flow-token-123";
+    const resetToken = "a".repeat(64);
     await db.prepare("INSERT INTO pin_reset_tokens (player_id, token_hash, expires_at) VALUES (?, ?, ?)")
       .bind(1, await hashToken(resetToken), new Date(Date.now() + 60 * 60 * 1000).toISOString())
       .run();
@@ -65,14 +65,17 @@ test("Cloudflare Worker renders and authenticates against isolated D1", { timeou
     assert.equal(badLogin.status, 401);
     const login = await post({ action: "login", memberNo: "13993", pin: "987654" });
     assert.equal(login.status, 200);
-    const cookie = login.headers.get("set-cookie")?.split(";")[0];
+    let cookie = login.headers.get("set-cookie")?.split(";")[0];
     assert.ok(cookie);
     const resetLink = await post({ action: "request_pin_reset", memberNo: "13993" });
-    assert.equal(resetLink.status, 200);
+    assert.equal(resetLink.status, 502); // Mail is deliberately disabled in this isolated Worker.
     const pinReset = await post({ action: "reset_pin", token: resetToken, pin: "4321", confirmPin: "4321" });
     assert.equal(pinReset.status, 200);
     const loginWithNewPin = await post({ action: "login", memberNo: "13993", pin: "4321" });
     assert.equal(loginWithNewPin.status, 200);
+    assert.equal((await (await worker.fetch('/api/app', { headers: { cookie } })).json()).authenticated, false);
+    cookie = loginWithNewPin.headers.get("set-cookie")?.split(";")[0];
+    assert.ok(cookie);
     const state = await login.json();
     assert.equal(state.calendarDates.length,34);
     assert.equal((await post({action:'add_date',date:'2099-05-04'},cookie)).status,200);

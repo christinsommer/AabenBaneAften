@@ -11,7 +11,8 @@
         "title":  "Pladser og venteliste",
         "paragraphs":  [
                            "Pladser fordeles efter først til mølle. Derefter oprettes venteliste.",
-                           "Alle skal så vidt muligt have én kamp, før nogen får to kampe.",
+                           "Alle skal så vidt muligt have én kamp, før nogen får to kampe. Tætte kampe prioriteres frem for flere kampe.",
+                           "Kampplanen laves ud fra niveauer, således at vi får så jævnbyrdige kampe som muligt, derfor spiller alle ikke lige meget.",
                            "Spillere på ventelisten prioriteres, før andre får en ekstra kamp."
                        ]
     },

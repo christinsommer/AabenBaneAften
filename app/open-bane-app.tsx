@@ -221,7 +221,7 @@ function AuthScreen({ mode, setMode, act, busy, error, event, resetToken }: any)
           </div>
           <div className="relative z-10">
             <img
-              src="/AppTennisLogo.png"
+              src="/hik-logo-clean.png"
               alt="Tennis"
               className="hik-logo-image mb-4 h-24 w-auto object-contain"
             />
@@ -243,7 +243,7 @@ function AuthScreen({ mode, setMode, act, busy, error, event, resetToken }: any)
               Enkel tilmelding
             </h1>
             <p className="mt-5 max-w-sm text-lg leading-7 text-white/80">
-              Fredagstennis med niveau, mix og gode kampe i centrum.
+              Tennisaften med niveau, mix og gode kampe i centrum.
             </p>
             <RulesDialog light />
           </div>
