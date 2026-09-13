@@ -88,33 +88,41 @@ export async function POST(request:Request){
     const db=getDb(); const body=await request.json() as Record<string,any>; const action=String(body.action??"");
     if(action==="request_pin_reset"){
       const memberNo=String(body.memberNo??"").trim();
-      if(!memberNo)return Response.json({error:"Indtast et medlemsnummer."},{status:400});
-      const [player]=await db.select({id:players.id,email:players.email}).from(players).where(eq(players.memberNo,memberNo)).limit(1);
-      if(!player)return Response.json({error:"Medlemsnummeret findes ikke i appen."},{status:404});
-      const token=crypto.randomUUID();
-      const expiresAt=new Date(Date.now()+60*60*1000).toISOString();
-      await db.insert(pinResetTokens).values({playerId:player.id,tokenHash:await hashToken(token),expiresAt});
-      try {
-        await sendEmail(resetLinkEmail(player.email, token));
-      } catch {
-        return Response.json({ ok: true, warning: "Der blev oprettet et reset-link, men e-mailen kunne ikke sendes i dette miljø." });
+      if(!memberNo)return Response.json({error:"Angiv dit medlemsnummer."},{status:400});
+      const [player]=await db.select().from(players).where(eq(players.memberNo,memberNo)).limit(1);
+      // Do not reveal whether a membership number exists.
+      if(!player || !player.email.trim())return Response.json({ok:true});
+      const token=Array.from(crypto.getRandomValues(new Uint8Array(32)),b=>b.toString(16).padStart(2,"0")).join("");
+      const tokenHash=await hashToken(token);
+      await db.insert(pinResetTokens).values({playerId:player.id,tokenHash,expiresAt:new Date(Date.now()+30*60*1000).toISOString()});
+      // Use the configured public site, never an untrusted Host header.
+      const link=`https://aabenbaneaften.dk/?reset=${token}`;
+      try{
+        await sendEmail({to:player.email,subject:"Vælg en ny PIN-kode til Åben Bane Aften",
+          text:`Du har bedt om en ny PIN-kode. Åbn dette link for at vælge en ny kode: ${link}\nLinket kan bruges én gang og udløber om 30 minutter. Hvis du ikke har bedt om dette, kan du ignorere e-mailen.`,
+          html:`<p>Du har bedt om en ny PIN-kode til Åben Bane Aften.</p><p><a href="${link}">Vælg en ny PIN-kode</a></p><p>Linket kan bruges én gang og udløber om 30 minutter. Hvis du ikke har bedt om dette, kan du ignorere e-mailen.</p>`});
+      }catch{
+        await db.delete(pinResetTokens).where(eq(pinResetTokens.tokenHash,tokenHash));
+        return Response.json({error:"E-mailen kunne ikke sendes. Prøv igen senere, eller kontakt administratoren."},{status:502});
       }
       return Response.json({ok:true});
-    }
-    if(action==="reset_pin"){
-      const token=String(body.token??"").trim();
-      const pin=String(body.pin??"");
-      const confirmPin=String(body.confirmPin??"");
-      if(!token)return Response.json({error:"Reset-linket mangler."},{status:400});
-      if(!/^\d{4,8}$/.test(pin))return Response.json({error:"Indtast en gyldig pinkode på 4–8 cifre."},{status:400});
-      if(pin!==confirmPin)return Response.json({error:"De to pinkoder stemmer ikke overens."},{status:400});
-      const [tokenRow]=await db.select({playerId:pinResetTokens.playerId}).from(pinResetTokens).where(and(eq(pinResetTokens.tokenHash, await hashToken(token)), gt(pinResetTokens.expiresAt, new Date().toISOString()))).limit(1);
-      if(!tokenRow)return Response.json({error:"Reset-linket er ugyldigt eller udløbet."},{status:400});
-      await db.update(players).set({pinHash:await hashPin(pin)}).where(eq(players.id,tokenRow.playerId));
-      await db.delete(pinResetTokens).where(eq(pinResetTokens.playerId,tokenRow.playerId));
+    }else if(action==="reset_pin"){
+      const token=String(body.token??""),pin=String(body.pin??"");
+      if(!/^\d{4,8}$/.test(pin))return Response.json({error:"Vælg en PIN-kode på 4–8 cifre."},{status:400});
+      if(pin!==String(body.confirmPin??""))return Response.json({error:"De to PIN-koder stemmer ikke overens."},{status:400});
+      if(!/^[a-f0-9]{64}$/.test(token))return Response.json({error:"Reset-linket er ugyldigt eller udløbet. Bestil et nyt link."},{status:400});
+      const tokenHash=await hashToken(token),pinHash=await hashPin(pin);
+      const validToken=and(eq(pinResetTokens.tokenHash,tokenHash),gt(pinResetTokens.expiresAt,new Date().toISOString()));
+      const owner=db.select({id:pinResetTokens.playerId}).from(pinResetTokens).where(validToken);
+      // D1 executes the batch atomically: concurrent requests cannot reuse a link.
+      const [changed]=await db.batch([
+        db.update(players).set({pinHash}).where(sql`${players.id} in (${owner})`).returning({id:players.id}),
+        db.delete(sessions).where(sql`${sessions.playerId} in (${owner})`),
+        db.delete(pinResetTokens).where(sql`${pinResetTokens.playerId} in (${owner})`),
+      ]);
+      if(!changed.length)return Response.json({error:"Reset-linket er ugyldigt eller udløbet. Bestil et nyt link."},{status:400});
       return Response.json({ok:true});
-    }
-    if(action==="register"){
+    }else if(action==="register"){
       const memberNo=String(body.memberNo??"").trim(),pin=String(body.pin??"");
       let profile;
       try { profile=profileValues(body); } catch(error) { return Response.json({error:error instanceof Error?error.message:"Kontrollér profilen."},{status:400}); }
