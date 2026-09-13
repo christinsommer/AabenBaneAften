@@ -249,7 +249,6 @@ function AuthScreen({ mode, setMode, act, busy, error, event, resetToken }: any)
           </div>
         </section>
         <section className="p-6 sm:p-12">
-          {event?.testActive && <p className="mb-5 rounded-xl bg-amber-100 p-4 text-sm text-amber-950"><strong>Testfase:</strong> Spillerunden {niceDate(event.date)} bruges til test. Log ind for at afprøve tilmelding og kampønsker.</p>}
           <div className="mb-7 flex rounded-xl bg-[#edf1f7] p-1">
             <button
               onClick={() => { setMode("login"); setNotice(""); }}
@@ -582,7 +581,6 @@ function Dashboard({ data, act, busy, error, openProfile }: any) {
         </div>
       </header>
       <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-9">
-        {data.event.testActive && <p className="mb-5 rounded-xl border border-amber-300 bg-amber-100 p-4 text-amber-950"><strong>Testrunde – {niceDate(data.event.date)}.</strong> Denne runde bruges kun til test af tilmelding, kampønsker og kampplan. {data.isOpen ? "Tilmeldingen er åben for alle indloggede." : "Tilmeldingen er lukket."}</p>}
         {error && (
           <p className="mb-5 rounded-xl border border-red-200 bg-red-50 p-4 text-red-700">
             {error}

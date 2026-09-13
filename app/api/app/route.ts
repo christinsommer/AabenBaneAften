@@ -30,6 +30,17 @@ function parseImportedKampplan(raw: unknown) {
   }
 }
 
+function resetLinkEmail(to: string, token: string) {
+  const baseUrl = process.env.APP_URL || "https://aabenbaneaften.dk";
+  const resetUrl = `${baseUrl}/?reset=${encodeURIComponent(token)}`;
+  return {
+    to,
+    subject: "Nulstil din pinkode til Åben Bane Aften",
+    text: `Hej\n\nDer blev anmodet om nulstilling af din pinkode til Åben Bane Aften.\nKlik på linket for at vælge en ny kode:\n\n${resetUrl}\n\nLinket er gyldigt i 60 minutter.\n\nHvis du ikke har anmodet om dette, kan du ignorere denne e-mail.`,
+    html: `<p>Hej</p><p>Der blev anmodet om nulstilling af din pinkode til Åben Bane Aften.</p><p><a href="${resetUrl}">Klik her for at vælge en ny kode</a></p><p>Linket er gyldigt i 60 minutter.</p><p>Hvis du ikke har anmodet om dette, kan du ignorere denne e-mail.</p>`,
+  };
+}
+
 async function state() {
   const db = getDb(); const event = await ensureEvent(); const user = await currentPlayer();
   const isOpen = event ? registrationIsOpen(event) : false;
@@ -75,6 +86,34 @@ export async function GET(){try{return Response.json(await state());}catch(error
 export async function POST(request:Request){
   try{
     const db=getDb(); const body=await request.json() as Record<string,any>; const action=String(body.action??"");
+    if(action==="request_pin_reset"){
+      const memberNo=String(body.memberNo??"").trim();
+      if(!memberNo)return Response.json({error:"Indtast et medlemsnummer."},{status:400});
+      const [player]=await db.select({id:players.id,email:players.email}).from(players).where(eq(players.memberNo,memberNo)).limit(1);
+      if(!player)return Response.json({error:"Medlemsnummeret findes ikke i appen."},{status:404});
+      const token=crypto.randomUUID();
+      const expiresAt=new Date(Date.now()+60*60*1000).toISOString();
+      await db.insert(pinResetTokens).values({playerId:player.id,tokenHash:await hashToken(token),expiresAt});
+      try {
+        await sendEmail(resetLinkEmail(player.email, token));
+      } catch {
+        return Response.json({ ok: true, warning: "Der blev oprettet et reset-link, men e-mailen kunne ikke sendes i dette miljø." });
+      }
+      return Response.json({ok:true});
+    }
+    if(action==="reset_pin"){
+      const token=String(body.token??"").trim();
+      const pin=String(body.pin??"");
+      const confirmPin=String(body.confirmPin??"");
+      if(!token)return Response.json({error:"Reset-linket mangler."},{status:400});
+      if(!/^\d{4,8}$/.test(pin))return Response.json({error:"Indtast en gyldig pinkode på 4–8 cifre."},{status:400});
+      if(pin!==confirmPin)return Response.json({error:"De to pinkoder stemmer ikke overens."},{status:400});
+      const [tokenRow]=await db.select({playerId:pinResetTokens.playerId}).from(pinResetTokens).where(and(eq(pinResetTokens.tokenHash, await hashToken(token)), gt(pinResetTokens.expiresAt, new Date().toISOString()))).limit(1);
+      if(!tokenRow)return Response.json({error:"Reset-linket er ugyldigt eller udløbet."},{status:400});
+      await db.update(players).set({pinHash:await hashPin(pin)}).where(eq(players.id,tokenRow.playerId));
+      await db.delete(pinResetTokens).where(eq(pinResetTokens.playerId,tokenRow.playerId));
+      return Response.json({ok:true});
+    }
     if(action==="register"){
       const memberNo=String(body.memberNo??"").trim(),pin=String(body.pin??"");
       let profile;

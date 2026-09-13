@@ -1,6 +1,7 @@
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "aabenbaneaften",
+	"workers_dev": true,
 	"routes": [
 		{ "pattern": "aabenbaneaften.dk", "custom_domain": true }
 	],
