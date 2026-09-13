@@ -155,7 +155,7 @@ export default function OpenBaneApp() {
         <RefreshCw className="animate-spin text-[#13375e]" />
       </main>
     );
-  if (!data.authenticated)
+  if (!data.authenticated || mode === "reset")
     return (
       <AuthScreen
         mode={mode}
@@ -181,7 +181,7 @@ function AuthScreen({ mode, setMode, act, busy, error, event, resetToken }: any)
     if (!memberNo) return;
     const ok = await act({ action: "request_pin_reset", memberNo });
     if (ok) {
-      setNotice("Et reset-link er sendt til den e-mail, der er knyttet til medlemsprofilen.");
+      setNotice("Hvis medlemsnummeret har en profil med e-mail, er der sendt et reset-link. Tjek også spam. Linket gælder i 30 minutter.");
       setMode("login");
     }
   }
@@ -221,8 +221,8 @@ function AuthScreen({ mode, setMode, act, busy, error, event, resetToken }: any)
           </div>
           <div className="relative z-10">
             <img
-              src="/hik-logo-clean.png"
-              alt="HIK – Hellerup Idræts Klub"
+              src="/AppTennisLogo.png"
+              alt="Tennis"
               className="hik-logo-image mb-4 h-24 w-auto object-contain"
             />
             <p className="mb-10 flex max-w-sm flex-wrap items-center gap-x-2 gap-y-1 text-sm font-bold uppercase tracking-[.08em] text-white/90">
