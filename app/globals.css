@@ -1,0 +1,174 @@
+﻿@import "tailwindcss";
+@import "tw-animate-css";
+@import "../vendor/shadcn-tailwind-4.13.0.css";
+
+@utility scrollbar-thin {
+  scrollbar-width: thin;
+}
+
+@utility scrollbar-none {
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@utility scrollbar-gutter-stable {
+  scrollbar-gutter: stable;
+}
+
+:root {
+  --background: #f3f7fb;
+  --foreground: #172536;
+  --card: #ffffff;
+  --card-foreground: #171717;
+  --popover: #ffffff;
+  --popover-foreground: #171717;
+  --primary: #13375e;
+  --primary-foreground: #fafafa;
+  --secondary: #f5f5f5;
+  --secondary-foreground: #171717;
+  --muted: #f5f5f5;
+  --muted-foreground: #737373;
+  --accent: #f5f5f5;
+  --accent-foreground: #171717;
+  --destructive: #e7000b;
+  --border: #e5e5e5;
+  --input: #e5e5e5;
+  --ring: #13375e;
+  --chart-1: #f54900;
+  --chart-2: #009689;
+  --chart-3: #104e64;
+  --chart-4: #ffb900;
+  --chart-5: #fe9a00;
+  --radius: 0.875rem;
+  --sidebar: #fafafa;
+  --sidebar-foreground: #171717;
+  --sidebar-primary: #171717;
+  --sidebar-primary-foreground: #fafafa;
+  --sidebar-accent: #f5f5f5;
+  --sidebar-accent-foreground: #171717;
+  --sidebar-border: #e5e5e5;
+  --sidebar-ring: #a1a1a1;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --font-sans: Arial, Helvetica, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+button, input, select { font-size: 16px; }
+.hik-logo-image {
+  clip-path: inset(0 0 0 2%);
+}
+.tennis-court-bg {
+  position: absolute;
+  inset: 8% -6% 8% 42%;
+  border: 2px solid white;
+  opacity: .13;
+  pointer-events: none;
+  transform: rotate(-7deg);
+  transform-origin: center;
+}
+.tennis-court-bg span {
+  position: absolute;
+  display: block;
+}
+.court-singles {
+  top: 0;
+  bottom: 0;
+  border-left: 2px solid white;
+}
+.court-singles-left { left: 12%; }
+.court-singles-right { right: 12%; }
+.court-service {
+  left: 12%;
+  right: 12%;
+  border-top: 2px solid white;
+}
+.court-service-top { top: 27%; }
+.court-service-bottom { bottom: 27%; }
+.court-center-service {
+  top: 27%;
+  bottom: 27%;
+  left: 50%;
+  border-left: 2px solid white;
+}
+.court-net-bg {
+  left: -4%;
+  right: -4%;
+  top: 50%;
+  height: 2rem;
+  transform: translateY(-50%);
+  border-top: 3px solid white;
+  border-bottom: 1px solid white;
+  background:
+    repeating-linear-gradient(45deg, transparent 0 7px, white 7px 8px),
+    repeating-linear-gradient(-45deg, transparent 0 7px, white 7px 8px);
+}
+
+/* HIK blue visual theme */
+[class~="bg-[#13375e]"] { background-color: #13375e !important; }
+[class~="text-[#13375e]"] { color: #13375e !important; }
+[class~="border-[#13375e]"] { border-color: #13375e !important; }
+[class~="hover:bg-[#0d2947]"]:hover { background-color: #0d2947 !important; }
+[class~="bg-[#f4f6fa]"] { background-color: #f4f6fa !important; }
+[class~="bg-[#e8edf5]"] { background-color: #e8edf5 !important; }
+[class~="bg-[#f0f3f8]"] { background-color: #f0f3f8 !important; }
+[class~="bg-[#edf1f7]"] { background-color: #edf1f7 !important; }
+[class~="bg-[#f6f8fb]"] { background-color: #f6f8fb !important; }
+[class~="border-[#dce9e1]"] { border-color: #d9dfeb !important; }
+[class~="border-[#cfe1d7]"] { border-color: #cdd5e4 !important; }
+[class~="border-[#a9c9b6]"] { border-color: #aebbd0 !important; }
+[class~="text-[#c2c9db]"] { color: #c2c9db !important; }
+[class~="text-[#d5dbea]"] { color: #d5dbea !important; }
+[class~="bg-[radial-gradient(circle_at_top_left,#dfe4ee,transparent_42%),#f7f8fb]"] {
+  background: radial-gradient(circle at top left, #dfe4ee, transparent 42%), #f7f8fb !important;
+}
+[class~="shadow-[0_24px_80px_rgba(19,55,94,.18)]"] {
+  box-shadow: 0 24px 80px rgba(19, 55, 94, .18) !important;
+}
+

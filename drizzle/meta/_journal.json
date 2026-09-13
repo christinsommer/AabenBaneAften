@@ -1,0 +1,55 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1788891672039,
+      "tag": "0000_previous_slyde",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1788954781177,
+      "tag": "0001_nappy_owl",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1789214318196,
+      "tag": "0002_adorable_firebird",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1789215127358,
+      "tag": "0003_flashy_wither",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1789243789283,
+      "tag": "0004_high_power_pack",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1789245522128,
+      "tag": "0005_sour_roughhouse",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1789294124223,
+      "tag": "0006_nappy_mauler",
+      "breakpoints": true
+    }
+  ]
+}

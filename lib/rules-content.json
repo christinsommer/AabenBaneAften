@@ -1,0 +1,50 @@
+[
+    {
+        "title":  "Tilmelding",
+        "paragraphs":  [
+                           "Tilmeldingen åbner normalt to dage før spilledagen kl. 12.00 og kan ændres indtil dagen før kl. 12.00.",
+                           "I indendørssæsonen er åben bane fredag aften fra 18:00. I udendørssæsonen onsdag aften fra kl. 17:30.",
+                           "Vælg om du ønsker at spille 1, 2 eller 3 timer. Vælg derefter ALLE de tider, du kan spille. Jo flere tider du vælger jo større chance, er der for at du kan være med."
+                       ]
+    },
+    {
+        "title":  "Pladser og venteliste",
+        "paragraphs":  [
+                           "Pladser fordeles efter først til mølle. Derefter oprettes venteliste.",
+                           "Alle skal så vidt muligt have én kamp, før nogen får to kampe.",
+                           "Spillere på ventelisten prioriteres, før andre får en ekstra kamp."
+                       ]
+    },
+    {
+        "title":  "Kampene",
+        "paragraphs":  [
+                           "Der laves tætte, konkurrencedygtige kampe efter aktuelt niveau. Du bør ændre niveau, hvis du har haft lang pause.",
+                           "Kamphistorikken bruges til at undgå for mange gentagelser."
+                       ]
+    },
+    {
+        "title":  "Baner og tider",
+        "paragraphs":  [
+                           "Bane 1–4: 18.00–19.00, 19.00–20.00, 20.00–21.00 og 21.00–22.00.\nBane 5–7: 18.30–19.30, 19.30–20.30 og 20.30–21.30."
+                       ]
+    },
+    {
+        "title":  "Afbud, afløser og kampplan",
+        "paragraphs":  [
+                           "Før tilmeldingen lukkes, kan du melde afbud under din tilmelding. Hvis kampplanen er udgivet og du er forhindret, så skal du selv finde en afløser på din kamp. Se eventuelt ventelisten i appen.",
+                           "Appen viser mulige afløsere fra ventelisten, som passer til tid og niveau. Det er dit eget ansvar at kontakte spilleren og få et ja. Vælg først vedkommende som afløser i appen, når spilleren selv har sagt ja.",
+                           "Kan du ikke finde en afløser: ",
+                           "1) Giv dine banemedspillere besked, så kan de måske hjælpe dig.",
+                           "2) Hvis stadig ikke muligt, kan du give administratoren besked direkte i appen. Afløseren kræver ikke administratorens godkendelse.",
+                           "Ved glemt afbud kan spilleren blive sprunget over én gang ved en senere tilmelding.",
+                           "Kampplanen offentliggøres senest på spilledagen kl. 12.00. Den skal ikke bekræftes."
+                       ]
+    },
+    {
+        "title":  "Feedback og personoplysninger",
+        "paragraphs":  [
+                           "Giv besked, hvis en spiller ikke passede til kampens niveau, da administrator muligvis ikke kender alle medlemmer. Appen gemmer kun oplysninger, som bruges til tilmelding, kampfordeling og kontakt. Spørgsmål, rettelser og ønske om sletning sendes til aabenbaneaften@hik.dk.",
+                           "Administrator: Christin Hytoft Sommer"
+                       ]
+    }
+]

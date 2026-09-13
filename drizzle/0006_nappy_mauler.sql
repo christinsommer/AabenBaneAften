@@ -1,0 +1,1 @@
+ALTER TABLE `players` ADD `phone_country_code` text DEFAULT '+45' NOT NULL;
