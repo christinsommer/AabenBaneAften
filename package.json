@@ -6,8 +6,8 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "predev": "node scripts/setup-local-d1.mjs",
-    "dev": "next dev",
+    "predev": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/free-dev-port.ps1 && node scripts/setup-local-d1.mjs",
+    "dev": "next dev --hostname localhost --port 3000",
     "db:setup": "node scripts/setup-local-d1.mjs",
     "release:check": "node scripts/release.mjs --check",
     "release": "node scripts/release.mjs",

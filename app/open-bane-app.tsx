@@ -1295,18 +1295,10 @@ function AdminPanel({ data, act, busy }: any) {
   const [testEmailResult, setTestEmailResult] = useState("");
   const [uploadError, setUploadError] = useState("");
   const [isImporting, setIsImporting] = useState(false);
-  const activeSignups = data.signups.filter(
-    (x: any) => x.signup.status === "active" && x.signup.nHours > 0,
-  );
-  const waitingSignups = data.signups.filter(
-    (x: any) => x.signup.status === "waitlist",
-  );
   const draftMatches = data.adminMatches ?? [];
   const importedRows = Array.isArray(data.importedMatches) ? data.importedMatches : [];
   const hasImportedPlan = importedRows.length > 0;
   const unusedCourts = unusedImportedCourts(importedRows, data.times);
-  const name = (id: number) =>
-    data.names.find((p: any) => p.id === id)?.name ?? "Slettet medlem";
   const openSubstitutions = (data.substitutions ?? []).filter(
     (item: any) => item.status !== "replaced",
   );
@@ -1347,38 +1339,6 @@ function AdminPanel({ data, act, busy }: any) {
       <PlayerLists data={data} view={listView} setView={setListView} act={act} busy={busy} />
       </TabsContent>
       <TabsContent value="matches" className="space-y-6">
-      <section className="grid gap-4 sm:grid-cols-3">
-        <AdminSummaryDialog
-          icon={<Users />}
-          label="Tilmeldte"
-          value={activeSignups.length}
-          emptyText="Der er ingen tilmeldte endnu."
-        >
-          {activeSignups.map(({ player }: any) => (
-            <SummaryPlayer key={player.id} player={player} />
-          ))}
-        </AdminSummaryDialog>
-        <AdminSummaryDialog
-          icon={<Clock3 />}
-          label="Venteliste"
-          value={waitingSignups.length}
-          emptyText="Der er ingen på ventelisten."
-        >
-          {waitingSignups.map(({ player }: any) => (
-            <SummaryPlayer key={player.id} player={player} />
-          ))}
-        </AdminSummaryDialog>
-        <AdminSummaryDialog
-          icon={<Trophy />}
-          label="Kampe"
-              value={draftMatches.length}
-          emptyText="Der er ikke lavet nogen kampe endnu."
-        >
-          {draftMatches.map((match: any) => (
-            <MatchCard key={match.id} match={match} name={name} />
-          ))}
-        </AdminSummaryDialog>
-      </section>
       {!!openSubstitutions.length && (
         <Card className="border-amber-300 bg-amber-50">
           <CardHeader>
@@ -1556,7 +1516,7 @@ function AdminPanel({ data, act, busy }: any) {
               const url = URL.createObjectURL(blob);
               const link = document.createElement("a");
               link.href = url;
-              link.download = "Aabenbane.xlsx";
+              link.download = "AabenBane.xlsx";
               document.body.appendChild(link);
               link.click();
               link.remove();
@@ -1704,7 +1664,41 @@ function PlayerLists({ data, view, setView, act, busy }: any) {
   const rows = sortedRows.filter((row:any)=>row.signup.status !== "not_registered");
   const notRegistered = sortedRows.filter((row:any)=>row.signup.status === "not_registered");
   return <Card className="gap-3 border-[#a9c9b6] py-3">
-    <CardHeader className="px-3"><CardTitle>Spillerlister</CardTitle></CardHeader>
+    <CardHeader className="flex flex-row items-center justify-between gap-3 px-3">
+      <CardTitle>Spillerlister</CardTitle>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        disabled={busy || !rows.length}
+        className="h-8 border-[#13375e] text-[#13375e]"
+        onClick={async () => {
+          const response = await fetch("/api/app", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ action: "export_signups" }),
+          });
+
+          if (!response.ok) {
+            const body = await response.json().catch(() => ({})) as { error?: string };
+            throw new Error(body.error || "Eksporten kunne ikke genereres.");
+          }
+
+          const blob = await response.blob();
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = "AabenBane.xlsx";
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          URL.revokeObjectURL(url);
+        }}
+      >
+        <Download className="mr-2 h-4 w-4" />
+        Eksportér
+      </Button>
+    </CardHeader>
     <CardContent className="px-3">
       <div className="mb-2 flex gap-1 rounded-lg bg-[#edf1f7] p-1">
         {[["current",`Denne fredag (${data.signups.filter((row:any)=>row.signup.status !== "not_registered").length})`],["history",`Tidligere (${data.signupHistory.length})`]].map(([value,label])=><button key={value} onClick={()=>setView(value)} className={`rounded-md px-3 py-1 text-xs font-semibold ${view===value ? "bg-white text-[#13375e] shadow-sm" : "text-slate-600"}`}>{label}</button>)}
@@ -1832,69 +1826,6 @@ function EditMatch({ match, data, act, done }: any) {
           Annuller
         </Button>
       </div>
-    </div>
-  );
-}
-function AdminSummaryDialog({
-  icon,
-  label,
-  value,
-  emptyText,
-  children,
-}: any) {
-  return (
-    <Dialog>
-      <DialogTrigger asChild>
-        <button className="w-full rounded-xl border border-[#dce9e1] bg-white p-5 text-left shadow-sm transition hover:border-[#a9c9b6] hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#13375e]">
-          <span className="flex items-center gap-4">
-            <span className="grid h-11 w-11 place-items-center rounded-xl bg-[#e8edf5] text-[#13375e]">
-              {icon}
-            </span>
-            <span>
-              <strong className="block text-2xl">{value}</strong>
-              <span className="text-sm text-slate-500">{label}</span>
-            </span>
-          </span>
-          <span className="mt-3 block text-sm font-semibold text-[#13375e]">
-            Tryk for at se {label.toLowerCase()}
-          </span>
-        </button>
-      </DialogTrigger>
-      <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-xl">
-        <DialogHeader>
-          <DialogTitle className="text-2xl text-[#13375e]">
-            {label} ({value})
-          </DialogTitle>
-          <DialogDescription>
-            Oversigt for den aktuelle fredag.
-          </DialogDescription>
-        </DialogHeader>
-        {value ? (
-          <div className="space-y-2">{children}</div>
-        ) : (
-          <p className="rounded-xl bg-slate-50 p-5 text-center text-slate-500">
-            {emptyText}
-          </p>
-        )}
-        <DialogFooter>
-          <DialogClose asChild>
-            <Button className="bg-[#13375e]">Luk oversigten</Button>
-          </DialogClose>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-function SummaryPlayer({ player }: any) {
-  return (
-    <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 p-4">
-      <div>
-        <p className="font-semibold">{player.name}</p>
-        <p className="text-sm text-slate-500">Medlemsnr. #{player.memberNo}</p>
-      </div>
-      <Badge className="bg-[#e8edf5] text-[#13375e]">
-        {player.adminLevel ?? player.selfLevel}
-      </Badge>
     </div>
   );
 }

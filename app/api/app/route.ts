@@ -242,7 +242,7 @@ export async function POST(request:Request){
         return new Response(buffer, {
           headers: {
             "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            "Content-Disposition": 'attachment; filename="Aabenbane.xlsx"',
+            "Content-Disposition": 'attachment; filename="AabenBane.xlsx"',
           },
         });
       }
