@@ -1,0 +1,38 @@
+Jeg har et Excel-regneark med de spillere, der har tilmeldt sig vores tennisarrangement “Åben Bane”.
+Brug Excel-filen til at lave et forslag til kampplan.
+Regler og prioriteringer:
+1.	Kampene skal så vidt muligt være mixdouble:
+- Ét hold = 1 kvinde + 1 mand
+- Modstanderholdet = 1 kvinde + 1 mand
+- Der skal altså være 4 spillere på hver bane.
+- Hvis mixdouble ikke er muligt, skal det være damedouble (kun kvinder på banen) eller herredouble (kun mænd på banen) eller damesingle (en kvinde mod en kvinde) eller herresingle (en mand mod en mand). Damesingle og herresingle må kun foreslås, hvis der er baner nok.
+2.	Spillerne skal så vidt muligt matches med andre på samme eller nærmeste CR niveau.
+- Prioritér jævnbyrdige kampe.
+- Undgå store niveauforskelle, hvis der findes bedre kombinationer.
+3.	Spillernes mulige spilletidspunkter SKAL overholdes.
+- De mulige tidspunkter står i kolonnen szPossible og/eller i slot_1, slot_2, slot_3 osv.
+- En spiller må KUN sættes på en kamp på et tidspunkt, som spilleren selv har angivet som muligt.
+- Kontroller dette for alle 4 spillere i hver kamp.
+4.	Antal ønsket timer af et medlem må ikke overskrides. Dvs. hvis et medlem ønsker 1 time, må medlemmet ikke kampe i 2 timer.
+5.	Jeg har 7 baner til rådighed:
+- Bane 1, Bane 2, Bane 3, Bane 4, Bane 5, Bane 6, Bane 7
+6.	Brug spillernes NAVNE i kampplanen – ikke medlemsnumre eller ID-numre.
+7.	Prioritér i denne rækkefølge:
+- Gyldigt tidspunkt for alle 4 spillere
+- Mixdouble
+- Spillere på så tæt niveau som muligt
+- Få så mange tilmeldte spillere i kamp som muligt
+- Fordel kampene hensigtsmæssigt på de 7 baner
+8.	Spillere på venteliste skal som udgangspunkt IKKE sættes ind i kampene, medmindre det tydeligt fremgår, at de skal bruges.
+9.	Hvis en spiller ikke kan placeres uden at bryde reglerne, skal du ikke tvinge spilleren ind i en kamp. Angiv i stedet tydeligt, hvem der ikke er kommet med, og hvorfor.
+Output:
+Lav en ny Excel-fil med navnet: KampPlan.xlsx
+Den skal have et sheet som hedder KampPlan. Kolonnerne skal være Start, Slut, Bane, Hold 1 – kvinde, Hold 1 – mand, Hold 2 – kvinde, Hold 2 – mand, Niveau hold 1, Niveau hold 2, Niveauforskel . Kolonneoverskrifterne skal være på linje 4. Linje 5 og fremefter skal have data for kampene. Efter sidste kamp, skal der være en tom linje.
+Derefter skal der være et overblik over dem som ikke har fået en kamp:
+Ikke sat i kamp: Kolonner: Spiller, Status, Begrundelse							
+Kontroller til sidst hele kampplanen én ekstra gang, så:
+- Ingen spiller er sat på et tidspunkt, de ikke har valgt.
+- Ingen spiller er sat på to baner samtidig. Dvs. en bane som starter kl. 18:00 og en anden som starter kl. 18:30 overlapper i tid. Det må ikke kunne lade sig gøre.
+- Alle kampe har 4 spillere og en bane.
+- Mixdouble er prioriteret så højt som muligt.
+- Kampene er så jævnbyrdige som muligt ved at bruge CR som er spilernes spilleniveau.

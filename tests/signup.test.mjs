@@ -1,8 +1,20 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {signupInput,signupFields} from '../lib/signup.ts';
+import {signupInput,signupFields,includeIntermediateTimes} from '../lib/signup.ts';
 import {visibleMember} from '../lib/member-visibility.ts';
 const times=['18:30','19:30','20:30'];
+test('saving wishes includes intermediate slots only inside consecutive chosen hours', () => {
+  const slots = ['18:00','18:30','19:00','19:30','20:00','20:30','21:00'];
+  assert.deepEqual(includeIntermediateTimes(['18:00','19:00'],slots),slots.slice(0,3));
+  assert.deepEqual(includeIntermediateTimes(['18:30','19:30'],slots),slots.slice(1,4));
+  assert.deepEqual(includeIntermediateTimes(['20:00','18:00','19:00'],slots),slots.slice(0,5));
+  assert.deepEqual(includeIntermediateTimes(['18:00','20:00'],slots),['18:00','20:00']);
+  assert.deepEqual(includeIntermediateTimes(['18:00'],slots),['18:00']);
+  assert.deepEqual(includeIntermediateTimes([],slots),[]);
+  const expanded = includeIntermediateTimes(['18:00','19:00'],slots);
+  assert.deepEqual(includeIntermediateTimes(expanded,slots),expanded);
+  assert.deepEqual(signupInput({nHours:2,nPossible:expanded.length,szPossible:expanded},slots),{nHours:2,nPossible:3,szPossible:expanded});
+});
 
 test('signup input preserves requested hours and counts possible start times',()=>{
   assert.deepEqual(signupFields(null),{nHours:0,nPossible:0,szPossible:[]});

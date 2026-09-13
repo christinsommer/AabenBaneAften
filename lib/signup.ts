@@ -1,3 +1,19 @@
+// Include starts between consecutive selected one-hour slots, without bridging gaps.
+export function includeIntermediateTimes(selected: readonly string[], times: readonly string[]): string[] {
+  const minutes = (time: string) => {
+    const [hour, minute] = time.split(':').map(Number);
+    return hour * 60 + minute;
+  };
+  const starts = [...new Set(selected)].map(minutes).sort((a, b) => a - b);
+  return times.filter(time => {
+    const start = minutes(time);
+    return starts.includes(start) || starts.some((left, index) => {
+      const right = starts[index + 1];
+      return right !== undefined && right - left <= 60 && start > left && start < right;
+    });
+  }).sort();
+}
+
 export type SignupInput = {
   nHours: 0 | 1 | 2 | 3;
   nPossible: number;

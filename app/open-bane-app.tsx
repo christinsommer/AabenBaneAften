@@ -2,6 +2,7 @@
 import * as XLSX from "xlsx";
 import { unusedImportedCourts } from "../lib/unused-courts";
 import rulesContent from "../lib/rules-content.json";
+import { includeIntermediateTimes } from "../lib/signup";
 import { ImportedPlanTable } from "./imported-plan";
 import { isPlayersImportedMatch } from "../lib/kampplan-filter";
 import { useEffect, useState } from "react";
@@ -103,6 +104,7 @@ export default function OpenBaneApp() {
     [mode, setMode] = useState<AuthMode>("login");
   const [openProfile, setOpenProfile] = useState(false);
   const [resetToken, setResetToken] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -121,6 +123,17 @@ export default function OpenBaneApp() {
       setData(j);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Kunne ikke indlæse appen");
+    }
+  }
+  async function refresh() {
+    setRefreshing(true);
+    setBusy(true);
+    setError("");
+    try {
+      await load();
+    } finally {
+      setRefreshing(false);
+      setBusy(false);
     }
   }
   async function act(payload: Record<string, unknown>) {
@@ -168,7 +181,7 @@ export default function OpenBaneApp() {
       />
     );
   if (!data.event) return <EmptyCalendarDashboard data={data} act={act} busy={busy} error={error} openProfile={openProfile} />;
-  return <Dashboard data={data} act={act} busy={busy} error={error} openProfile={openProfile} />;
+  return <Dashboard data={data} act={act} busy={busy} error={error} openProfile={openProfile} refresh={refresh} refreshing={refreshing} />;
 }
 
 function AuthScreen({ mode, setMode, act, busy, error, event, resetToken }: any) {
@@ -318,7 +331,7 @@ function AuthScreen({ mode, setMode, act, busy, error, event, resetToken }: any)
                 {mode === "login" ? "Velkommen tilbage" : "Opret spillerprofil"}
               </h2>
               <p className="mt-1 text-slate-500">
-                Brug dit HIK-medlemsnummer og en personlig kode.
+                Brug dit HIK-medlemsnummer og en pinkode.
               </p>
               <form onSubmit={submit} className="mt-7 grid gap-4">
                 <input type="hidden" name="action" value={mode} />
@@ -341,7 +354,7 @@ function AuthScreen({ mode, setMode, act, busy, error, event, resetToken }: any)
                 <Field name="memberNo" label="HIK-medlemsnummer" />
                 <Field
                   name="pin"
-                  label="Personlig kode (4–8 cifre)"
+                  label="Pinkode (4–8 cifre)"
                   type="password"
                   inputMode="numeric"
                 />
@@ -540,7 +553,7 @@ function WaitlistPlayer({ player, compact = false }: any) {
   );
 }
 
-function Dashboard({ data, act, busy, error, openProfile }: any) {
+function Dashboard({ data, act, busy, error, openProfile, refresh, refreshing }: any) {
   const userMatches = data.matches.filter((m: any) =>
     JSON.parse(m.playerIds).includes(data.user.id),
   );
@@ -685,7 +698,7 @@ function Dashboard({ data, act, busy, error, openProfile }: any) {
           </TabsContent>
           {data.user.role === "admin" && (
             <TabsContent value="admin">
-              <AdminPanel data={data} act={act} busy={busy} />
+              <AdminPanel data={data} act={act} busy={busy} refresh={refresh} refreshing={refreshing} />
             </TabsContent>
           )}
         </Tabs>
@@ -880,15 +893,18 @@ function SignupPanel({ data, act, busy }: any) {
   async function saveWish() {
     setSaved(false);
     setRemoved(false);
+    const expanded = includeIntermediateTimes(selected, data.times);
     if (
       await act({
         action: "signup",
-        szPossible: selected,
-        nPossible: selected.length,
+        szPossible: expanded,
+        nPossible: expanded.length,
         nHours: hours,
       })
-    )
+    ) {
+      setSelected(expanded);
       setSaved(true);
+    }
   }
   async function removeSignup() {
     setSaved(false);
@@ -1015,6 +1031,7 @@ function SignupPanel({ data, act, busy }: any) {
               </section>
             ))}
           </div>
+          <p className="mt-4 text-sm text-slate-600">Når du gemmer, vælges mellemliggende tider automatisk, hvis du har valgt to timer i træk. Fx tilføjes 18.30–19.30 ved valg af 18.00–19.00 og 19.00–20.00.</p>
           <div className="mt-4 flex flex-wrap gap-2">
             <Button
               disabled={busy || selected.length < hours || !canEdit}
@@ -1288,7 +1305,25 @@ function MatchCard({ match, name, highlight }: any) {
   );
 }
 
-function AdminPanel({ data, act, busy }: any) {
+function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
+  const [kampplanPrompt, setKampplanPrompt] = useState("");
+  const [promptError, setPromptError] = useState("");
+  useEffect(() => {
+    const controller = new AbortController();
+    async function loadPrompt() {
+      try {
+        const response = await fetch('/kampplan-prompt.txt', { cache: 'no-store', signal: controller.signal });
+        if (!response.ok) throw new Error('Prompten kunne ikke hentes. Genindlæs siden og prøv igen.');
+        const text = await response.text();
+        if (!text.trim()) throw new Error('Promptfilen er tom.');
+        setKampplanPrompt(text);
+      } catch (error) {
+        if (!controller.signal.aborted) setPromptError(error instanceof Error ? error.message : 'Prompten kunne ikke hentes.');
+      }
+    }
+    void loadPrompt();
+    return () => controller.abort();
+  }, []);
   const sortedMembers = [...data.players].sort((a: MemberProfile, b: MemberProfile) => `${a.firstName} ${a.lastName}`.trim().localeCompare(`${b.firstName} ${b.lastName}`.trim(), "da", { sensitivity: "base" }));
   const [editing, setEditing] = useState<number | null>(null);
   const [listView, setListView] = useState<"current" | "history">("current");
@@ -1317,7 +1352,13 @@ function AdminPanel({ data, act, busy }: any) {
       <TabsContent value="signups" className="space-y-6">
       <Card className="border-[#dce9e1]">
         <CardHeader>
-          <CardTitle>Åbn og luk tilmeldingen</CardTitle>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <CardTitle>Åbn og luk tilmeldingen</CardTitle>
+            <Button type="button" variant="outline" disabled={busy} onClick={refresh} aria-label="Genindlæs tilmeldinger" aria-busy={refreshing}>
+              <RefreshCw className={`mr-2 h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
+              {refreshing ? "Genindlæser…" : "Refresh"}
+            </Button>
+          </div>
           <CardDescription>Gælder {niceDate(data.event.date)} for alle medlemmer. Manuel åbning og lukning tilsidesætter de normale tidspunkter.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -1365,15 +1406,24 @@ function AdminPanel({ data, act, busy }: any) {
           </CardContent>
         </Card>
       )}
+      <div className="space-y-2 rounded-xl border border-slate-200 bg-white p-4">
+        {kampplanPrompt ? <Button asChild className="bg-[#13375e]">
+          <a href={`https://chatgpt.com/?q=${encodeURIComponent(kampplanPrompt)}`} target="_blank" rel="noopener noreferrer">
+            <Sparkles className="mr-2 h-4 w-4" />
+            Foreslå kampe
+          </a>
+        </Button> : <Button disabled>{promptError ? 'Foreslå kampe' : 'Henter prompt…'}</Button>}
+        {promptError && <p role="alert" className="text-sm text-red-700">{promptError}</p>}
+        <p className="text-sm text-slate-600">
+          Åbner ChatGPT i en ny fane med prompten. Vedhæft selv den eksporterede Excel-fil med tilmeldingerne i ChatGPT.
+          Download derefter KampPlan.xlsx fra ChatGPT, og brug “Importér kampplan” herunder.
+        </p>
+        <details className="text-sm text-slate-600">
+          <summary className="cursor-pointer">Hvis prompten ikke kommer med, kan du kopiere den her</summary>
+          <textarea aria-label="Prompt til kampplan" readOnly value={kampplanPrompt} onFocus={event => event.currentTarget.select()} className="mt-2 h-60 w-full rounded-md border p-3" />
+        </details>
+      </div>
       <div className="flex flex-wrap gap-3">
-        <Button
-          disabled={busy}
-          onClick={() => act({ action: "generate" })}
-          className="bg-[#13375e]"
-        >
-          <Sparkles className="mr-2 h-4 w-4" />
-          Foreslå kampe
-        </Button>
         <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2">
           <label htmlFor="import-kampplan" className="text-sm font-medium text-slate-700">
             Importér kampplan
