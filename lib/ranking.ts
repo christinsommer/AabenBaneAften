@@ -1,13 +1,26 @@
-export const SELF_LEVELS = ['A','A-','AB','B+','B','B-','BC','C+','C','C-'] as const;
+export const SELF_LEVELS = ['A','AB','B','BC','C','Begynder'] as const;
 export type SelfLevel = typeof SELF_LEVELS[number];
 
 export function isSelfLevel(value: unknown): value is SelfLevel {
   return typeof value === 'string' && SELF_LEVELS.some(level=>level===value);
 }
 
+// Explicit legacy aliases only: arbitrary text must not be guessed from letters.
+export function normalizeSelfLevel(value: unknown): SelfLevel {
+  const normalized = String(value ?? '').trim().toUpperCase().replace(/\s+/g, '').replace(/[−–]/g, '-');
+  switch (normalized) {
+    case 'A': case 'A+': return 'A';
+    case 'AB': case 'A/B': case 'A-': case 'B+': return 'AB';
+    case 'B': return 'B';
+    case 'BC': case 'B/C': case 'B-': case 'C+': return 'BC';
+    case 'C': case 'C-': return 'C';
+    default: return 'Begynder';
+  }
+}
+
 // Compatibility with the existing four-category match/substitute algorithm.
 export const LEVEL_SCORE: Record<string,number> = {
-  A:4,'A-':4,AB:3,'B+':3,B:2,'B-':2,BC:1,'C+':1,C:1,'C-':1,
+  A:4,'A-':4,AB:3,'B+':3,B:2,'B-':2,BC:1,'C+':1,C:1,'C-':1,BEGYNDER:1,
 };
 
 export function levelScore(value:string):number {

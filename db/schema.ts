@@ -12,7 +12,7 @@ export const players = sqliteTable("players", {
   phone: text("phone").notNull().default(""),
   phoneCountryCode: text("phone_country_code").notNull().default("+45"),
   gender: text("gender", { enum: ["M", "K"] }).notNull(),
-  selfLevel: text("self_level").notNull(),
+  selfLevel: text("self_level", { enum: ["A", "AB", "B", "BC", "C", "Begynder"] }).notNull(),
   adminLevel: text("admin_level", { enum: ["A", "AB", "B", "C"] }),
   role: text("role", { enum: ["player", "admin"] }).notNull().default("player"),
   pinHash: text("pin_hash").notNull(),

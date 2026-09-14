@@ -137,16 +137,18 @@ test("Cloudflare Worker renders and authenticates against isolated D1", { timeou
     assert.equal(JSON.stringify(memberState).includes('christinRanking'),false);
     const adminState=await (await worker.fetch('/api/app',{headers:{cookie}})).json();
     assert.equal(adminState.players.find(p=>p.id===updated.user.id).christinRanking,8);
-    const editMember={action:'update_member',playerId:updated.user.id,memberNo:'must-not-change',firstName:'Admin Edited',lastName:'Member',email:'edited@example.com',gender:'M',phone:'12345678',level:'b niveau',christinRanking:7,role:'admin',pin:'999999'};
+    const editMember={action:'update_member',playerId:updated.user.id,memberNo:'must-not-change',firstName:'Admin Edited',lastName:'Member',email:'edited@example.com',gender:'M',phone:'12345678',level:'BC',christinRanking:7,role:'admin',pin:'999999'};
     assert.equal((await post(editMember,playerCookie)).status,403);
     assert.equal((await post({...editMember,christinRanking:10},cookie)).status,400);
+    assert.equal((await post({...editMember,level:'b niveau'},cookie)).status,400);
+    assert.equal((await post({...genderProfile,level:'B+'},playerCookie)).status,400);
     const edited=await (await post(editMember,cookie)).json();
     const editedPlayer=edited.players.find(p=>p.id===updated.user.id);
     assert.equal(editedPlayer.memberNo,'test-player');
     assert.equal(editedPlayer.firstName,'Admin Edited');
     assert.equal(editedPlayer.email,'edited@example.com');
     assert.equal(editedPlayer.phone,'12345678');
-    assert.equal(editedPlayer.selfLevel,'b niveau');
+    assert.equal(editedPlayer.selfLevel,'BC');
     assert.equal(editedPlayer.christinRanking,7);
     assert.equal(editedPlayer.role,'player');
     assert.equal((await post({action:'login',memberNo:'test-player',pin:'123456'})).status,200);
@@ -239,7 +241,10 @@ test("Cloudflare Worker renders and authenticates against isolated D1", { timeou
     assert.equal(cleared.event.status,'draft');
     assert.equal(cleared.event.publishedAt,null);
     assert.ok(cleared.signupHistory.length > 0);
-    for(const [level,cr] of Object.entries({A:2,'A-':3,AB:4,B:5,'B+':4,'B-':6,BC:7,'C+':7,C:8,'C-':9,'a ukendt':4,'b ukendt':6,'c ukendt':8,'ukendt':null})) {
+    for(const level of ['B+','A-','ukendt','a ukendt','']) {
+      assert.equal((await post({action:'register',memberNo:'invalid-ranking-'+level,pin:'123456',firstName:'Ranking',lastName:'Test',email:'ranking@example.com',gender:'K',level})).status,400);
+    }
+    for(const [level,cr] of Object.entries({A:2,AB:4,B:5,BC:7,C:8,Begynder:9})) {
       const newMember=await post({action:'register',memberNo:'ranking-'+level,pin:'123456',firstName:'Ranking',lastName:'Test',email:'ranking@example.com',gender:'K',level,christinRanking:1});
       assert.equal(newMember.status,200);
       const newState=await newMember.json();

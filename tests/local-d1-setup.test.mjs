@@ -16,7 +16,7 @@ test('local setup preserves SQLite data, is repeatable and refuses remote bindin
   cpSync('drizzle', join(directory, 'drizzle'), { recursive: true });
   mkdirSync(join(directory, '.data'));
   const source = new Database(join(directory, '.data/app.db'));
-  source.exec("CREATE TABLE players(id INTEGER PRIMARY KEY,member_no TEXT,name TEXT,email TEXT,gender TEXT,self_level TEXT,pin_hash TEXT); INSERT INTO players VALUES(42,'preserved','Christin Hytoft Sommer','test@example.com','K','B','hash'); CREATE TABLE events(id INTEGER PRIMARY KEY,date TEXT,registration_opens_at TEXT,registration_closes_at TEXT,imported_kampplan TEXT); INSERT INTO events VALUES(7,'2026-09-11','2026-09-01','2026-09-12','[{\"Bane\":1}]');");
+  source.exec("CREATE TABLE players(id INTEGER PRIMARY KEY,member_no TEXT,name TEXT,email TEXT,gender TEXT,self_level TEXT,pin_hash TEXT); INSERT INTO players VALUES(42,'preserved','Christin Hytoft Sommer','test@example.com','K','B+','hash'); CREATE TABLE events(id INTEGER PRIMARY KEY,date TEXT,registration_opens_at TEXT,registration_closes_at TEXT,imported_kampplan TEXT); INSERT INTO events VALUES(7,'2026-09-11','2026-09-01','2026-09-12','[{\"Bane\":1}]');");
   source.close();
   const run = () => new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [script], { cwd: directory, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -34,6 +34,7 @@ test('local setup preserves SQLite data, is repeatable and refuses remote bindin
     assert.equal(player.id, 42);
     assert.equal(player.member_no, 'preserved');
     assert.equal(player.pin_hash, 'hash');
+    assert.equal(player.self_level, 'AB');
     const events = (await proxy.env.DB.prepare('SELECT * FROM events').all()).results;
     assert.equal(events.length, 1);
     assert.equal(events[0].id, 7);

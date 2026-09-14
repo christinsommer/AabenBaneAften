@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import Database from 'better-sqlite3';
 import { getPlatformProxy } from 'wrangler';
 import { migrationStatements } from './migration-statements.mjs';
+import { normalizeSelfLevel } from '../lib/ranking.ts';
 
 // This script only uses simulated bindings; it never invokes a remote command.
 const config = JSON.parse(readFileSync('wrangler.jsonc', 'utf8'));
@@ -35,6 +36,7 @@ try {
       if (!snapshot.prepare("SELECT name FROM sqlite_master WHERE name=?").get(table)) continue;
       const rows = snapshot.prepare(`SELECT * FROM "${table}"${table === 'signups' ? ' ORDER BY created_at, id' : ''}`).all();
       for (const row of rows) {
+        if (table === 'players') row.self_level = normalizeSelfLevel(row.self_level);
         const columns = Object.keys(row);
         statements.push(db.prepare(`INSERT INTO "${table}" (${columns.map(c => `"${c}"`).join(',')}) VALUES (${columns.map(() => '?').join(',')})`).bind(...Object.values(row)));
       }

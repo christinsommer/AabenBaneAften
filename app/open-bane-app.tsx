@@ -4,10 +4,12 @@ import { unusedImportedCourts } from "../lib/unused-courts";
 import rulesContent from "../lib/rules-content.json";
 import { includeIntermediateTimes } from "../lib/signup";
 import { ImportedPlanTable } from "./imported-plan";
+import { MatchCalendarButton } from "../components/match-calendar-button";
 import { isPlayersImportedMatch } from "../lib/kampplan-filter";
 import { useEffect, useState } from "react";
 import { InstallApp } from "../components/install-app";
-import { SELF_LEVELS, levelScore } from '../lib/ranking';
+import { levelScore } from '../lib/ranking';
+import { RankingField } from '../components/ranking-field';
 import { parseWorkbookKampplanRows } from "../lib/kampplan-import";
 import {
   CalendarDays,
@@ -57,7 +59,6 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-const levels = SELF_LEVELS;
 const timeLabel: Record<string, string> = {
   "18:00": "18.00–19.00",
   "18:30": "18.30–19.30",
@@ -833,10 +834,6 @@ function ProfilePanel({ user, act, busy, adminMode=false }: {
   );
 }
 
-function RankingField({id,defaultValue=""}:{id:string;defaultValue?:string}) {
-  return <div className="grid gap-2"><Label htmlFor={id}>Egen ranking</Label><Input id={id} name="level" list={`${id}-options`} defaultValue={defaultValue} placeholder="Fx B+" required maxLength={100}/><datalist id={`${id}-options`}>{levels.map(level=><option key={level} value={level}/>)}</datalist></div>;
-}
-
 function EditMemberDialog({player,act,busy}:{player:MemberProfile & {id:number};act:AppAction;busy:boolean}) {
   const [open,setOpen]=useState(false);
   const [error,setError]=useState('');
@@ -1077,12 +1074,13 @@ function SignupPanel({ data, act, busy }: any) {
 
 function PlanPanel({ data, userMatches, act, busy }: any) {
   const [onlyMine, setOnlyMine] = useState(false);
+  const calendarDate = onlyMine && data.event.status === "published" ? data.event.date : undefined;
   const filterButton = <Button variant={onlyMine ? "default" : "outline"} aria-pressed={onlyMine} onClick={() => setOnlyMine(!onlyMine)}>{onlyMine ? "Vis alle kampe" : "Vis kun mine kampe"}</Button>;
   const name = (id: number) =>
     data.names.find((p: any) => p.id === id)?.name ?? "Slettet medlem";
   const importedRows = Array.isArray(data.importedMatches) ? data.importedMatches : [];
 
-  if (importedRows.length > 0) return <div className="space-y-2">{filterButton}<ImportedPlanTable rows={onlyMine ? importedRows.filter((row: Record<string, unknown>) => isPlayersImportedMatch(row, data.user.name)) : importedRows} /></div>;
+  if (importedRows.length > 0) return <div className="space-y-2">{filterButton}<ImportedPlanTable calendarDate={calendarDate} calendarPlayers={data.names} rows={onlyMine ? importedRows.filter((row: Record<string, unknown>) => isPlayersImportedMatch(row, data.user.name)) : importedRows} /></div>;
 
   if (!data.matches.length && !importedRows.length)
     return (
@@ -1111,6 +1109,7 @@ function PlanPanel({ data, userMatches, act, busy }: any) {
               key={m.id}
               match={m}
               name={name}
+              calendarDate={calendarDate}
               data={data}
               act={act}
               busy={busy}
@@ -1136,7 +1135,7 @@ function PlanPanel({ data, userMatches, act, busy }: any) {
   );
 }
 
-function PlayerMatchCard({ match, name, data, act, busy }: any) {
+function PlayerMatchCard({ match, name, data, act, busy, calendarDate }: any) {
   const substitution = (data.substitutions ?? []).find(
     (item: any) =>
       item.matchId === match.id && item.outgoingPlayerId === data.user.id,
@@ -1149,7 +1148,7 @@ function PlayerMatchCard({ match, name, data, act, busy }: any) {
   );
   return (
     <div className="space-y-3 rounded-2xl border border-[#13375e] bg-[#f0f3f8] p-3">
-      <MatchCard match={match} name={name} highlight />
+      <MatchCard match={match} name={name} highlight calendarDate={calendarDate} calendarPlayers={data.names} />
       {!substitution ? (
         <Dialog>
           <DialogTrigger asChild>
@@ -1278,7 +1277,7 @@ function PlayerMatchCard({ match, name, data, act, busy }: any) {
     </div>
   );
 }
-function MatchCard({ match, name, highlight }: any) {
+function MatchCard({ match, name, highlight, calendarDate, calendarPlayers }: any) {
   const ids = JSON.parse(match.playerIds);
   return (
     <article
@@ -1289,6 +1288,7 @@ function MatchCard({ match, name, highlight }: any) {
         <span className="font-bold text-[#13375e]">
           Kl. {timeLabel[match.startTime]}
         </span>
+        {calendarDate && <MatchCalendarButton match={{ date: calendarDate, startTime: match.startTime, court: match.court, players: ids.map((id: number) => calendarPlayers?.find((player: { id: number }) => player.id === id) ?? name(id)) }} />}
       </div>
       <div className="mt-4 grid grid-cols-[1fr_auto_1fr] items-center gap-3">
         <div>
@@ -1364,9 +1364,9 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
         <CardContent className="space-y-4">
           <p role="status" className="font-semibold">Tilmelding: {data.isOpen ? "Åben" : "Lukket"} · {data.event.registrationOverride === "auto" ? "Følger tidsplanen" : "Manuelt styret"}</p>
           <div className="flex flex-wrap gap-2">
-            <Button disabled={busy} aria-pressed={data.event.registrationOverride === "open"} onClick={() => act({action:"set_registration",mode:"open"})}>Åbn tilmelding</Button>
-            <Button disabled={busy} variant="outline" aria-pressed={data.event.registrationOverride === "closed"} onClick={() => act({action:"set_registration",mode:"closed"})}>Luk tilmelding</Button>
-            <Button disabled={busy} variant="outline" aria-pressed={data.event.registrationOverride === "auto"} onClick={() => act({action:"set_registration",mode:"auto"})}>Følg tidsplan</Button>
+            <Button disabled={busy} variant={data.event.registrationOverride === "open" ? "default" : "outline"} aria-pressed={data.event.registrationOverride === "open"} onClick={() => act({action:"set_registration",mode:"open"})}>Åbn tilmelding</Button>
+            <Button disabled={busy} variant={data.event.registrationOverride === "closed" ? "default" : "outline"} aria-pressed={data.event.registrationOverride === "closed"} onClick={() => act({action:"set_registration",mode:"closed"})}>Luk tilmelding</Button>
+            <Button disabled={busy} variant={data.event.registrationOverride === "auto" ? "default" : "outline"} aria-pressed={data.event.registrationOverride === "auto"} onClick={() => act({action:"set_registration",mode:"auto"})}>Følg tidsplan</Button>
           </div>
           {data.event.testActive && <Dialog>
             <DialogTrigger asChild><Button variant="outline" disabled={busy}>Afslut testfase</Button></DialogTrigger>

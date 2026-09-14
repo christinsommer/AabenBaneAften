@@ -69,7 +69,7 @@ async function state() {
     level:players.selfLevel,
     availability:signups.availability,
   }).from(signups).innerJoin(players,eq(players.id,signups.playerId)).where(and(eq(signups.eventId,event.id),eq(signups.status,"waitlist"))).orderBy(asc(signups.createdAt));
-  const names = await db.select({id:players.id,name:players.name}).from(players);
+  const names = await db.select({id:players.id,name:players.name,firstName:players.firstName}).from(players);
   const substitutionRows = await db.select().from(substitutions).where(eq(substitutions.eventId,event.id)).orderBy(desc(substitutions.updatedAt));
   const substitutionsForUser = substitutionRows.filter((item)=>user.role==="admin"||item.outgoingPlayerId===user.id).map((item)=>({
     ...item,

@@ -2,8 +2,10 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { normalizeKampplanRows } from '../lib/kampplan-import';
+import { MatchCalendarButton } from '../components/match-calendar-button';
+import type { CalendarPlayer } from '../lib/match-calendar';
 
-export function ImportedPlanTable({ rows }: { rows: Record<string, unknown>[] }) {
+export function ImportedPlanTable({ rows, calendarDate, calendarPlayers = [] }: { rows: Record<string, unknown>[]; calendarDate?: string; calendarPlayers?: CalendarPlayer[] }) {
   rows = normalizeKampplanRows(rows);
   const value = (row: Record<string, unknown>, key: string) => String(row[key] ?? '').trim();
   return <Card className="min-w-0 gap-2 border-[#dce9e1] py-3">
@@ -16,9 +18,11 @@ export function ImportedPlanTable({ rows }: { rows: Record<string, unknown>[] })
             <col className="w-12 sm:w-28" />
             <col />
             <col />
+            {calendarDate && <col className="w-11" />}
           </colgroup>
           <thead><tr className="border-b text-xs text-slate-500">
             {['Bane', 'Tid', 'Hold 1', 'Hold 2'].map(header => <th key={header} scope="col" className="px-1 py-1 font-medium sm:px-2">{header}</th>)}
+            {calendarDate && <th scope="col"><span className="sr-only">Kalender</span></th>}
           </tr></thead>
           <tbody>{rows.map((row, index) => <tr key={index} className="border-b bg-[#f5f5f3] last:border-0">
             <>
@@ -29,6 +33,14 @@ export function ImportedPlanTable({ rows }: { rows: Record<string, unknown>[] })
               {[['D', 'E'], ['F', 'G']].map((keys, team) => <td key={team} className="px-1 py-2 align-middle sm:px-2">
                 {keys.map(key => <p key={key} className="whitespace-normal text-xs font-semibold leading-5 text-[#1f2937] [overflow-wrap:anywhere] [&+p]:mt-1">{value(row, key)}</p>)}
               </td>)}
+              {calendarDate && <td className="px-1 py-2 align-middle"><MatchCalendarButton match={{
+                date: calendarDate, startTime: value(row, 'A'), endTime: value(row, 'B'),
+                court: value(row, 'C'), players: ['D', 'E', 'F', 'G'].map(key => {
+                  const name = value(row, key);
+                  const normalize = (text: string) => text.normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('da-DK');
+                  return calendarPlayers.find(player => normalize(player.name) === normalize(name)) ?? name;
+                }),
+              }} /></td>}
             </>
           </tr>)}</tbody>
         </table>}

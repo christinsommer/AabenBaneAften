@@ -1,17 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {INITIAL_CR,initialCr} from '../lib/initial-cr.ts';
-import {SELF_LEVELS,isSelfLevel,LEVEL_SCORE} from '../lib/ranking.ts';
+import {SELF_LEVELS,isSelfLevel,levelScore} from '../lib/ranking.ts';
 
 test('new member CR follows the exact ranking table',()=>{
-  const expected={A:2,'A-':3,AB:4,B:5,'B+':4,'B-':6,BC:7,'C+':7,C:8,'C-':9};
+  const expected={A:2,'A-':3,AB:4,B:5,'B+':4,'B-':6,BC:7,'C+':7,C:8,'C-':9,BEGYNDER:9};
   assert.deepEqual(INITIAL_CR,expected);
-  assert.equal(SELF_LEVELS.length,10);
-  for(const level of Object.keys(expected)) {
+  assert.deepEqual(SELF_LEVELS,['A','AB','B','BC','C','Begynder']);
+  for(const level of SELF_LEVELS) {
     assert.equal(isSelfLevel(level),true);
-    assert.ok(Number.isFinite(LEVEL_SCORE[level]));
+    assert.ok(Number.isFinite(levelScore(level)));
+    assert.equal(initialCr(level),expected[level.toUpperCase()]);
   }
-  for(const invalid of ['D','a','',null])assert.equal(isSelfLevel(invalid),false);
+  for(const invalid of ['D','a','',null,'A-','B+','B-','C+','C-'])assert.equal(isSelfLevel(invalid),false);
 });
 
 test('unknown rankings use A then B then C, ignoring case',()=>{

@@ -1,6 +1,8 @@
+import { isSelfLevel, type SelfLevel } from './ranking.ts';
+
 export function profileValues(body: Record<string, unknown>): {
   firstName: string; lastName: string; name: string; memberNo: string;
-  email: string; selfLevel: string; gender: "M" | "K";
+  email: string; selfLevel: SelfLevel; gender: "M" | "K";
   phone?: string; phoneCountryCode?: string;
 } {
   const firstName = String(body.firstName ?? "").trim();
@@ -15,7 +17,7 @@ export function profileValues(body: Record<string, unknown>): {
   if (!memberNo || memberNo.length > 30) throw new Error("Angiv et gyldigt medlemsnummer.");
   if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
     throw new Error("Angiv en gyldig e-mailadresse.");
-  if (!selfLevel || selfLevel.length > 100) throw new Error("Angiv egen ranking med højst 100 tegn.");
+  if (!isSelfLevel(selfLevel)) throw new Error("Vælg egen ranking: A, AB, B, BC, C eller Begynder.");
   const telephone: {phone?:string;phoneCountryCode?:string} = {};
   if (body.phone !== undefined) {
     const phone = String(body.phone).trim();
