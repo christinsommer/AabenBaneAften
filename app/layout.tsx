@@ -10,9 +10,9 @@ export const metadata: Metadata = {
     "codex-preview": "development",
   },
   icons: {
-    icon: "/hik-logo-clean.png",
-    shortcut: "/hik-logo-clean.png",
-    apple: "/hik-logo-clean.png",
+    icon: "/AppTennisLogo.png",
+    shortcut: "/AppTennisLogo.png",
+    apple: "/AppTennisLogo.png",
   },
 };
 

@@ -11,7 +11,9 @@ test('Calendar includes every Friday through April and uses Danish deadlines', (
   assert.equal(validDate('2027-02-29'),false);
   assert.equal(validDate('2028-02-29'),true);
   assert.equal(validDate('2027-2-01'),false);
-  assert.equal(calendarEvent('2026-09-18').registrationOpensAt,'2026-09-16T10:00:00.000Z');
+  assert.equal(calendarEvent('2026-09-18').registrationOpensAt,'2026-09-16T04:00:00.000Z');
+  assert.equal(calendarEvent('2027-01-01').registrationOpensAt,'2026-12-30T05:00:00.000Z');
+  assert.equal(calendarEvent('2026-09-18').registrationClosesAt,'2026-09-17T10:00:00.000Z');
   assert.equal(calendarEvent('2027-01-01').registrationClosesAt,'2026-12-31T11:00:00.000Z');
   assert.equal(copenhagenDate(new Date('2026-09-17T22:30:00Z')),'2026-09-18');
 });

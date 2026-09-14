@@ -46,5 +46,9 @@ try {
   }
   // A single D1 batch commits schema and imported rows together or rolls everything back.
   if (statements.length) await db.batch(statements);
+  const { members } = await db.prepare('SELECT COUNT(*) AS members FROM players').first();
+  if (members === 0) {
+    console.warn('WARNING: Local database contains no members. Existing logins will fail here. Restore a local backup or create a local profile.');
+  }
   console.log('Local D1 ready (.wrangler/local-dev). Production unchanged.');
 } finally { await proxy.dispose(); }

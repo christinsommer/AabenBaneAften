@@ -1,4 +1,28 @@
+param([switch]$ElevatedRetry)
+
 $ErrorActionPreference = 'Stop'
+
+function Restart-CleanupAsAdministrator {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+    if ($ElevatedRetry -or $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        throw 'Windows refused to stop the server even with administrator rights. Port 3000 must be free before startup.'
+    }
+
+    Write-Host 'Administrator rights are needed to stop the old server. Accept the Windows UAC prompt to continue.'
+    try {
+        # Elevate only cleanup, not npm or the new development server.
+        # Rerun discovery rather than passing potentially stale process IDs.
+        $cleanup = Start-Process -FilePath "$PSHOME\powershell.exe" `
+            -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -ElevatedRetry" `
+            -Verb RunAs -WindowStyle Hidden -Wait -PassThru
+    } catch {
+        throw 'Administrator cleanup could not start or the UAC prompt was cancelled. Run npm.cmd run dev again and approve the prompt.'
+    }
+    if ($cleanup.ExitCode -ne 0) {
+        throw 'Administrator cleanup failed. Port 3000 must be free before startup.'
+    }
+}
 
 # Only terminate listeners on the explicitly reserved development port.
 # Query all listeners so an empty port is not treated as a PowerShell error.
@@ -22,7 +46,8 @@ try {
         # Include children, such as the local runtime of an older Next.js server.
         & taskkill.exe /PID $owner /T /F
         if ($LASTEXITCODE -ne 0 -and (Get-Process -Id $owner -ErrorAction SilentlyContinue)) {
-            throw "Could not stop process $owner. Port 3000 must be free before startup."
+            Restart-CleanupAsAdministrator
+            break
         }
     }
 
@@ -35,6 +60,6 @@ try {
     }
     Write-Host 'Port 3000 is ready.'
 } catch {
-    Write-Error $_
+    Write-Error $_ -ErrorAction Continue
     exit 1
 }

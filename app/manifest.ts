@@ -7,8 +7,7 @@ export default function manifest(): MetadataRoute.Manifest {
     lang:'da',start_url:'/',scope:'/',display:'standalone',
     background_color:'#f6f9f7',theme_color:'#13375e',
     icons:[
-      {src:'/hik-logo-clean.png',sizes:'512x512',type:'image/png',purpose:'any'},
-      {src:'/hik-logo-clean.png',sizes:'512x512',type:'image/png',purpose:'maskable'},
+      {src:'/AppTennisLogo.png',sizes:'1253x1253',type:'image/png',purpose:'any'},
     ],
   };
 }

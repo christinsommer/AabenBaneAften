@@ -1,3 +1,24 @@
+export function registrationDateParts(value: string) {
+  const parts = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Copenhagen', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(value));
+  const get = (name: string) => parts.find(part => part.type === name)!.value;
+  return { date: `${get('year')}-${get('month')}-${get('day')}`, hour: get('hour') };
+}
+
+function registrationInstant(date: unknown, hour: unknown) {
+  if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(Date.parse(`${date}T12:00:00Z`)) || new Date(`${date}T12:00:00Z`).toISOString().slice(0,10) !== date || typeof hour !== 'string' || !/^(0[0-9]|1[0-9]|2[0-3])$/.test(hour)) throw new Error('Vælg en gyldig dato og en hel time.');
+  const candidates = [1, 2].map(offset => new Date(Date.parse(`${date}T${hour}:00:00Z`) - offset * 3600000).toISOString())
+    .filter(value => { const local = registrationDateParts(value); return local.date === date && local.hour === hour; });
+  if (candidates.length !== 1) throw new Error('Denne time springes over eller forekommer to gange ved skift mellem sommer- og vintertid. Vælg en anden time.');
+  return candidates[0];
+}
+
+export function registrationSchedule(input: Record<string, unknown>) {
+  const registrationOpensAt = registrationInstant(input.opensDate, input.opensHour);
+  const registrationClosesAt = registrationInstant(input.closesDate, input.closesHour);
+  if (registrationOpensAt >= registrationClosesAt) throw new Error('Sluttidspunktet skal være efter starttidspunktet.');
+  return { registrationOpensAt, registrationClosesAt };
+}
+
 type RegistrationWindow = {
   registrationOverride: "auto" | "open" | "closed";
   registrationOpensAt: string;

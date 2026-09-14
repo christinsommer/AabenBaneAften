@@ -7,7 +7,7 @@ import { createSession, currentPlayer, destroySession, hashPin, hashToken, verif
 import { ensureEvent, generateSchedule, TIMES } from "../../../lib/schedule";
 import { sendEmail } from "../../../lib/email";
 import { sendWelcomeEmail } from "../../../lib/welcome-email";
-import { registrationIsOpen } from "../../../lib/registration";
+import { registrationIsOpen, registrationSchedule } from "../../../lib/registration";
 import { profileValues } from "../../../lib/profile";
 import { calendarEvent, validDate } from "../../../lib/calendar";
 import { signupInput, signupFields, noSignup } from "../../../lib/signup";
@@ -265,8 +265,16 @@ export async function POST(request:Request){
         await db.update(events).set({ importedKampplan: JSON.stringify(cleaned) }).where(eq(events.id, event.id));
         return NextResponse.json(await state());
       }
+      if(action === "set_registration_schedule") {
+        if(user.role !== "admin") return Response.json({error:"Kun administratorer kan ændre tidsplanen."},{status:403});
+        if(Number(body.eventId) !== event.id) return Response.json({error:"Spillerunden er ændret. Genindlæs siden."},{status:409});
+        let schedule;
+        try { schedule = registrationSchedule(body); } catch(error) { return Response.json({error:error instanceof Error ? error.message : "Kontrollér tidsplanen."},{status:400}); }
+        await db.update(events).set(schedule).where(eq(events.id,event.id));
+        return NextResponse.json(await state());
+      }
       const registrationOpen=registrationIsOpen(event);
-      if(["signup","cancel_signup","request_match","accept_match_request","lookup_member"].includes(action)&&!registrationOpen)return Response.json({error:event.registrationOverride==="closed"?"Tilmeldingen er lukket af administratoren.":"Tilmeldingen er lukket. Den normale åbningstid er onsdag kl. 12 til torsdag kl. 12."},{status:400});
+      if(["signup","cancel_signup","request_match","accept_match_request","lookup_member"].includes(action)&&!registrationOpen)return Response.json({error:event.registrationOverride==="closed"?"Tilmeldingen er lukket af administratoren.":`Tilmeldingen er lukket. Tidsplan: ${new Date(event.registrationOpensAt).toLocaleString('da-DK',{timeZone:'Europe/Copenhagen'})} til ${new Date(event.registrationClosesAt).toLocaleString('da-DK',{timeZone:'Europe/Copenhagen'})}.`},{status:400});
       if(action==="lookup_member"){
         const memberNo=String(body.memberNo??"").trim();
         if(!memberNo)return Response.json({found:false,error:"Indtast et medlemsnummer."},{status:400});

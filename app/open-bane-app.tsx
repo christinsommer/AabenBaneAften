@@ -7,6 +7,8 @@ import { ImportedPlanTable } from "./imported-plan";
 import { MatchCalendarButton } from "../components/match-calendar-button";
 import { isPlayersImportedMatch } from "../lib/kampplan-filter";
 import { useEffect, useState } from "react";
+import { appRequest, requireLoginSession } from "../lib/app-request";
+import { registrationDateParts } from "../lib/registration";
 import { InstallApp } from "../components/install-app";
 import { levelScore } from '../lib/ranking';
 import { RankingField } from '../components/ranking-field';
@@ -116,14 +118,15 @@ export default function OpenBaneApp() {
       window.history.replaceState({}, "", window.location.pathname);
     }
   }, []);
-  async function load() {
+  async function load(requireSession = false) {
     try {
-      const r = await fetch("/api/app", { cache: "no-store" }),
-        j = await r.json() as { error?: string; warning?: string };
-      if (!r.ok) throw new Error(j.error);
+      const j = await appRequest();
+      if (requireSession) requireLoginSession(j);
       setData(j);
+      return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : "Kunne ikke indlæse appen");
+      return false;
     }
   }
   async function refresh() {
@@ -141,16 +144,10 @@ export default function OpenBaneApp() {
     setBusy(true);
     setError("");
     try {
-      const r = await fetch("/api/app", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(payload),
-        }),
-        j = await r.json() as { error?: string; warning?: string };
-      if (!r.ok) throw new Error(j.error);
+      const j = await appRequest(payload);
       if (payload.action === "register") setOpenProfile(true);
       if (payload.action === "logout" || payload.action === "login") setOpenProfile(false);
-      await load();
+      if (!await load(payload.action === "login" || payload.action === "register")) return false;
       if (j.warning) setError(j.warning);
       return true;
     } catch (e) {
@@ -163,10 +160,29 @@ export default function OpenBaneApp() {
   useEffect(() => {
     load();
   }, []);
+  useEffect(() => {
+    if (!data?.authenticated || busy) return;
+    let active = true;
+    const updateSchedule = async () => {
+      if (document.visibilityState === 'hidden') return;
+      try {
+        const next = await appRequest();
+        if (active) setData(next);
+      } catch { /* Keep the current screen during temporary background errors. */ }
+    };
+    const timer = window.setInterval(updateSchedule, 30000);
+    window.addEventListener('focus', updateSchedule);
+    return () => { active = false; window.clearInterval(timer); window.removeEventListener('focus', updateSchedule); };
+  }, [data?.authenticated, busy]);
   if (!data)
     return (
       <main className="grid min-h-screen place-items-center bg-[#f4f6fa]">
-        <RefreshCw className="animate-spin text-[#13375e]" />
+        {error ? (
+          <div className="max-w-md space-y-4 p-6 text-center">
+            <p role="alert" className="text-red-700">{error}</p>
+            <Button type="button" disabled={busy} onClick={refresh}>Prøv igen</Button>
+          </div>
+        ) : <RefreshCw aria-label="Indlæser" className="animate-spin text-[#13375e]" />}
       </main>
     );
   if (!data.authenticated || mode === "reset")
@@ -287,7 +303,7 @@ function AuthScreen({ mode, setMode, act, busy, error, event, resetToken }: any)
               <h2 className="text-2xl font-bold">Glemt pinkode</h2>
               <p className="mt-1 text-slate-500">Skriv dit medlemsnummer, så vi sender et link til den e-mail, der er knyttet til din profil.</p>
               <form onSubmit={handleForgotSubmit} className="mt-7 grid gap-4">
-                <Field name="memberNo" label="HIK-medlemsnummer" />
+                <Field name="memberNo" label="HIK-medlemsnummer" autoComplete="username" />
                 {error && (
                   <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>
                 )}
@@ -352,12 +368,13 @@ function AuthScreen({ mode, setMode, act, busy, error, event, resetToken }: any)
                     </div>
                   </>
                 )}
-                <Field name="memberNo" label="HIK-medlemsnummer" />
+                <Field name="memberNo" label="HIK-medlemsnummer" autoComplete="username" />
                 <Field
                   name="pin"
                   label="Pinkode (4–8 cifre)"
                   type="password"
                   inputMode="numeric"
+                  autoComplete={mode === "login" ? "current-password" : "new-password"}
                 />
                 {error && (
                   <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">
@@ -374,6 +391,7 @@ function AuthScreen({ mode, setMode, act, busy, error, event, resetToken }: any)
                   </button>
                 )}
                 <Button
+                  type="submit"
                   disabled={busy}
                   className="mt-2 h-12 bg-[#13375e] text-base hover:bg-[#0d2947]"
                 >
@@ -958,9 +976,10 @@ function SignupPanel({ data, act, busy }: any) {
           </CardDescription>
         </CardHeader>
         <CardContent className="px-4">
+          <p className="mb-3 text-sm text-slate-600">Tilmelding: {deadlineLabel(data.event.registrationOpensAt)} til {deadlineLabel(data.event.registrationClosesAt)}.</p>
           {!data.isOpen && (
             <p className="mb-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
-              {data.event.registrationOverride === "closed" ? "Tilmeldingen er lukket af administratoren." : `Tilmelding: ${deadlineLabel(data.event.registrationOpensAt)} til ${deadlineLabel(data.event.registrationClosesAt)}.`}
+              {data.event.registrationOverride === "closed" ? "Tilmeldingen er lukket af administratoren." : "Tilmeldingen er lukket."}
               {data.user.role === "admin" && " Du kan åbne den under Admin."}
             </p>
           )}
@@ -1305,6 +1324,27 @@ function MatchCard({ match, name, highlight, calendarDate, calendarPlayers }: an
   );
 }
 
+function RegistrationScheduleForm({ event, act, busy }: any) {
+  const opens = registrationDateParts(event.registrationOpensAt);
+  const closes = registrationDateParts(event.registrationClosesAt);
+  return <form className="space-y-3 border-t pt-4" onSubmit={async e => {
+    e.preventDefault();
+    await act({ ...Object.fromEntries(new FormData(e.currentTarget)), action: 'set_registration_schedule', eventId: event.id });
+  }}>
+    <p className="text-sm text-slate-600">Tidsplan for denne spillerunde. Alle tider er dansk tid og bruges, når “Følg tidsplan” er valgt.</p>
+    <div className="grid gap-4 sm:grid-cols-2">
+      {([{ name: 'opens', label: 'Tilmelding åbner', value: opens }, { name: 'closes', label: 'Tilmelding lukker', value: closes }]).map(({ name, label, value }) => <fieldset key={name} disabled={busy} className="space-y-2">
+        <legend className="text-sm font-semibold">{label}</legend>
+        <label className="grid gap-1 text-sm">Dato<Input type="date" name={`${name}Date`} defaultValue={value.date} required /></label>
+        <label className="grid gap-1 text-sm">Klokkeslæt<select name={`${name}Hour`} defaultValue={value.hour} required className="h-10 rounded-md border border-input bg-transparent px-3">
+          {Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0')).map(hour => <option key={hour} value={hour}>{hour}:00</option>)}
+        </select></label>
+      </fieldset>)}
+    </div>
+    <Button type="submit" disabled={busy}>{busy ? 'Gemmer…' : 'Gem tidsplan'}</Button>
+  </form>;
+}
+
 function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
   const [kampplanPrompt, setKampplanPrompt] = useState("");
   const [promptError, setPromptError] = useState("");
@@ -1368,6 +1408,7 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
             <Button disabled={busy} variant={data.event.registrationOverride === "closed" ? "default" : "outline"} aria-pressed={data.event.registrationOverride === "closed"} onClick={() => act({action:"set_registration",mode:"closed"})}>Luk tilmelding</Button>
             <Button disabled={busy} variant={data.event.registrationOverride === "auto" ? "default" : "outline"} aria-pressed={data.event.registrationOverride === "auto"} onClick={() => act({action:"set_registration",mode:"auto"})}>Følg tidsplan</Button>
           </div>
+          <RegistrationScheduleForm key={`${data.event.id}-${data.event.registrationOpensAt}-${data.event.registrationClosesAt}`} event={data.event} act={act} busy={busy} />
           {data.event.testActive && <Dialog>
             <DialogTrigger asChild><Button variant="outline" disabled={busy}>Afslut testfase</Button></DialogTrigger>
             <DialogContent>

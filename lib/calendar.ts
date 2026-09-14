@@ -10,10 +10,10 @@ export function copenhagenDate(now = new Date()) {
   return `${part("year")}-${part("month")}-${part("day")}`;
 }
 
-function noonInCopenhagen(date: string) {
+function hourInCopenhagen(date: string, hour: number) {
   const utcNoon = new Date(`${date}T12:00:00Z`);
   const localHour = Number(new Intl.DateTimeFormat("en-GB", {timeZone:"Europe/Copenhagen",hour:"2-digit",hourCycle:"h23"}).format(utcNoon));
-  return new Date(utcNoon.getTime() - (localHour - 12) * 3600000).toISOString();
+  return new Date(utcNoon.getTime() - (localHour - hour) * 3600000).toISOString();
 }
 
 export function calendarEvent(date: string) {
@@ -23,7 +23,7 @@ export function calendarEvent(date: string) {
     result.setUTCDate(result.getUTCDate() + days);
     return result.toISOString().slice(0,10);
   };
-  return {date, registrationOpensAt:noonInCopenhagen(offsetDate(-2)), registrationClosesAt:noonInCopenhagen(offsetDate(-1))};
+  return {date, registrationOpensAt:hourInCopenhagen(offsetDate(-2), 6), registrationClosesAt:hourInCopenhagen(offsetDate(-1), 12)};
 }
 
 export function fridayDates(start: string, end: string) {
