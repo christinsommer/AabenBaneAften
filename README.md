@@ -7,6 +7,7 @@ Next.js-webapp på Cloudflare Workers med D1.
 - Udgivelse med test, databasebackup og migrationer: `npm run release`.
 
 Se [DEPLOYMENT.md](./DEPLOYMENT.md) for opsætning, databaseændringer og fejlhåndtering.
+Se [optimeringsalgoritmen](./optimizer-service/README.md) for OR-Tools-tjenesten, lokal opsætning og prioritering af kampe. Kontroller kræver nu også .NET 10 SDK.
 Brug `npm.cmd` i PowerShell, hvis maskinens scriptpolitik blokerer `npm`.
 
 På Windows frigør `npm run dev` automatisk port 3000 ved at stoppe den proces,

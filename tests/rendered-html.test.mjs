@@ -190,7 +190,12 @@ test("Cloudflare Worker renders and authenticates against isolated D1", { timeou
     assert.equal(rejoined.signup.nHours,3);
     assert.ok(rejoined.signup.signupOrder > saved.signup.signupOrder);
     assert.equal((await (await post({...example,nHours:0,nPossible:0,szPossible:[]},playerCookie)).json()).signup.nHours,0);
-    assert.equal((await post({action:'generate'},cookie)).status,200);
+    const legacyGenerate = await post({action:'generate'},cookie);
+    assert.equal(legacyGenerate.status,400);
+    assert.match((await legacyGenerate.json()).error,/Algoritme foreslå kampe/);
+    const optimizerRequest = headers => worker.fetch('/api/optimizer', {method:'POST', headers:{'Content-Type':'application/json',...headers},body:JSON.stringify({action:'solve',eventId:state.event.id,weights:{}})});
+    assert.equal((await optimizerRequest({})).status,401);
+    assert.equal((await optimizerRequest({cookie:playerCookie})).status,403);
     const optedOut=await (await worker.fetch('/api/app',{headers:{cookie:playerCookie}})).json();
     assert.equal(optedOut.signup.status,'active');
     assert.equal(optedOut.signup.nHours,0);
@@ -231,8 +236,12 @@ test("Cloudflare Worker renders and authenticates against isolated D1", { timeou
     assert.equal(importedResponse.status,200);
     assert.deepEqual((await importedResponse.json()).importedMatches,imported);
     assert.deepEqual((await (await worker.fetch('/api/app',{headers:{cookie}})).json()).importedMatches,imported);
+    const privateDraft = await (await worker.fetch('/api/app')).json();
+    assert.deepEqual(privateDraft.importedMatches,[]);
+    assert.equal(privateDraft.event.importedKampplan,'');
     assert.equal((await post({action:'remove_kampplan'},playerCookie)).status,403);
     assert.equal((await post({action:'publish'},cookie)).status,200);
+    assert.deepEqual((await (await worker.fetch('/api/app')).json()).importedMatches,imported);
     const clearedResponse = await post({action:'remove_kampplan'},cookie);
     assert.equal(clearedResponse.status,200);
     const cleared = await clearedResponse.json();

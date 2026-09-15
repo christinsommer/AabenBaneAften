@@ -13,7 +13,10 @@
     "release": "node scripts/release.mjs",
     "build": "next build",
     "start": "next start",
-    "test": "npm run cf:build && node --test tests/*.test.mjs",
+    "test": "npm run optimizer:test && npm run cf:build && node --test tests/*.test.mjs",
+    "optimizer:build": "node scripts/optimizer-service.mjs build",
+    "optimizer:test": "node scripts/optimizer-service.mjs test",
+    "optimizer:start": "node scripts/optimizer-service.mjs start",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate",
     "cf:whoami": "wrangler whoami",
@@ -22,7 +25,7 @@
     "cf:preview": "opennextjs-cloudflare preview",
     "cf:deploy": "opennextjs-cloudflare deploy",
     "cf:typegen": "wrangler types --env-interface=CloudflareEnv cloudflare-env.d.ts",
-    "test:d1": "node scripts/check-cloudflare-config.mjs && node --test tests/*.test.mjs"
+    "test:d1": "npm run optimizer:test && node scripts/check-cloudflare-config.mjs && node --test tests/*.test.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",

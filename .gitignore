@@ -45,3 +45,7 @@ next-env.d.ts
 .dev.vars*
 !.dev.vars.example
 restart-dev.*.log
+/optimizer-service/bin/
+/optimizer-service/obj/
+/optimizer-service/.dotnet/
+/optimizer-service/.nuget/

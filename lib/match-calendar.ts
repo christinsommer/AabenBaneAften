@@ -36,7 +36,8 @@ export function createMatchCalendar(match: CalendarMatch, now = new Date()) {
   const firstNames = match.players.map(player => typeof player === 'string'
     ? player.trim().split(/\s+/)[0]
     : player.firstName?.trim() || player.name.trim().split(/\s+/)[0]);
-  const title = `${firstNames[0]} & ${firstNames[1]} vs ${firstNames[2]} & ${firstNames[3]}`;
+  const singleNames = firstNames.filter(Boolean);
+  const title = singleNames.length === 2 ? `${singleNames[0]} vs ${singleNames[1]}` : `${firstNames[0]} & ${firstNames[1]} vs ${firstNames[2]} & ${firstNames[3]}`;
   const court = String(match.court).match(/\d+/)?.[0] ?? String(match.court);
   const weekday = new Date(`${match.date}T12:00:00Z`).getUTCDay();
   const location = `${weekday === 5 ? 'Indendørs ' : weekday === 3 ? 'Udendørs ' : ''}Bane #${court}`;

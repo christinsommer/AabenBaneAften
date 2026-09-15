@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import { getDb } from "../../../db";
 import { events, feedback, matches, matchRequests, pinResetTokens, players, sessions, signups, substitutions } from "../../../db/schema";
 import { createSession, currentPlayer, destroySession, hashPin, hashToken, verifyPin, verifyToken } from "../../../lib/auth";
-import { ensureEvent, generateSchedule, TIMES } from "../../../lib/schedule";
+import { ensureEvent, TIMES } from "../../../lib/schedule";
 import { sendEmail } from "../../../lib/email";
 import { sendWelcomeEmail } from "../../../lib/welcome-email";
 import { registrationIsOpen, registrationSchedule } from "../../../lib/registration";
@@ -42,15 +42,16 @@ function resetLinkEmail(to: string, token: string) {
 }
 
 async function state() {
-  const db = getDb(); const event = await ensureEvent(); const user = await currentPlayer();
+  const db = getDb(); const storedEvent = await ensureEvent(); const user = await currentPlayer();
+  const event = storedEvent ? {...storedEvent, importedKampplan: user?.role === 'admin' || storedEvent.status === 'published' ? storedEvent.importedKampplan : ''} : null;
   const isOpen = event ? registrationIsOpen(event) : false;
   const calendarDates = await db.select({id:events.id,date:events.date,status:events.status,isTest:events.isTest,testActive:events.testActive}).from(events).where(eq(events.archived,false)).orderBy(asc(events.date));
-  const importedMatches = event ? parseImportedKampplan(event.importedKampplan) : [];
+  const importedMatches = event && (user?.role === 'admin' || event.status === 'published') ? parseImportedKampplan(event.importedKampplan) : [];
   if (!user) return { authenticated: false, event, isOpen, times: TIMES, importedMatches };
   if (!event) return {authenticated:true,user:visibleMember(user),event:null,isOpen:false,times:TIMES,calendarDates,importedMatches: []};
   const signup = (await db.select().from(signups).where(and(eq(signups.eventId,event.id),eq(signups.playerId,user.id),ne(signups.status,"cancelled"))).limit(1))[0] ?? null;
   const eventMatches = await db.select().from(matches).where(eq(matches.eventId,event.id)).orderBy(asc(matches.startTime),asc(matches.court));
-  const allPlayers = user.role === "admin" ? await db.select({id:players.id,memberNo:players.memberNo,name:players.name,firstName:players.firstName,lastName:players.lastName,email:players.email,phone:players.phone,phoneCountryCode:players.phoneCountryCode,christinRanking:players.christinRanking,gender:players.gender,selfLevel:players.selfLevel,adminLevel:players.adminLevel,role:players.role,suspendedEventId:players.suspendedEventId}).from(players).orderBy(asc(players.name)) : [];
+  const allPlayers = user.role === "admin" ? await db.select({id:players.id,memberNo:players.memberNo,name:players.name,firstName:players.firstName,lastName:players.lastName,email:players.email,phone:players.phone,phoneCountryCode:players.phoneCountryCode,christinRanking:players.christinRanking,age:players.age,gender:players.gender,selfLevel:players.selfLevel,adminLevel:players.adminLevel,role:players.role,suspendedEventId:players.suspendedEventId}).from(players).orderBy(asc(players.name)) : [];
   const eventSignups = user.role === "admin" ? await db.select({signup:signups,player:{id:players.id,name:players.name,memberNo:players.memberNo,gender:players.gender,selfLevel:players.selfLevel,adminLevel:players.adminLevel}}).from(signups).innerJoin(players,eq(players.id,signups.playerId)).where(eq(signups.eventId,event.id)).orderBy(asc(signups.createdAt)) : [];
   const signupByPlayer = new Map(eventSignups.map(row=>[row.player.id,row.signup]));
   const memberSignups = allPlayers.map(player=>{
@@ -347,8 +348,7 @@ export async function POST(request:Request){
           await db.update(players).set({christinRanking:cr}).where(eq(players.id,playerId));
         }
         else if(action==="generate"){
-          await db.update(events).set({status:"draft",publishedAt:null}).where(eq(events.id,event.id));
-          await generateSchedule(event.id);
+          return Response.json({error:'Brug “Algoritme foreslå kampe” under Kampplan Admin.'},{status:400});
         }
         else if(action==="send_test_email"){
           const recipient=user.email.trim().toLowerCase();

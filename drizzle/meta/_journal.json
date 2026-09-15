@@ -57,6 +57,13 @@
       "when": 1789398400079,
       "tag": "0007_self_ranking_options",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1789491141882,
+      "tag": "0008_bouncy_captain_britain",
+      "breakpoints": true
     }
   ]
 }

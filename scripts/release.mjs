@@ -23,6 +23,7 @@ function run(script, args = [], output) {
 }
 try {
   run('scripts/check-cloudflare-config.mjs');
+  run('scripts/optimizer-service.mjs', ['test']);
   const id = randomUUID();
   writeFileSync('lib/release-info.json', JSON.stringify({ id }) + '\n');
   run(adapter, ['build']);

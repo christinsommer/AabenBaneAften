@@ -11,6 +11,7 @@ test('release check never touches production; test and backup failures stop depl
     const directory = mkdtempSync(join(tmpdir(), 'aabenbane-release-'));
     const put = (path, contents) => { const full = join(directory, path); mkdirSync(resolve(full, '..'), { recursive: true }); writeFileSync(full, contents); };
     put('scripts/check-cloudflare-config.mjs', '');
+    put('scripts/optimizer-service.mjs', '');
     put('lib/release-info.json', '{}');
     put('tests/example.test.mjs', scenario === 'test-fails' ? 'throw new Error("intentional failure")' : '');
     put('node_modules/@opennextjs/cloudflare/dist/cli/index.js', "require('node:fs').appendFileSync('calls.txt',process.argv[2]+'\\n')");

@@ -1,2 +1,4 @@
 NEXTJS_ENV=development
 # RESEND_API_KEY=your-local-test-key
+# OPTIMIZER_URL=http://127.0.0.1:5117
+# OPTIMIZER_API_KEY=use-the-same-secret-as-the-optimizer-service-at-least-32-characters

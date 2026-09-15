@@ -4,6 +4,7 @@ import { unusedImportedCourts } from "../lib/unused-courts";
 import rulesContent from "../lib/rules-content.json";
 import { includeIntermediateTimes } from "../lib/signup";
 import { ImportedPlanTable } from "./imported-plan";
+import { OptimizerPanel } from "./optimizer-panel";
 import { MatchCalendarButton } from "../components/match-calendar-button";
 import { isPlayersImportedMatch } from "../lib/kampplan-filter";
 import { useEffect, useState } from "react";
@@ -791,6 +792,7 @@ function EmptyCalendarDashboard({data,act,busy,error,openProfile}: {
 }
 
 type MemberProfile = {
+  age?: number | null;
   phone?: string;
   phoneCountryCode?: string;
   christinRanking?: number | null;
@@ -843,6 +845,7 @@ function ProfilePanel({ user, act, busy, adminMode=false }: {
             </select>
           </div>
           <RankingField id="profile-level" defaultValue={user.selfLevel} />
+          <Field name="age" label="Alder (valgfrit)" type="number" min={0} max={120} step={1} defaultValue={user.age ?? ''} required={false} />
           {adminMode && <div className="grid gap-2"><Label htmlFor="edit-member-cr">CR</Label><select id="edit-member-cr" name="christinRanking" defaultValue={user.christinRanking??""} className="h-10 rounded-md border px-3"><option value="">Ikke vurderet</option>{[1,2,3,4,5,6,7,8,9].map(cr=><option key={cr} value={cr}>{`${cr}  ${CR_LABELS[cr]}`}</option>)}</select></div>}
           <Button disabled={busy} className="bg-[#13375e]">{busy ? "Gemmer…" : "Gem profil"}</Button>
           {saved && <p role="status" className="text-sm font-semibold text-[#13375e]">Din profil er gemt.</p>}
@@ -1421,6 +1424,7 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
       <PlayerLists data={data} view={listView} setView={setListView} act={act} busy={busy} />
       </TabsContent>
       <TabsContent value="matches" className="space-y-6">
+      <OptimizerPanel key={data.event.id} event={data.event} isOpen={data.isOpen} busy={busy} refresh={refresh} />
       {!!openSubstitutions.length && (
         <Card className="border-amber-300 bg-amber-50">
           <CardHeader>

@@ -1,0 +1,5 @@
+*
+!*.cs
+!OptimizerService.csproj
+!packages.lock.json
+!Dockerfile
