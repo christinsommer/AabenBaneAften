@@ -6,12 +6,12 @@ Next.js/Cloudflare kalder denne .NET 10-tjeneste over HTTP. Google.OrTools 9.15.
 
 1. Installér .NET 10 SDK (allerede tilgængelig på denne udviklingsmaskine).
 2. Kør `npm run optimizer:test` fra projektets rod. Det gendanner låste NuGet-pakker, bygger tjenesten og tester den rigtige solver.
-3. Kør `npm run db:setup` for at tilføje det valgfrie aldersfelt til lokal D1.
+3. Kør `npm run db:setup` for at tilføje det valgfrie fødselsår til lokal D1.
 4. Kør `npm run optimizer:start`. Første gang opretter kommandoen en tilfældig lokal API-nøgle og tilføjer den samt `OPTIMIZER_URL=http://127.0.0.1:5117` i `.dev.vars`. Eksisterende værdier bevares. Nøglen udskrives ikke.
 5. Lad beregningstjenesten køre, og kør `npm run dev` i en anden terminal. Genstart appen, når `.dev.vars` ændres. Ved manuel opsætning skal app og tjeneste have samme `OPTIMIZER_API_KEY` på mindst 32 tegn.
 6. Log ind som administrator, luk tilmeldingen, og vælg **Kampplan Admin → Algoritme foreslå kampe**.
 
-Et forslag ændrer ikke databasen. **Brug kampforslag** gemmer kladden; offentliggørelse sker særskilt. Vægte gælder det konkrete forslag. Alder kan rettes under **Min profil** eller **Admin → Medlemmer → Ret medlem**. Tom alder er tilladt, når FactorAge er 0; en anden aldersvægt kræver alder på alle deltagere. Alder er et manuelt vedligeholdt heltal, ikke en fødselsdato.
+**Algoritme foreslå kampe** beregner og kontrollerer et forslag og gemmer det automatisk som kladde. Tabellen og **Baner, der ikke bruges** opdateres under **Admin → Kampplan Admin**, som ved Excel-import. Offentliggørelse sker særskilt. Også gyldige løsninger uden bevist optimalitet gemmes; status fremgår tydeligt. Tomme eller ugyldige forslag erstatter ikke kladden. Vægte gælder det konkrete forslag. Fødselsår kan rettes under **Min profil** eller **Admin → Medlemmer → Ret medlem**. Listen går fra indeværende år minus 16 ned til 1940. Alder beregnes som indeværende år i Danmark minus fødselsår. Tomt fødselsår er tilladt, når FactorAge er 0; en anden aldersvægt kræver fødselsår på alle deltagere. Den gamle alderskolonne bruges ikke længere. Kun fiktive SB50-sandboxprofiler konverteres automatisk; øvrige medlemmer skal angive deres fødselsår.
 
 ## Produktion
 

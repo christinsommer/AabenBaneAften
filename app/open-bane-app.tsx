@@ -5,6 +5,7 @@ import rulesContent from "../lib/rules-content.json";
 import { includeIntermediateTimes } from "../lib/signup";
 import { ImportedPlanTable } from "./imported-plan";
 import { OptimizerPanel } from "./optimizer-panel";
+import {ageFromBirthYear, birthYearOptions} from '../lib/birth-year';
 import { MatchCalendarButton } from "../components/match-calendar-button";
 import { isPlayersImportedMatch } from "../lib/kampplan-filter";
 import { useEffect, useState } from "react";
@@ -679,8 +680,17 @@ function Dashboard({ data, act, busy, error, openProfile, refresh, refreshing }:
                       ? "Lukket af administrator"
                       : deadlineLabel(data.event.registrationClosesAt)}
                 </p>
+                <p className="mt-2 text-sm text-slate-600">
+                  Tilmelding åbner {deadlineLabel(data.event.registrationOpensAt).replace(/(\d{2}[.:]\d{2})$/, 'kl. $1')}
+                </p>
+                {!data.isOpen && (
+                  <p className="mt-1 text-sm text-amber-900">
+                    {data.event.registrationOverride === "closed" ? "Tilmeldingen er lukket af administratoren." : "Tilmeldingen er lukket."}
+                    {data.user.role === "admin" && " Du kan åbne den under Admin."}
+                  </p>
+                )}
                 <p className="mt-0.5 text-[11px] text-slate-500">
-                  {data.event.registrationOverride === "auto" ? "Plan senest fredag kl. 12" : "Den normale tidsplan er tilsidesat"}
+                  {data.event.registrationOverride === "auto" ? `Kampplan senest ${niceDate(data.event.date)}, kl. 12.00` : "Den normale tidsplan er tilsidesat"}
                 </p>
               </div>
             </CardContent>
@@ -792,7 +802,7 @@ function EmptyCalendarDashboard({data,act,busy,error,openProfile}: {
 }
 
 type MemberProfile = {
-  age?: number | null;
+  birthYear?: number | null;
   phone?: string;
   phoneCountryCode?: string;
   christinRanking?: number | null;
@@ -813,6 +823,7 @@ function ProfilePanel({ user, act, busy, adminMode=false }: {
   adminMode?: boolean;
 }) {
   const [saved, setSaved] = useState(false);
+  const [birthYear, setBirthYear] = useState(user.birthYear?.toString() ?? '');
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSaved(false);
@@ -845,7 +856,14 @@ function ProfilePanel({ user, act, busy, adminMode=false }: {
             </select>
           </div>
           <RankingField id="profile-level" defaultValue={user.selfLevel} />
-          <Field name="age" label="Alder (valgfrit)" type="number" min={0} max={120} step={1} defaultValue={user.age ?? ''} required={false} />
+          <div className="grid gap-2">
+            <Label htmlFor={adminMode ? 'edit-member-birth-year' : 'profile-birth-year'}>Fødselsår (valgfrit)</Label>
+            <select id={adminMode ? 'edit-member-birth-year' : 'profile-birth-year'} name="birthYear" value={birthYear} onChange={e => setBirthYear(e.target.value)} className="h-10 rounded-md border border-input bg-transparent px-3">
+              <option value="">Ikke angivet</option>
+              {birthYearOptions().map(year => <option key={year} value={year}>{year}</option>)}
+            </select>
+            {birthYear && <p className="text-sm text-slate-600">Beregnet alder: {ageFromBirthYear(Number(birthYear))} år.</p>}
+          </div>
           {adminMode && <div className="grid gap-2"><Label htmlFor="edit-member-cr">CR</Label><select id="edit-member-cr" name="christinRanking" defaultValue={user.christinRanking??""} className="h-10 rounded-md border px-3"><option value="">Ikke vurderet</option>{[1,2,3,4,5,6,7,8,9].map(cr=><option key={cr} value={cr}>{`${cr}  ${CR_LABELS[cr]}`}</option>)}</select></div>}
           <Button disabled={busy} className="bg-[#13375e]">{busy ? "Gemmer…" : "Gem profil"}</Button>
           {saved && <p role="status" className="text-sm font-semibold text-[#13375e]">Din profil er gemt.</p>}
@@ -979,13 +997,6 @@ function SignupPanel({ data, act, busy }: any) {
           </CardDescription>
         </CardHeader>
         <CardContent className="px-4">
-          <p className="mb-3 text-sm text-slate-600">Tilmelding: {deadlineLabel(data.event.registrationOpensAt)} til {deadlineLabel(data.event.registrationClosesAt)}.</p>
-          {!data.isOpen && (
-            <p className="mb-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
-              {data.event.registrationOverride === "closed" ? "Tilmeldingen er lukket af administratoren." : "Tilmeldingen er lukket."}
-              {data.user.role === "admin" && " Du kan åbne den under Admin."}
-            </p>
-          )}
           <div className="mb-4">
             <h3 className="text-base font-semibold">Hvor mange timer?</h3>
             <div className="mt-2 grid grid-cols-3 gap-2">

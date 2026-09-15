@@ -25,15 +25,22 @@ export function OptimizerPanel({event, isOpen, busy, refresh}: {
     setWorking(action); setError(''); setSaved(false);
     if (action === 'solve') setProposal(null);
     try {
-      const response = await fetch('/api/optimizer', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
-        signal: AbortSignal.timeout(125_000), body: JSON.stringify({action, eventId: event.id,
-          weights: action === 'save' ? proposal!.weights : Object.fromEntries(Object.entries(weights).map(([k,v]) => [k, v === '' ? '' : Number(v)])),
-          ...(action === 'save' ? {matches: proposal!.matches, fingerprint: proposal!.fingerprint} : {}),
-        })});
-      const data = await response.json() as Proposal & {error?: string};
-      if (!response.ok) throw new Error(data.error || 'Forslaget kunne ikke behandles.');
-      if (action === 'solve') setProposal(data);
-      else {setProposal(null); setSaved(true); await refresh();}
+      async function request(body: Record<string, unknown>) {
+        const response = await fetch('/api/optimizer', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+          signal: AbortSignal.timeout(125_000), body: JSON.stringify({...body, eventId: event.id})});
+        const data = await response.json() as Proposal & {error?: string};
+        if (!response.ok) throw new Error(data.error || 'Forslaget kunne ikke behandles.');
+        return data;
+      }
+      const result = action === 'solve' ? await request({action: 'solve',
+        weights: Object.fromEntries(Object.entries(weights).map(([k,v]) => [k, v === '' ? '' : Number(v)])),
+      }) : proposal!;
+      setProposal(result);
+      if (!result.matches.length) throw new Error('Der blev ikke fundet nogen kampe. Kampplanen er ikke ændret.');
+      setWorking('save');
+      await request({action: 'save', weights: result.weights, matches: result.matches, fingerprint: result.fingerprint});
+      await refresh();
+      setSaved(true);
     } catch (e) { setError(e instanceof Error ? e.message : 'Forslaget kunne ikke behandles.'); }
     finally {setWorking(null);}
   }
@@ -54,16 +61,16 @@ export function OptimizerPanel({event, isOpen, busy, refresh}: {
           }} onBlur={() => setWeights(current => ({...current, [name]: current[name] === '' ? String(fallback) : current[name]}))} />
       </div>)}
     </div>
-    <p className="text-sm text-slate-600">Vægtene skal være heltal. Tomme felter bruger standardværdien. FactorAge kræver alder på alle tilmeldte medlemmer.</p>
+    <p className="text-sm text-slate-600">Vægtene skal være heltal. Tomme felter bruger standardværdien. FactorAge kræver fødselsår på alle tilmeldte medlemmer.</p>
     {isOpen && <p className="text-sm text-slate-600">Luk tilmeldingen, før du laver et kampforslag.</p>}
     {event.status !== 'draft' && <p className="text-sm text-slate-600">Der kan kun laves forslag til en kampplan, som er en kladde.</p>}
     {working && <p role="status" className="text-sm">{working === 'solve' ? 'Fordeler timer og optimerer kampe. Beregningen kan tage op til to minutter.' : 'Kontrollerer og gemmer kampplanen…'}</p>}
     {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
-    {saved && <p role="status" className="text-sm font-semibold text-[#13375e]">Kampforslaget er gemt som kladde. Du kan nu offentliggøre kampplanen.</p>}
+    {saved && <p role="status" className="text-sm font-semibold text-[#13375e]">Kampplanen er gemt og vises nedenfor sammen med “Baner, der ikke bruges”. Du kan nu offentliggøre kampplanen.</p>}
     {proposal && <div className="space-y-4">
       <p role="status" className="font-semibold">{proposal.status === 'OPTIMAL' ? 'Optimal løsning fundet' : 'Gyldigt forslag fundet – optimalitet er ikke bevist'} · Samlet score: {proposal.score}</p>
       <p className="text-sm text-slate-600">{proposal.historyDates.length ? `Historik: ${proposal.historyDates.join(', ')}.` : 'Ingen tidligere afholdte runder fra 18. september 2026 er tilgængelige.'} Forslaget er kontrolleret for overlap, baner, tilmeldingstider, timegrænser og spillerkombinationer.</p>
-      <ImportedPlanTable rows={proposal.rows} />
+      {!saved && <ImportedPlanTable rows={proposal.rows} />}
       <details open={proposal.allocation.some(p => p.assigned < p.requested)}>
         <summary className="cursor-pointer font-semibold">Fordeling af ønskede timer</summary>
         <p className="my-2 text-sm text-slate-600">Manglende timer er ønsker, som dette forslag ikke opfylder. Hvis optimalitet ikke er bevist, kan en anden løsning muligvis opfylde flere ønsker.</p>
@@ -71,8 +78,7 @@ export function OptimizerPanel({event, isOpen, busy, refresh}: {
           #{p.signupOrder} · {p.name} ({p.memberNo}){p.status === 'waitlist' ? ' · Venteliste' : ''}: {p.assigned} af {p.requested} timer
         </li>)}</ul>
       </details>
-      <p className="text-sm text-slate-600">“Brug kampforslag” erstatter den nuværende kladde. Låste kampe bevares.</p>
-      <Button disabled={disabled || !proposal.matches.length} onClick={() => void run('save')}>Brug kampforslag</Button>
+      {!saved && !working && !!proposal.matches.length && <Button disabled={disabled} onClick={() => void run('save')}>Prøv at gemme kampforslaget igen</Button>}
     </div>}
   </section>;
 }

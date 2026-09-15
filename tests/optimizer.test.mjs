@@ -49,10 +49,11 @@ test('single plan survives table normalization and calendar export', () => {
   assert.match(createMatchCalendar({date:'2026-10-16',startTime:'18:00',court:1,players:['Anna','','Bente','']}),/SUMMARY:Anna vs Bente/);
   assert.equal(normalizeKampplanRows([{...rows[0],G:'Third'}]).length,0);
 });
-test('profile accepts optional integer age without erasing age for old clients', () => {
+test('profile accepts optional birth year without erasing it for old clients', () => {
   const base={firstName:'A',lastName:'B',memberNo:'1',email:'a@example.com',level:'B',gender:'K'};
-  assert.equal(Object.hasOwn(profileValues(base),'age'),false);
-  for(const age of [0,40,120,'40']) assert.equal(profileValues({...base,age}).age,Number(age));
-  assert.equal(profileValues({...base,age:''}).age,null);
-  for(const age of [-1,121,3.2,'xx',true]) assert.throws(()=>profileValues({...base,age}),/Alder/);
+  assert.equal(Object.hasOwn(profileValues(base),'birthYear'),false);
+  for(const birthYear of [1940,1986,'1986']) assert.equal(profileValues({...base,birthYear}).birthYear,Number(birthYear));
+  for(const birthYear of ['',null]) assert.equal(profileValues({...base,birthYear}).birthYear,null);
+  for(const birthYear of [1939,9999,1986.2,'xx',true]) assert.throws(()=>profileValues({...base,birthYear}),/Fødselsår/);
+  assert.equal(Object.hasOwn(profileValues({...base,age:40}),'age'),false);
 });

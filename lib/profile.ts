@@ -1,9 +1,10 @@
 import { isSelfLevel, type SelfLevel } from './ranking.ts';
+import {currentYear} from './birth-year.ts';
 
 export function profileValues(body: Record<string, unknown>): {
   firstName: string; lastName: string; name: string; memberNo: string;
   email: string; selfLevel: SelfLevel; gender: "M" | "K";
-  phone?: string; phoneCountryCode?: string; age?: number | null;
+  phone?: string; phoneCountryCode?: string; birthYear?: number | null;
 } {
   const firstName = String(body.firstName ?? "").trim();
   const lastName = String(body.lastName ?? "").trim();
@@ -29,12 +30,12 @@ export function profileValues(body: Record<string, unknown>): {
     if (!/^\+[1-9][0-9]{0,2}$/.test(code)) throw new Error("Angiv en landekode, fx +45 for Danmark.");
     telephone.phoneCountryCode = code;
   }
-  const ageFields: {age?: number | null} = {};
-  if (body.age !== undefined) {
-    const age = body.age === '' || body.age === null ? null : Number(body.age);
-    if (age !== null && (!/^\d+$/.test(String(body.age)) || !Number.isInteger(age) || age < 0 || age > 120))
-      throw new Error('Alder skal være et heltal fra 0 til 120 eller være tom.');
-    ageFields.age = age;
+  const birthFields: {birthYear?: number | null} = {};
+  if (body.birthYear !== undefined) {
+    const birthYear = body.birthYear === '' || body.birthYear === null ? null : Number(body.birthYear);
+    if (birthYear !== null && (!/^\d{4}$/.test(String(body.birthYear)) || !Number.isInteger(birthYear) || birthYear < 1940 || birthYear > currentYear() - 16))
+      throw new Error(`Fødselsår skal være fra 1940 til ${currentYear() - 16} eller være tomt.`);
+    birthFields.birthYear = birthYear;
   }
-  return { firstName, lastName, name: `${firstName} ${lastName}`, memberNo, email, selfLevel, gender, ...telephone, ...ageFields };
+  return { firstName, lastName, name: `${firstName} ${lastName}`, memberNo, email, selfLevel, gender, ...telephone, ...birthFields };
 }

@@ -86,7 +86,7 @@ export function validateOptimizerInput(input: OptimizerInput) {
     if (!Number.isSafeInteger(p.signupOrder) || p.signupOrder < 1 || !['active', 'waitlist'].includes(p.status)) throw new Error('Ugyldig tilmeldingsrækkefølge eller status.');
     if (!Array.isArray(p.availability) || p.availability.some(t => !input.slots.some(s => s.startTime === t))) throw new Error('Ugyldige tilmeldingstider.');
     if (input.weights.FactorAge !== 0 && (!Number.isInteger(p.age) || p.age! < 0 || p.age! > 120))
-      throw new Error('Alder er ikke registreret for alle spillere. Brug FactorAge = 0.');
+      throw new Error('Alder kan ikke beregnes for alle spillere. Angiv fødselsår eller brug FactorAge = 0.');
   }
   for (const slot of input.slots) minutes(slot.startTime);
 }
