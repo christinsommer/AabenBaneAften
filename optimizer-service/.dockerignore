@@ -1,5 +1,5 @@
-*
-!*.cs
+**
+!Dockerfile
 !OptimizerService.csproj
 !packages.lock.json
-!Dockerfile
+!*.cs

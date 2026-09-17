@@ -21,6 +21,15 @@ public static class Scheduler
         new[] { ("17108", "13993"), ("17108", "16212"), ("11822", "15722") }
             .Any(pair => a.MemberNo == pair.Item1 && b.MemberNo == pair.Item2 || a.MemberNo == pair.Item2 && b.MemberNo == pair.Item1);
 
+    static void SetHint(CpModel model, CpSolver solver)
+    {
+        model.ClearHints();
+        model.Model.SolutionHint = new PartialVariableAssignment();
+        var solution = solver.Response?.Solution ?? throw new InvalidOperationException("CP-SAT returned no assignment.");
+        model.Model.SolutionHint.Vars.AddRange(Enumerable.Range(0, solution.Count));
+        model.Model.SolutionHint.Values.AddRange(solution);
+    }
+
     public static Result Solve(Input input, double seconds = 100, CancellationToken cancellation = default)
     {
         if (input.Players is null || input.Slots is null || input.History is null || input.Locked is null || input.Weights is null)
@@ -81,12 +90,16 @@ public static class Scheduler
             model.Add(women == TeamSum(0, p => p.Gender == "K" ? 1 : 0) + TeamSum(1, p => p.Gender == "K" ? 1 : 0));
             var mix = model.NewIntVar(0, 5, $"mix{s}");
             model.AddAllowedAssignments(new IntVar[] { used[s], doubles[s], women, mix }).AddTuples(new long[,] {
-                {0,0,0,0}, {1,0,0,5}, {1,0,2,5}, {1,1,0,1}, {1,1,1,2}, {1,1,2,0}, {1,1,3,2}, {1,1,4,1}
+                {0,0,0,0}, {1,0,0,5}, {1,0,1,5}, {1,0,2,5}, {1,1,0,1}, {1,1,1,2}, {1,1,2,0}, {1,1,3,2}, {1,1,4,1}
             });
             var twoWomen = model.NewBoolVar($"twoWomen{s}");
             model.Add(women == 2).OnlyEnforceIf(twoWomen); model.Add(women != 2).OnlyEnforceIf(twoWomen.Not());
             model.Add(TeamSum(0, p => p.Gender == "K" ? 1 : 0) == 1).OnlyEnforceIf(new ILiteral[] { doubles[s], twoWomen });
             score.AddTerm(used[s], 100).AddTerm(balance, -w.FactorMatchDifference).AddTerm(mix, -w.FactorMix);
+            // Swapping teams cannot change the score. Avoid searching both labels,
+            // except where a locked match explicitly fixes them.
+            if (!input.Locked.Any(m => m.Court == slots[s].Court && m.StartTime == slots[s].StartTime))
+                model.Add(TeamSum(0, p => byId[p.Id] + 1) <= TeamSum(1, p => byId[p.Id] + 1));
             if (w.FactorAge != 0)
             {
                 var ageBalance = model.NewIntVar(0, 240, $"ageBalance{s}");
@@ -146,14 +159,30 @@ public static class Scheduler
         foreach (string status in new[] { "active", "waitlist" })
         {
             var ordered = Enumerable.Range(0, players.Length).Where(p => players[p].Status == status).OrderBy(p => players[p].SignupOrder).ThenBy(p => players[p].Id).ToArray();
+            if (ordered.Length == 0) continue;
+            // A first hour outweighs ALL second/third hours. Search the whole vector
+            // together instead of freezing an unproven first-hour count after 8 seconds.
+            long radix = ordered.Length + 1;
+            var coverage = LinearExpr.NewBuilder();
             for (int h = 0; h < 3; h++)
-                objectives.Add(($"{status}:hour{h + 1}", LinearExpr.Sum(ordered.Select(p => reached[p, h]))));
+                coverage.AddTerm(LinearExpr.Sum(ordered.Select(p => reached[p, h])), h == 0 ? radix * radix : h == 1 ? radix : 1);
+            objectives.Add(($"{status}:hours", coverage));
             objectives.Add(($"{status}:signupOrder", LinearExpr.WeightedSum(ordered.Select(p => hours[p]), Enumerable.Range(0, ordered.Length).Select(i => ordered.Length - i))));
         }
         objectives.Add(("score", score));
-        // Score is fixed first. Fill earlier times lexicographically among equally good plans.
-        foreach (var time in slots.Select(s => s.StartTime).Distinct())
-            objectives.Add(($"early:{time}", LinearExpr.Sum(Enumerable.Range(0, slots.Length).Where(s => slots[s].StartTime == time).SelectMany(s => Enumerable.Range(0, players.Length).Select(p => present[p, s])))));
+        // One early-time objective avoids repeating presolve seven times. Each earlier
+        // player-hour outweighs all later ones. Limit the exponent for int64 safety.
+        var startTimes = slots.Select(s => s.StartTime).Distinct().ToArray();
+        LinearExpr AtTime(string time) => LinearExpr.Sum(Enumerable.Range(0, slots.Length)
+            .Where(s => slots[s].StartTime == time).SelectMany(s => Enumerable.Range(0, players.Length).Select(p => present[p, s])));
+        if (startTimes.Length <= 7)
+        {
+            long radix = slots.Length * 4 + 1, weight = 1;
+            var early = LinearExpr.NewBuilder();
+            foreach (var time in startTimes.Reverse()) { early.AddTerm(AtTime(time), weight); weight *= radix; }
+            objectives.Add(("early:all", early));
+        }
+        else foreach (var time in startTimes) objectives.Add(($"early:{time}", AtTime(time)));
         var validation = model.Validate();
         if (validation.Length > 0) throw new ArgumentException($"Ugyldig CP-SAT-model: {validation}");
         var stages = new List<Stage>();
@@ -166,10 +195,32 @@ public static class Scheduler
             double remaining = seconds - timer.Elapsed.TotalSeconds;
             if (remaining < 0.1) break;
             model.Maximize(objective.value);
-            double stageSeconds = objective.name == "score" ? 35 : objective.name.StartsWith("early:") ? 4 : 8;
-            var solver = new CpSolver { StringParameters = $"max_time_in_seconds:{Math.Min(stageSeconds, remaining).ToString(System.Globalization.CultureInfo.InvariantCulture)} num_search_workers:4 random_seed:17108" };
-            using var registration = cancellation.Register(solver.StopSearch);
-            var status = solver.Solve(model);
+            double stageSeconds = objective.name == "score" ? 40 : objective.name.EndsWith(":hours") ? 20 : objective.name == "early:all" ? 10 : objective.name.StartsWith("early:") ? 2 : 5;
+            var stageEnd = Math.Min(seconds, timer.Elapsed.TotalSeconds + stageSeconds);
+            CpSolver? solver = incumbent;
+            var status = CpSolverStatus.Unknown;
+            // Independent seeds explore different paths within the shared time budget.
+            // A complete hint and a lower bound protect the best solution on restart.
+            int attempts = objective.name.StartsWith("early:") ? 1 : 2;
+            for (int attempt = 0; attempt < attempts; attempt++)
+            {
+                cancellation.ThrowIfCancellationRequested();
+                double budget = (stageEnd - timer.Elapsed.TotalSeconds) / (attempts - attempt);
+                if (budget < 0.1) break;
+                var candidate = new CpSolver { StringParameters = $"max_time_in_seconds:{budget.ToString(System.Globalization.CultureInfo.InvariantCulture)} num_search_workers:{Math.Min(4, Environment.ProcessorCount)} random_seed:{Random.Shared.Next(1, 1_000_000)} randomize_search:true" };
+                using var registration = cancellation.Register(candidate.StopSearch);
+                var candidateStatus = candidate.Solve(model);
+                if (candidateStatus is CpSolverStatus.Optimal or CpSolverStatus.Feasible)
+                {
+                    if (solver is null || candidate.Value(objective.value) >= solver.Value(objective.value)) solver = candidate;
+                    status = candidateStatus;
+                    model.Add(objective.value >= solver.Value(objective.value));
+                    SetHint(model, solver);
+                    if (status == CpSolverStatus.Optimal) break;
+                }
+                else if (candidateStatus != CpSolverStatus.Unknown)
+                    throw new ArgumentException(candidateStatus == CpSolverStatus.Infeasible ? "Ingen gyldig løsning. Kontrollér låste kampe." : "Ugyldig CP-SAT-model.");
+            }
             if (status is not (CpSolverStatus.Optimal or CpSolverStatus.Feasible))
             {
                 if (best is null) throw new ArgumentException(status == CpSolverStatus.Infeasible ? "Ingen gyldig løsning. Kontrollér låste kampe." : "Ingen løsning fundet inden tidsgrænsen. Prøv igen.");
@@ -179,21 +230,16 @@ public static class Scheduler
                 solver = incumbent!;
                 status = CpSolverStatus.Feasible;
             }
-            long value = solver.Value(objective.value);
+            long value = solver!.Value(objective.value);
             stages.Add(new Stage(objective.name, value, status.ToString().ToUpperInvariant()));
             bestScore = solver.Value(score);
             best = Enumerable.Range(0, slots.Length).Where(s => solver.BooleanValue(used[s])).Select(s => new Match(slots[s].Court, slots[s].StartTime,
                 Enumerable.Range(0, players.Length).Where(p => solver.BooleanValue(x[p, s, 0])).Select(p => players[p].Id).ToArray(),
                 Enumerable.Range(0, players.Length).Where(p => solver.BooleanValue(x[p, s, 1])).Select(p => players[p].Id).ToArray())).ToArray();
-            model.Add(objective.value == value);
+            // Later stages may improve an unproven earlier result, but never lower it.
+            model.Add(objective.value >= value);
             incumbent = solver;
-            model.ClearHints();
-            model.Model.SolutionHint = new PartialVariableAssignment();
-            // Include auxiliary balance, pair and hour variables: a partial team hint can take
-            // longer than the stage budget to reconstruct after presolve on a large roster.
-            var solution = solver.Response?.Solution ?? throw new InvalidOperationException("CP-SAT returnerede ingen variabelværdier.");
-            model.Model.SolutionHint.Vars.AddRange(Enumerable.Range(0, solution.Count));
-            model.Model.SolutionHint.Values.AddRange(solution);
+            SetHint(model, solver);
         }
         if (best is null) throw new ArgumentException("Ingen løsning fundet inden tidsgrænsen.");
         return new Result(best, stages.Count == objectives.Count && stages.All(s => s.Status == "OPTIMAL") ? "OPTIMAL" : "FEASIBLE", stages.ToArray(), bestScore, timer.Elapsed.TotalSeconds);

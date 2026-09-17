@@ -109,7 +109,6 @@ export function validateProposal(raw: unknown, input: OptimizerInput): ProposedM
     const players = ids.map(id => people.get(id)!);
     if (Math.max(...players.map(p => p.cr)) - Math.min(...players.map(p => p.cr)) > 3) throw new Error('CR-forskellen i en kamp er større end 3.');
     if (forbiddenMemberPairs.some(pair => pair.every(no => players.some(p => p.memberNo === no)))) throw new Error('Kampen indeholder en forbudt spillerkombination.');
-    if (ids.length === 2 && players[0].gender !== players[1].gender) throw new Error('Single kræver samme køn.');
     if (ids.length === 4 && players.filter(p => p.gender === 'K').length === 2 && people.get(row.team1[0])!.gender === people.get(row.team1[1])!.gender)
       throw new Error('Mixed double kræver én mand og én kvinde på hvert hold.');
     const start = minutes(row.startTime);

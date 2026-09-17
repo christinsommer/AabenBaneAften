@@ -1,0 +1,18 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "aabenbane-optimizer",
+  "main": "worker.js",
+  "compatibility_date": "2026-09-17",
+  "workers_dev": true,
+  "observability": { "enabled": true },
+  "containers": [{
+    "class_name": "OptimizerContainer",
+    "image": "../optimizer-service/Dockerfile",
+    "instance_type": "standard-2",
+    "max_instances": 1
+  }],
+  "durable_objects": {
+    "bindings": [{ "name": "OPTIMIZER", "class_name": "OptimizerContainer" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["OptimizerContainer"] }]
+}

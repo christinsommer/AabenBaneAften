@@ -7,13 +7,15 @@ import {Input} from '../components/ui/input';
 import {Label} from '../components/ui/label';
 import {ImportedPlanTable} from './imported-plan';
 import {algorithmWeightDefaults, type AlgorithmWeights, type ProposedMatch} from '../lib/optimizer';
+import type {UnfulfilledWish} from '../lib/unfulfilled-wishes';
 
 type Proposal = {
   matches: ProposedMatch[]; rows: Record<string, string>[]; score: number; status: string; fingerprint: string;
   weights: AlgorithmWeights; historyDates: string[];
   allocation: {id: number; name: string; memberNo: string; signupOrder: number; status: string; requested: number; assigned: number}[];
 };
-export function OptimizerPanel({event, rows, isOpen, busy, refresh}: {
+export function OptimizerPanel({event, rows, wishes, isOpen, busy, refresh}: {
+  wishes: UnfulfilledWish[];
   event: {id: number; status: string; date: string}; rows: Record<string, unknown>[]; isOpen: boolean; busy: boolean; refresh: () => unknown;
 }) {
   const [weights, setWeights] = useState<Record<string, string>>(() => Object.fromEntries(Object.entries(algorithmWeightDefaults).map(([k,v]) => [k, String(v)])));
@@ -26,7 +28,7 @@ export function OptimizerPanel({event, rows, isOpen, busy, refresh}: {
     setExporting(true); setError('');
     try {
       const {downloadKampplan} = await import('../lib/kampplan-export');
-      downloadKampplan(rows, event.date);
+      downloadKampplan(rows, event.date, wishes);
     } catch (e) { setError(e instanceof Error ? e.message : 'Kampplanen kunne ikke eksporteres.'); }
     finally { setExporting(false); }
   }
@@ -36,7 +38,7 @@ export function OptimizerPanel({event, rows, isOpen, busy, refresh}: {
     try {
       async function request(body: Record<string, unknown>) {
         const response = await fetch('/api/optimizer', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
-          signal: AbortSignal.timeout(125_000), body: JSON.stringify({...body, eventId: event.id})});
+          signal: AbortSignal.timeout(180_000), body: JSON.stringify({...body, eventId: event.id})});
         const data = await response.json() as Proposal & {error?: string};
         if (!response.ok) throw new Error(data.error || 'Forslaget kunne ikke behandles.');
         return data;
@@ -77,9 +79,10 @@ export function OptimizerPanel({event, rows, isOpen, busy, refresh}: {
     </div>
     <p className="text-sm text-slate-600">Vægtene skal være heltal. Tomme felter bruger standardværdien. FactorAge kræver fødselsår på alle tilmeldte medlemmer.</p>
     <p className="text-sm text-slate-600">FactorSameTeamDifference vægter CR-forskellen mellem medspillerne på begge hold. Standardværdien er 15; 0 slår dette fradrag fra. Singlekampe får intet fradrag for denne faktor.</p>
+    <p className="text-sm text-slate-600">Første spilletime prioriteres før anden og tredje time for tilmeldte spillere. Derefter optimeres kampscore og til sidst tidlige tider. Single er tilladt på tværs af køn. En single giver 100 − 5 × FactorMix point før øvrige fradrag, så flere kampe giver ikke altid højere score.</p>
     {isOpen && <p className="text-sm text-slate-600">Luk tilmeldingen, før du laver et kampforslag.</p>}
     {event.status !== 'draft' && <p className="text-sm text-slate-600">Der kan kun laves forslag til en kampplan, som er en kladde.</p>}
-    {working && <p role="status" className="text-sm">{working === 'solve' ? 'Fordeler timer og optimerer kampe. Beregningen kan tage op til to minutter.' : 'Kontrollerer og gemmer kampplanen…'}</p>}
+    {working && <p role="status" className="text-sm">{working === 'solve' ? 'Fordeler timer og optimerer kampe. Opstart og beregning kan tage op til tre minutter.' : 'Kontrollerer og gemmer kampplanen…'}</p>}
     {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
     {saved && <p role="status" className="text-sm font-semibold text-[#13375e]">Kampplanen er gemt og vises nedenfor sammen med “Baner, der ikke bruges”. Du kan nu offentliggøre kampplanen.</p>}
     {proposal && <div className="space-y-4">

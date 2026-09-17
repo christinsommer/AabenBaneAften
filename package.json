@@ -17,6 +17,9 @@
     "optimizer:build": "node scripts/optimizer-service.mjs build",
     "optimizer:test": "node scripts/optimizer-service.mjs test",
     "optimizer:start": "node scripts/optimizer-service.mjs start",
+    "optimizer:deploy": "node scripts/optimizer-cloudflare.mjs deploy",
+    "optimizer:check": "node scripts/optimizer-cloudflare.mjs check",
+    "optimizer:connect": "node scripts/optimizer-cloudflare.mjs connect",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate",
     "cf:whoami": "wrangler whoami",
@@ -29,6 +32,7 @@
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
+    "@cloudflare/containers": "^0.3.7",
     "@hookform/resolvers": "^5.7.1",
     "@shadcn/react": "^0.3.0",
     "class-variance-authority": "0.7.1",

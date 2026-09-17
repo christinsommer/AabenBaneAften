@@ -1,5 +1,6 @@
 "use client";
 import { unusedImportedCourts } from "../lib/unused-courts";
+import { unfulfilledWishes } from "../lib/unfulfilled-wishes";
 import rulesContent from "../lib/rules-content.json";
 import { includeIntermediateTimes } from "../lib/signup";
 import { ImportedPlanTable } from "./imported-plan";
@@ -1408,6 +1409,7 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
   const importedRows = Array.isArray(data.importedMatches) ? data.importedMatches : [];
   const hasImportedPlan = importedRows.length > 0;
   const unusedCourts = unusedImportedCourts(importedRows, data.times);
+  const wishes = unfulfilledWishes(importedRows, data.signups ?? []);
   const openSubstitutions = (data.substitutions ?? []).filter(
     (item: any) => item.status !== "replaced",
   );
@@ -1455,7 +1457,7 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
       <PlayerLists data={data} view={listView} setView={setListView} act={act} busy={busy} />
       </TabsContent>
       <TabsContent value="matches" className="space-y-6">
-      <OptimizerPanel key={`${data.event.id}:${data.event.importedKampplan}`} event={data.event} rows={importedRows} isOpen={data.isOpen} busy={busy} refresh={refresh} />
+      <OptimizerPanel key={`${data.event.id}:${data.event.importedKampplan}`} event={data.event} rows={importedRows} wishes={wishes} isOpen={data.isOpen} busy={busy} refresh={refresh} />
       {!!openSubstitutions.length && (
         <Card className="border-amber-300 bg-amber-50">
           <CardHeader>
@@ -1598,6 +1600,30 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
               ))}
             </div>
           )}
+        </CardContent>
+      </Card>
+      <Card className="border-[#dce9e1]">
+        <CardHeader>
+          <CardTitle>Ikke opfyldte ønsker</CardTitle>
+          <CardDescription>{hasImportedPlan
+            ? 'Timeønsker, som den viste kampplan ikke opfylder. Andre løsninger kan muligvis opfylde flere ønsker.'
+            : 'Indlæsning af kampplan mangler.'}</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {hasImportedPlan && (!wishes.length ? <p>Alle timeønsker er opfyldt.</p> : <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead><tr>{['Navn', 'Ønskede timer', 'Tildelte timer', 'Manglende timer', 'Mulige starttider', 'Tildelte starttider', 'Status', 'Bemærkning'].map(label =>
+                <th key={label} className="px-2 py-2">{label}</th>)}</tr></thead>
+              <tbody>{wishes.map(wish => <tr key={wish.id} className="border-t">
+                <td className="px-2 py-2 font-semibold">{wish.name}</td>
+                <td className="px-2 py-2">{wish.requested}</td><td className="px-2 py-2">{wish.assigned ?? 'Ukendt'}</td>
+                <td className="px-2 py-2">{wish.missing ?? 'Ukendt'}</td>
+                <td className="px-2 py-2">{wish.availability.join(', ')}</td>
+                <td className="px-2 py-2">{wish.assignedTimes.join(', ') || '–'}</td>
+                <td className="px-2 py-2">{wish.status}</td><td className="px-2 py-2">{wish.note}</td>
+              </tr>)}</tbody>
+            </table>
+          </div>)}
         </CardContent>
       </Card>
       </TabsContent>

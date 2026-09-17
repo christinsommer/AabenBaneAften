@@ -24,6 +24,15 @@ public static class SelfTests
         Check(Enumerable.Range(10,4).All(id=>Count(activeSecond,id)==2) && Count(activeSecond,1)==0 && Count(activeSecond,2)==0, "Active second hours precede any waitlist hours");
         var negativeScore = Scheduler.Solve(Data(new[] {P(1,cr:1),P(2,cr:1),P(3,cr:1),P(4,cr:4)},oneCourt),30);
         Check(Enumerable.Range(1,4).All(id=>Count(negativeScore,id)==1) && negativeScore.Score<0, "Negative match score must not sacrifice first-hour coverage");
+        var mixedSingle = Scheduler.Solve(Data([
+            P(1,2,["20:00","21:00"],gender:"K",cr:3), P(2,1,["21:00"],cr:3),
+            P(3,1,["20:00"],gender:"K",cr:3), P(4,1,["20:00"],cr:3), P(5,1,["20:00"],cr:3)
+        ], [new Slot(1,"20:00"),new Slot(1,"21:00")], new Weights(FactorMix:50)),30);
+        Check(Enumerable.Range(1,5).All(id=>Count(mixedSingle,id)>=1) && Count(mixedSingle,1)==2,
+            "Mixed single at 21:00 must fulfil first and second hours despite its negative score");
+        Check(mixedSingle.Matches.Single(m=>m.StartTime=="21:00").Team1.Concat(mixedSingle.Matches.Single(m=>m.StartTime=="21:00").Team2).Order().SequenceEqual(new[]{1,2}),
+            "Late mixed single must use the two available players");
+        Check(mixedSingle.Score == -50, "Mixed double 100 plus mixed single -150 at FactorMix=50");
         var gap = Scheduler.Solve(Data(new[] {P(1, cr:1), P(2, cr:1), P(3, cr:5), P(4, cr:5)}, oneCourt), 30);
         Check(gap.Matches.All(m => m.Team1.Length == 1), "CR gap >3 must prohibit doubles");
         var boundary = Scheduler.Solve(Data(new[] {P(1, cr:1), P(2, cr:1), P(3, cr:4), P(4, cr:4)}, oneCourt), 30);

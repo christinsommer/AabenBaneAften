@@ -227,6 +227,7 @@ export async function POST(request:Request){
           memberNo: players.memberNo,
           firstName: players.firstName,
           lastName: players.lastName,
+          email: players.email,
           gender: players.gender,
           christinRanking: players.christinRanking,
           availability: signups.availability,
@@ -249,6 +250,22 @@ export async function POST(request:Request){
         const sheet = XLSX.utils.aoa_to_sheet(exportRows);
         const workbook = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(workbook, sheet, "Tilmeldinger");
+        const mailRows = rows.map((row) => [
+          [row.firstName, row.lastName].filter(Boolean).join(" ").trim(),
+          row.email ?? "",
+        ]);
+        const mailSheet = XLSX.utils.aoa_to_sheet([
+          ["Fornavn Efternavn", "E-mail", "Mailliste"],
+          ...(mailRows.length ? mailRows : [["", ""]]),
+        ]);
+        mailSheet.C2 = {
+          t: "s",
+          // Excel requires the future-function prefix to recognize TEXTJOIN without adding @.
+          f: '_xlfn.TEXTJOIN(",",TRUE,B2:B1000)',
+          v: mailRows.slice(0, 999).map((row) => row[1]).filter(Boolean).join(","),
+        };
+        mailSheet["!cols"] = [{ wch: 32 }, { wch: 40 }, { wch: 60 }];
+        XLSX.utils.book_append_sheet(workbook, mailSheet, "Mailliste");
         const buffer = XLSX.write(workbook, { bookType: "xlsx", type: "buffer" });
 
         return new Response(buffer, {

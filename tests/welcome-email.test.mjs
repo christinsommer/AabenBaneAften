@@ -3,11 +3,11 @@ import assert from 'node:assert/strict';
 import { welcomeEmail, sendWelcomeEmail } from '../lib/welcome-email.ts';
 
 test('welcome email uses the requested recipient, subject, text and bold domain', async () => {
-  const expected = 'Hej HIK-medlem\n\nTak fordi du har oprettet dig på aabenbaneaften.dk.\n\nDin profil er nu klar, og du kan logge ind og tilmelde dig Åben Bane Aften, når tilmeldingen er åben.\n\nVi glæder os til at se dig på banen 🎾\n\nVenlig hilsen\nChristin\nÅben Bane Aften';
+  const expected = 'Hej HIK-medlem\n\nTak fordi du har oprettet dig på https://aabenbaneaften.dk.\n\nDin profil er nu klar, og du kan logge ind og tilmelde dig Åben Bane Aften, når tilmeldingen er åben.\n\nVi glæder os til at se dig på banen 🎾\n\nVenlig hilsen\nChristin\nÅben Bane Aften';
   const message = welcomeEmail('member@example.com');
   assert.equal(message.subject, 'Velkommen til Åben Bane Aften');
   assert.equal(message.text, expected);
-  assert.match(message.html, /<strong>aabenbaneaften.dk<\/strong>/);
+  assert.ok(message.html.includes('<strong><a href="https://aabenbaneaften.dk">aabenbaneaften.dk</a></strong>'));
   const sent=[];
   assert.equal(await sendWelcomeEmail('member@example.com', async mail=>sent.push(mail)), null);
   assert.deepEqual(sent,[message]);

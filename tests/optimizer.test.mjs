@@ -29,7 +29,7 @@ test('validator enforces CR boundaries, all banned combinations, singles and loc
   assert.throws(() => validateProposal([match], input({players:[p(1,{cr:1}),p(2),p(3),p(4)]})),/CR/);
   for(const [a,b] of [['17108','13993'],['17108','16212'],['11822','15722']])
     assert.throws(() => validateProposal([match], input({players:[p(1,{memberNo:a}),p(2,{memberNo:b}),p(3),p(4)]})),/forbudt/);
-  assert.throws(() => validateProposal([{...match,team1:[1],team2:[2]}], input({players:[p(1),p(2,{gender:'K'})]})),/samme køn/);
+  assert.equal(validateProposal([{...match,team1:[1],team2:[2]}], input({players:[p(1),p(2,{gender:'K'})]})).length,1);
   assert.throws(() => validateProposal([{...match,team1:[1,3],team2:[2,4]}],input({locked:[match]})),/låst/);
   assert.equal(validateProposal([{...match,team1:[4,3],team2:[2,1]}],input({locked:[match]})).length,1);
 });
