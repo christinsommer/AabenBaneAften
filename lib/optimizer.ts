@@ -1,5 +1,5 @@
 export const algorithmWeightDefaults = {
-  FactorMatchDifference: 40, FactorSameTeamDifference: 15, FactorSameTeamLastWeek: 20, FactorSameTeam3Weeks: 10,
+  FactorMatchDifference: 40, FactorSameTeamDifference: 15, FactorDistanceSameTeamA: 3, FactorSameTeamLastWeek: 20, FactorSameTeam3Weeks: 10,
   FactorOpponentLastWeek: 5, FactorMix: 10, FactorAge: 0,
 };
 export type AlgorithmWeights = typeof algorithmWeightDefaults;
@@ -27,6 +27,8 @@ export function parseAlgorithmWeights(raw: unknown): AlgorithmWeights {
   return Object.fromEntries(Object.entries(algorithmWeightDefaults).map(([key, fallback]) => {
     const value = (raw as Record<string, unknown>)[key];
     const number = value === '' || value === undefined ? fallback : value;
+    if (key === 'FactorDistanceSameTeamA' && number !== 2 && number !== 3)
+      throw new Error('FactorDistanceSameTeamA skal være 2 eller 3.');
     if (typeof number !== 'number' || !Number.isSafeInteger(number) || Math.abs(number) > 1_000_000)
       throw new Error(`${key} skal være et heltal mellem -1000000 og 1000000.`);
     return [key, number];
@@ -109,9 +111,15 @@ export function validateProposal(raw: unknown, input: OptimizerInput): ProposedM
     const players = ids.map(id => people.get(id)!);
     if (Math.max(...players.map(p => p.cr)) - Math.min(...players.map(p => p.cr)) > 3) throw new Error('CR-forskellen i en kamp er større end 3.');
     if (forbiddenMemberPairs.some(pair => pair.every(no => players.some(p => p.memberNo === no)))) throw new Error('Kampen indeholder en forbudt spillerkombination.');
+    if (ids.length === 4) for (const team of [row.team1, row.team2]) {
+      const [a, b] = team.map((id: number) => people.get(id)!);
+      if (Math.min(a.cr, b.cr) <= 4 && Math.abs(a.cr - b.cr) > input.weights.FactorDistanceSameTeamA)
+        throw new Error('CR-forskellen mellem makkere overskrider FactorDistanceSameTeamA.');
+    }
     if (ids.length === 4 && players.filter(p => p.gender === 'K').length === 2 && people.get(row.team1[0])!.gender === people.get(row.team1[1])!.gender)
       throw new Error('Mixed double kræver én mand og én kvinde på hvert hold.');
     const start = minutes(row.startTime);
+    if (ids.length === 2 && start < minutes('20:30')) throw new Error('Single er først tilladt fra kl. 20:30.');
     const courtTimes = courtUsage.get(row.court) ?? [];
     if (courtTimes.some(t => Math.abs(t - start) < 60)) throw new Error('To kampe overlapper på samme bane.');
     courtUsage.set(row.court, [...courtTimes, start]);

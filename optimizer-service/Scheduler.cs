@@ -8,7 +8,7 @@ public record Slot(int Court, string StartTime);
 public record Match(int Court, string StartTime, int[] Team1, int[] Team2);
 public record HistoryMatch(int[] Team1, int[] Team2);
 public record Round(string Date, HistoryMatch[] Matches);
-public record Weights(int FactorMatchDifference = 40, int FactorSameTeamLastWeek = 20, int FactorSameTeam3Weeks = 10, int FactorOpponentLastWeek = 5, int FactorMix = 10, int FactorAge = 0, int FactorSameTeamDifference = 15);
+public record Weights(int FactorMatchDifference = 40, int FactorSameTeamLastWeek = 20, int FactorSameTeam3Weeks = 10, int FactorOpponentLastWeek = 5, int FactorMix = 10, int FactorAge = 0, int FactorSameTeamDifference = 15, int FactorDistanceSameTeamA = 3);
 public record Input(Player[] Players, Slot[] Slots, Round[] History, Match[] Locked, Weights Weights);
 public record Stage(string Name, long Value, string Status);
 public record Result(Match[] Matches, string Status, Stage[] Stages, long Score, double Seconds);
@@ -38,6 +38,7 @@ public static class Scheduler
         if (players.Length > 200 || input.Slots.Length > 32 || input.History.Length > 3 || players.Select(p => p.Id).Distinct().Count() != players.Length)
             throw new ArgumentException("Ugyldigt antal spillere, banetider eller historikrunder.");
         var w = input.Weights;
+        if (w.FactorDistanceSameTeamA is not (2 or 3)) throw new ArgumentException("FactorDistanceSameTeamA skal være 2 eller 3.");
         if (new[] {w.FactorMatchDifference, w.FactorSameTeamDifference, w.FactorSameTeamLastWeek, w.FactorSameTeam3Weeks, w.FactorOpponentLastWeek, w.FactorMix, w.FactorAge}.Any(v => Math.Abs((long)v) > 1_000_000))
             throw new ArgumentException("Ugyldige vægte.");
         foreach (var p in players)
@@ -74,6 +75,7 @@ public static class Scheduler
         {
             used[s] = model.NewBoolVar($"used{s}"); doubles[s] = model.NewBoolVar($"double{s}");
             model.Add(doubles[s] <= used[s]);
+            if (Minutes(slots[s].StartTime) < Minutes("20:30")) model.Add(doubles[s] == used[s]);
             for (int p = 0; p < players.Length; p++)
             {
                 present[p, s] = model.NewBoolVar($"p{p}s{s}");
@@ -110,6 +112,8 @@ public static class Scheduler
             {
                 if (Forbidden(players[p], players[q])) { model.Add(present[p, s] + present[q, s] <= 1); continue; }
                 if (!players[p].Availability.Contains(slots[s].StartTime) || !players[q].Availability.Contains(slots[s].StartTime)) continue;
+                if (Math.Min(players[p].Cr, players[q].Cr) <= 4 && Math.Abs(players[p].Cr - players[q].Cr) > w.FactorDistanceSameTeamA)
+                    for (int t = 0; t < 2; t++) model.Add(x[p, s, t] + x[q, s, t] <= 1);
                 var key = Pair(players[p].Id, players[q].Id);
                 long partnerPenalty = (lastPartners.Contains(key) ? w.FactorSameTeamLastWeek : 0L)
                     + (long)w.FactorSameTeamDifference * Math.Abs(players[p].Cr - players[q].Cr)
@@ -169,6 +173,7 @@ public static class Scheduler
             objectives.Add(($"{status}:hours", coverage));
             objectives.Add(($"{status}:signupOrder", LinearExpr.WeightedSum(ordered.Select(p => hours[p]), Enumerable.Range(0, ordered.Length).Select(i => ordered.Length - i))));
         }
+        objectives.Add(("matches", LinearExpr.Sum(used)));
         objectives.Add(("score", score));
         // One early-time objective avoids repeating presolve seven times. Each earlier
         // player-hour outweighs all later ones. Limit the exponent for int64 safety.
@@ -207,7 +212,7 @@ public static class Scheduler
                 cancellation.ThrowIfCancellationRequested();
                 double budget = (stageEnd - timer.Elapsed.TotalSeconds) / (attempts - attempt);
                 if (budget < 0.1) break;
-                var candidate = new CpSolver { StringParameters = $"max_time_in_seconds:{budget.ToString(System.Globalization.CultureInfo.InvariantCulture)} num_search_workers:{Math.Min(4, Environment.ProcessorCount)} random_seed:{Random.Shared.Next(1, 1_000_000)} randomize_search:true" };
+                var candidate = new CpSolver { StringParameters = $"max_time_in_seconds:{budget.ToString(System.Globalization.CultureInfo.InvariantCulture)} num_search_workers:4 random_seed:{Random.Shared.Next(1, 1_000_000)} randomize_search:true" };
                 using var registration = cancellation.Register(candidate.StopSearch);
                 var candidateStatus = candidate.Solve(model);
                 if (candidateStatus is CpSolverStatus.Optimal or CpSolverStatus.Feasible)

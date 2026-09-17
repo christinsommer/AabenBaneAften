@@ -23,6 +23,28 @@ test('imported table renders one accessible calendar button per match only when 
   assert.doesNotMatch(render({ rows: [], calendarDate: '2026-09-18' }), /Tilføj kampen/);
 });
 
+test('per-match scores appear only when the admin explicitly enables them', async () => {
+  const { ImportedPlanTable } = await vite.ssrLoadModule('/app/imported-plan.tsx');
+  const render = props => renderToStaticMarkup(React.createElement(ImportedPlanTable, props));
+  assert.doesNotMatch(render({rows:[{...row,_optimizerScore:-150}]}),/>Score</);
+  const html=render({rows:[row],scores:[-150]});
+  assert.match(html,/>Score</);
+  assert.match(html,/>-150</);
+  assert.doesNotMatch(render({rows:[row],calendarDate:'2026-09-18'}),/>Score</);
+});
+
+test('optimizer has a compact two-column grid, restricted distance select and help for all factors', async () => {
+  const {OptimizerPanel}=await vite.ssrLoadModule('/app/optimizer-panel.tsx');
+  const {algorithmWeightDefaults}=await vite.ssrLoadModule('/lib/optimizer.ts');
+  const html=renderToStaticMarkup(React.createElement(OptimizerPanel,{event:{id:1,date:'2026-09-18',status:'draft'},rows:[],wishes:[],busy:false,isOpen:false,refresh:()=>{},
+    initialWeights:{...algorithmWeightDefaults,FactorMix:50,FactorDistanceSameTeamA:2}}));
+  assert.match(html,/grid-cols-2/);
+  assert.match(html,/<select[^>]+name="FactorDistanceSameTeamA"/);
+  assert.match(html,/<option value="2" selected="">2<\/option>/);
+  assert.match(html,/name="FactorMix"[^>]*value="50"/);
+  for(const name of Object.keys(algorithmWeightDefaults)) assert.ok(html.includes(`aria-label="Info om ${name}"`));
+});
+
 test('click downloads a calendar file containing the selected match', async (t) => {
   const { MatchCalendarButton } = await vite.ssrLoadModule('/components/match-calendar-button.tsx');
   let downloadedBlob, clicked = false, removed = false, revoke;

@@ -33,8 +33,10 @@ public static class SelfTests
         Check(mixedSingle.Matches.Single(m=>m.StartTime=="21:00").Team1.Concat(mixedSingle.Matches.Single(m=>m.StartTime=="21:00").Team2).Order().SequenceEqual(new[]{1,2}),
             "Late mixed single must use the two available players");
         Check(mixedSingle.Score == -50, "Mixed double 100 plus mixed single -150 at FactorMix=50");
-        var gap = Scheduler.Solve(Data(new[] {P(1, cr:1), P(2, cr:1), P(3, cr:5), P(4, cr:5)}, oneCourt), 30);
-        Check(gap.Matches.All(m => m.Team1.Length == 1), "CR gap >3 must prohibit doubles");
+        var lateTimes = new[] {"20:30","21:30"};
+        var lateCourts = new[] {new Slot(1,"20:30"),new Slot(2,"20:30")};
+        var gap = Scheduler.Solve(Data(new[] {P(1, times:lateTimes,cr:1), P(2,times:lateTimes,cr:1), P(3,times:lateTimes,cr:5), P(4,times:lateTimes,cr:5)}, lateCourts), 30);
+        Check(gap.Matches.Length==2 && gap.Matches.All(m => m.Team1.Length == 1), "CR gap >3 must prohibit doubles");
         var boundary = Scheduler.Solve(Data(new[] {P(1, cr:1), P(2, cr:1), P(3, cr:4), P(4, cr:4)}, oneCourt), 30);
         Check(boundary.Matches.Single().Team1.Length == 2, "CR gap =3 must be allowed");
         var banned = Scheduler.Solve(Data(new[] {P(1, member:"17108"), P(2, member:"13993"), P(3), P(4)}, oneCourt), 30);
@@ -56,11 +58,21 @@ public static class SelfTests
         var preferSimilar = Scheduler.Solve(Data(variedCr, oneCourt, new Weights(FactorMatchDifference:0)),30);
         Check(preferSimilar.Score == 60, "Solver prefers similar partners: 100-10-15*(1+1)=60");
         Check(aged.Score == -10, "Age: 20+20+abs(60-120)=100, score 100-10-100");
-        var early = Scheduler.Solve(Data(new[] {P(1), P(2)}, [new Slot(1,"18:00"), new Slot(1,"19:00")]), 30);
-        Check(early.Matches.Single().StartTime == "18:00", "Earliest of equal-score plans");
+        var early = Scheduler.Solve(Data(new[] {P(1,times:lateTimes), P(2,times:lateTimes)}, [new Slot(1,"20:30"), new Slot(1,"21:30")]), 30);
+        Check(early.Matches.Single().StartTime == "20:30", "Earliest of equal-score plans");
         Check(early.Status == "OPTIMAL", "Tiny model must prove all stages optimal");
-        var scoreBeforeEarly = Scheduler.Solve(Data(new[] {P(1,cr:1),P(2,cr:1),P(3,cr:4),P(4,cr:4)}, [new Slot(1,"18:00"),new Slot(1,"19:00")]),30);
-        Check(scoreBeforeEarly.Score == 100 && scoreBeforeEarly.Matches.Length == 2, "Two balanced singles score 100 and must outrank an earlier double scoring 90");
+        var moreMatches = Scheduler.Solve(Data(Enumerable.Range(1,4).Select(i=>P(i,times:lateTimes)).ToArray(), lateCourts,new Weights(FactorMix:50)),30);
+        Check(moreMatches.Matches.Length == 2 && moreMatches.Score == -300, "More matches precede score once hour wishes are equal");
+        var noEarlySingle = Scheduler.Solve(Data([P(1,times:["20:00","20:30"]),P(2,times:["20:00","20:30"])],
+            [new Slot(1,"20:00"),new Slot(2,"20:30")]),30);
+        Check(noEarlySingle.Matches.Single().StartTime=="20:30", "Singles must never start before 20:30");
+        var distancePlayers = new[] {P(1,cr:4),P(2,cr:4),P(3,cr:7),P(4,cr:7)};
+        var distance = Scheduler.Solve(Data(distancePlayers,oneCourt,new Weights(FactorDistanceSameTeamA:2)),30);
+        Check(distance.Matches.Length==1 && distance.Matches.SelectMany(m=>new[]{m.Team1,m.Team2}).All(team=>
+            Math.Abs(distancePlayers.Single(p=>p.Id==team[0]).Cr-distancePlayers.Single(p=>p.Id==team[1]).Cr)<=2), "CR4 cannot partner CR7 when distance is 2");
+        var lowerRanked = Scheduler.Solve(Data([P(1,cr:5),P(2,cr:8),P(3,cr:5),P(4,cr:8)],oneCourt,
+            new Weights(FactorDistanceSameTeamA:2),locked:[lockMatch]),30);
+        Check(lowerRanked.Matches.Length==1, "DistanceSameTeamA does not restrict partners when both CR values exceed 4");
         Console.WriteLine("PASS: hours, overlaps, queue, waitlist, CR limits, forbidden pairs, availability, mix, history, age, early times and optimality.");
     }
 }

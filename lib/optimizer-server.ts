@@ -18,14 +18,14 @@ export function optimizerRevisionSql(eventId: number) {
   )`;
 }
 
-export async function loadOptimizerInput(eventId: number, weights: unknown) {
+export async function loadOptimizerInput(eventId: number, weights: unknown, forScoring = false) {
   const db = getDb();
   const revisionRows = await db.all<{revision: string}>(sql`SELECT ${optimizerRevisionSql(eventId)} AS revision`);
   const revision = revisionRows[0].revision;
   const event = await ensureEvent();
   if (!event || event.id !== eventId) throw new Error('Spillerunden er ændret. Genindlæs siden.');
-  if (event.status !== 'draft') throw new Error('Der kan kun foreslås kampe for en kladde.');
-  if (registrationIsOpen(event) || event.registrationOverride === 'auto' && new Date() < new Date(event.registrationClosesAt))
+  if (!forScoring && event.status !== 'draft') throw new Error('Der kan kun foreslås kampe for en kladde.');
+  if (!forScoring && (registrationIsOpen(event) || event.registrationOverride === 'auto' && new Date() < new Date(event.registrationClosesAt)))
     throw new Error('Luk tilmeldingen, før der foreslås kampe.');
   const now = new Date();
   const members = await db.select({id: players.id, memberNo: players.memberNo, name: players.name, cr: players.christinRanking, birthYear: players.birthYear, gender: players.gender, suspendedEventId: players.suspendedEventId}).from(players).orderBy(asc(players.id));
@@ -69,7 +69,7 @@ export async function loadOptimizerInput(eventId: number, weights: unknown) {
     locked: existing.filter(m => m.locked).map(nativeMatch), history, weights: parseAlgorithmWeights(weights),
   };
   validateOptimizerInput(input);
-  validateProposal(input.locked, input);
+  if (!forScoring) validateProposal(input.locked, input);
   const after = await db.all<{revision: string}>(sql`SELECT ${optimizerRevisionSql(eventId)} AS revision`);
   if (after[0].revision !== revision) throw new Error('Data blev ændret under indlæsningen. Prøv igen.');
   const fingerprintBytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify({revision, weights: input.weights, year: currentYear(now)})));

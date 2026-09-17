@@ -1,24 +1,31 @@
 'use client';
 
-import {useState} from 'react';
-import {Sparkles} from 'lucide-react';
+import {useEffect, useState} from 'react';
+import {Info, Sparkles} from 'lucide-react';
 import {Button} from '../components/ui/button';
 import {Input} from '../components/ui/input';
 import {Label} from '../components/ui/label';
 import {ImportedPlanTable} from './imported-plan';
 import {algorithmWeightDefaults, type AlgorithmWeights, type ProposedMatch} from '../lib/optimizer';
 import type {UnfulfilledWish} from '../lib/unfulfilled-wishes';
+import {optimizerHelp, restoreWeights, weightFields} from '../lib/optimizer-settings';
+import {Popover, PopoverContent, PopoverTrigger} from '../components/ui/popover';
 
 type Proposal = {
   matches: ProposedMatch[]; rows: Record<string, string>[]; score: number; status: string; fingerprint: string;
   weights: AlgorithmWeights; historyDates: string[];
   allocation: {id: number; name: string; memberNo: string; signupOrder: number; status: string; requested: number; assigned: number}[];
 };
-export function OptimizerPanel({event, rows, wishes, isOpen, busy, refresh}: {
+export function OptimizerPanel({event, rows, wishes, initialWeights, isOpen, busy, refresh}: {
   wishes: UnfulfilledWish[];
+  initialWeights?: AlgorithmWeights;
   event: {id: number; status: string; date: string}; rows: Record<string, unknown>[]; isOpen: boolean; busy: boolean; refresh: () => unknown;
 }) {
-  const [weights, setWeights] = useState<Record<string, string>>(() => Object.fromEntries(Object.entries(algorithmWeightDefaults).map(([k,v]) => [k, String(v)])));
+  const [weights, setWeights] = useState<Record<string, string>>(() => weightFields(initialWeights));
+  useEffect(() => {
+    if (initialWeights) return;
+    try { setWeights(weightFields(restoreWeights(localStorage.getItem('optimizer-weights')))); } catch { /* Storage can be disabled. */ }
+  }, [initialWeights]);
   const [proposal, setProposal] = useState<Proposal | null>(null);
   const [working, setWorking] = useState<'solve' | 'save' | null>(null);
   const [error, setError] = useState('');
@@ -47,6 +54,8 @@ export function OptimizerPanel({event, rows, wishes, isOpen, busy, refresh}: {
         weights: Object.fromEntries(Object.entries(weights).map(([k,v]) => [k, v === '' ? '' : Number(v)])),
       }) : proposal!;
       setProposal(result);
+      setWeights(weightFields(result.weights));
+      try { localStorage.setItem('optimizer-weights', JSON.stringify(result.weights)); } catch { /* Keep the in-memory values. */ }
       if (!result.matches.length) throw new Error('Der blev ikke fundet nogen kampe. Kampplanen er ikke ændret.');
       setWorking('save');
       await request({action: 'save', weights: result.weights, matches: result.matches, fingerprint: result.fingerprint});
@@ -65,21 +74,31 @@ export function OptimizerPanel({event, rows, wishes, isOpen, busy, refresh}: {
       {exporting ? 'Eksporterer…' : 'Eksporter kampplan'}
     </Button>
     </div>
-    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      {Object.entries(algorithmWeightDefaults).map(([name, fallback]) => <div key={name} className="space-y-2">
-        <Label htmlFor={`algorithm-${name}`}>{name}</Label>
-        <Input id={`algorithm-${name}`} name={name} type="number" step={1} min={-1000000} max={1000000} disabled={disabled}
+    <div className="grid grid-cols-2 gap-x-3 gap-y-2 lg:grid-cols-4">
+      {Object.entries(algorithmWeightDefaults).map(([name, fallback]) => <div key={name} className="min-w-0 space-y-1">
+        <div className="flex min-h-9 items-center gap-1">
+          <Label className="min-w-0 flex-1 text-[11px] leading-tight [overflow-wrap:anywhere]" htmlFor={`algorithm-${name}`}>{name}</Label>
+          <Popover><PopoverTrigger asChild><button type="button" aria-label={`Info om ${name}`} className="flex size-8 shrink-0 items-center justify-center rounded-full text-[#13375e] hover:bg-slate-100 focus-visible:outline-2">
+            <Info className="size-4" aria-hidden="true" />
+          </button></PopoverTrigger><PopoverContent className="max-w-[calc(100vw-2rem)] text-sm" side="top">
+            <p className="mb-1 break-words font-semibold">{name}</p><p>{optimizerHelp[name as keyof AlgorithmWeights]}</p>
+          </PopoverContent></Popover>
+        </div>
+        {name === 'FactorDistanceSameTeamA' ? <select id={`algorithm-${name}`} name={name} disabled={disabled} value={weights[name]}
+          className="h-9 w-full rounded-md border bg-white px-2 text-base" onChange={e => {setWeights(current => ({...current, [name]: e.target.value})); setProposal(null); setSaved(false);}}>
+          <option value="2">2</option><option value="3">3</option>
+        </select> : <Input id={`algorithm-${name}`} name={name} type="number" step={1} min={-1000000} max={1000000} disabled={disabled} className="h-9 px-2 text-base"
           placeholder={String(fallback)} value={weights[name]} onChange={e => {
             const v = e.target.value;
             if (v === '' || /^-?\d+$/.test(v) && Number.isSafeInteger(Number(v))) {
               setWeights(current => ({...current, [name]: v})); setProposal(null); setSaved(false);
             }
-          }} onBlur={() => setWeights(current => ({...current, [name]: current[name] === '' ? String(fallback) : current[name]}))} />
+          }} onBlur={() => setWeights(current => ({...current, [name]: current[name] === '' ? String(fallback) : current[name]}))} />}
       </div>)}
     </div>
     <p className="text-sm text-slate-600">Vægtene skal være heltal. Tomme felter bruger standardværdien. FactorAge kræver fødselsår på alle tilmeldte medlemmer.</p>
     <p className="text-sm text-slate-600">FactorSameTeamDifference vægter CR-forskellen mellem medspillerne på begge hold. Standardværdien er 15; 0 slår dette fradrag fra. Singlekampe får intet fradrag for denne faktor.</p>
-    <p className="text-sm text-slate-600">Første spilletime prioriteres før anden og tredje time for tilmeldte spillere. Derefter optimeres kampscore og til sidst tidlige tider. Single er tilladt på tværs af køn. En single giver 100 − 5 × FactorMix point før øvrige fradrag, så flere kampe giver ikke altid højere score.</p>
+    <p className="text-sm text-slate-600">Første spilletime prioriteres før anden og tredje time for tilmeldte spillere. Derefter prioriteres flere kampe, kampscore og til sidst tidlige tider. Single er tilladt fra kl. 20.30, også på tværs af køn.</p>
     {isOpen && <p className="text-sm text-slate-600">Luk tilmeldingen, før du laver et kampforslag.</p>}
     {event.status !== 'draft' && <p className="text-sm text-slate-600">Der kan kun laves forslag til en kampplan, som er en kladde.</p>}
     {working && <p role="status" className="text-sm">{working === 'solve' ? 'Fordeler timer og optimerer kampe. Opstart og beregning kan tage op til tre minutter.' : 'Kontrollerer og gemmer kampplanen…'}</p>}

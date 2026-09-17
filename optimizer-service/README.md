@@ -17,6 +17,12 @@ Next.js/Cloudflare kalder denne .NET 10-tjeneste over HTTP. Google.OrTools 9.15.
 
 Produktionen bruger Worker `aabenbane-optimizer` og en Cloudflare Container. Konfigurationen er i `optimizer-cloudflare/wrangler.jsonc`. Én `standard-2`-instans genbruges og går i dvale efter to minutters inaktivitet. Alle HTTP-kald, inklusive `/health`, kræver den hemmelige nøgle, før containeren startes. Containeren har ikke internetadgang.
 
+Hele deploymentet kan køres med `powershell -ExecutionPolicy Bypass -File .\Deploy.ps1` fra projektets rod. Scriptet bruger sin egen placering som arbejdsmappe, så det kan også startes med en absolut sti fra andre mapper. Node.js, .NET 10, projektets npm-afhængigheder, Cloudflare-login og Docker Desktop med Linux-containere skal være tilgængelige.
+
+Scriptet tester og deployer beregningscontaineren, venter på at den nye version består onlinekontrollen, forbinder hjemmesiden og kører den normale release med build, alle test, verificeret databasebackup, migrationer og sundhedskontrol. Det stopper ved fejl og forhindrer samtidige kørsler. Projektets lokale Next.js-udviklingsserver stoppes midlertidigt under build og genstartes bagefter. Secrets genbruges uden at blive udskrevet. Backup og releasekvittering ligger i `.data/releases/`.
+
+`Deploy.ps1 -CheckOnly` kører kun lokale releasekontroller; `Deploy.ps1 -WhatIf` viser handlingen uden at udføre den. Containerudrulningen ventes normalt på i op til 15 minutter; det kan justeres med `-ContainerWaitMinutes`.
+
 Med Docker Desktop startet køres fra projektets rod:
 
 ```sh
@@ -47,7 +53,8 @@ Der sendes kun interne spiller-ID'er, medlemsnumre (til forbudsregler), CR, køn
 - Kun tilmeldte starttider og de eksisterende banereservationer anvendes. En kamp varer 60 minutter. Både spillere og baner kontrolleres for overlap.
 - Låste kampe bevares, men ugyldige låste kampe afvises; andre kladdeversioner erstattes ved gemning.
 - Alle tre forbudte medlemspar kontrolleres, uanset hold.
-- Single er tilladt både med samme køn og på tværs af køn. Alle singler har mix-værdi 5, så FactorMix=50 giver −150 point før øvrige fradrag. Timeønsker prioriteres før score, også når ekstra kampe giver negativ score. Ved to mænd og to kvinder i double fordeles kønnene ligeligt mellem holdene.
+- Single er kun tilladt fra kl. 20:30, både med samme køn og på tværs af køn. Alle singler har mix-værdi 5, så FactorMix=50 giver −150 point før øvrige fradrag. Timeønsker og antal kampe prioriteres før score, også når ekstra kampe giver negativ score. Ved to mænd og to kvinder i double fordeles kønnene ligeligt mellem holdene.
+- FactorDistanceSameTeamA er en fast maksimal CR-forskel mellem makkere, når mindst én har CR 1–4. Værdien er 2 eller 3, standard 3. Den almindelige maksimale CR-forskel på 3 i hele kampen gælder fortsat.
 - Score følger de seks vægte. Hvert gentaget makkerpar giver straf én gang pr. historikregel; sidste rundes makkere giver begge makkerstraffe. Hver gentaget modstanderrelation giver separat straf. Flere kampe med samme relation i en historikrunde tælles som TRUE én gang.
 - balanceAge = abs(A−B) + abs(C−D) + abs(A+B−C−D). Ved single bruges kun forskellen mellem de to spilleres alder.
 - Historikken er de seneste tre **afholdte, offentliggjorte runder** fra og med 2026-09-18, før den valgte runde og før dags dato. Test- og aflyste runder og runder uden kampe udelades; arkiverede spillede runder tæller med. “Sidste uge” betyder den seneste af disse runder. Algoritmens egne planer gemmer stabile spiller-ID'er; ældre Excel-historik matches entydigt på fulde navne. Ukendte eller tvetydige navne stopper beregningen med besked.
@@ -58,12 +65,15 @@ CP-SAT løser følgende mål i rækkefølge. Det opnåede resultat for hvert tri
 2. Maksimér antallet med mindst 2 timer, derefter mindst 3 timer, uden at overskride ønsker.
 3. Prioritér tilmeldingsrækkefølgen blandt de aktive: hver tildelt time vægtes med omvendt placering i køen. En tidligere tilmeldt har dermed højere prioritet, når opfyldelsen af trin 1–2 er ens.
 4. Udfør samme tre time-trin og køprioritet for ventelisten. Ventelistedeltagere må allerede indgå som medspillere, hvis det hjælper de aktive; deres egne ønsker prioriteres først her.
-5. Maksimér summen af kampscorer.
-6. Maksimér spiller-timer ved den tidligste start, derefter ved hver senere start, uden at forringe tidligere mål.
+5. Maksimér antallet af kampe uden at forringe timeopfyldelse eller tilmeldingsprioritet.
+6. Maksimér summen af kampscorer.
+7. Maksimér spiller-timer ved den tidligste start, derefter ved hver senere start, uden at forringe tidligere mål.
 
 De tre time-trin optimeres samlet pr. status med heltalsvægte: ved n spillere er første time vægtet (n+1)², anden time n+1 og tredje time 1. Dermed kan alle senere timer tilsammen ikke opveje én mistet første time. Timefordelingen får op til 20 sekunder, køprioritet 5 sekunder, score 40 sekunder og tidlige tider samlet 10 sekunder inden for de 100 sekunder. De almindelige syv starttider vægtes tilsvarende leksikografisk i ét trin, så modelbehandlingen ikke skal gentages for hver starttid.
 
-Time-, kø- og scoretrin har op til to søgestarter med forskellige tilfældige seeds. Den bedste komplette løsning genbruges som startforslag og kan ikke tabes ved genstart. Antallet af solvertråde tilpasses antallet af CPU'er, højst fire. Ved tidsgrænsen bevares den bedste fundne gyldige løsning, og UI viser **optimalitet er ikke bevist**. Kun når alle trin er bevist optimale, bruges **Optimal løsning fundet**. Flere søgestarter giver ikke garanti for et globalt optimum.
+Time-, kø-, antal-kampe- og scoretrin har op til to søgestarter med forskellige tilfældige seeds. Antal-kampe-trinnet får op til 5 sekunder. Den bedste komplette løsning genbruges som startforslag og kan ikke tabes ved genstart. Fire solvertråde bruges til CP-SATs forskellige søgestrategier, også når containeren deler én CPU. Ved tidsgrænsen bevares den bedste fundne gyldige løsning, og UI viser **optimalitet er ikke bevist**. Kun når alle trin er bevist optimale, bruges **Optimal løsning fundet**. Flere søgestarter giver ikke garanti for et globalt optimum.
+
+De anvendte faktorværdier og score pr. kamp gemmes sammen med kampplanen. Formularen gendanner disse værdier efter genindlæsning; browseren husker også senest anvendte værdier til nye planer. Faktorhjælp kan åbnes ved hvert felt. Score pr. kamp vises kun i Admin → Kampplan Admin → Kampplan og eksporteres ikke. Ældre eller importerede planer uden gemt score beregnes med standardfaktorer og tilgængelige medlems-/historikdata; manglende oplysninger vises som “–”.
 
 **Ikke opfyldte ønsker** beregnes fra den aktuelt viste kampplan og de aktuelle tilmeldinger. Listen viser ønskede, tildelte og manglende timer, mulige og tildelte starttider samt status. Den tilføjes efter en tom række under kampene i Kampplan.xlsx; importen læser fortsat kun kampene. Ens medlemsnavne markeres til manuel kontrol.
 

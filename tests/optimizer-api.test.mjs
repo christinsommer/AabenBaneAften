@@ -53,9 +53,10 @@ test('real CP-SAT service and D1: permissions, closed registration, history, val
       }
     }]});
     const {POST}=await import(pathToFileURL(outfile).href);
-    let sent, tamperScore=false, duringSolve=null;
+    let sent, tamperScore=false, duringSolve=null, unavailable=false;
     globalThis.fetch=async(url,options)=>{
       if(new URL(url).hostname!=='optimizer.test') return originalFetch(url,options);
+      if(unavailable) throw new TypeError('fetch failed');
       sent=JSON.parse(options.body);
       const reply=await originalFetch(serviceUrl+'/solve',options);
       if(duringSolve) await duringSolve();
@@ -81,6 +82,11 @@ test('real CP-SAT service and D1: permissions, closed registration, history, val
     assert.equal(sent.players[0].age,40);
     assert.equal(sent.players[0].name,undefined);
     assert.equal(sent.players[0].email,undefined);
+    unavailable=true;
+    const offline=await post();
+    assert.equal(offline.status,503);
+    assert.match((await offline.json()).error,/kan ikke kontaktes/);
+    unavailable=false;
     assert.ok(proposal.matches.length);
     assert.equal((await db.prepare('SELECT count(*) as n FROM matches WHERE event_id=100').first()).n,0,'preview must not mutate schedule');
     assert.equal((await db.prepare('SELECT imported_kampplan FROM events WHERE id=100').first()).imported_kampplan,'');
@@ -108,6 +114,9 @@ test('real CP-SAT service and D1: permissions, closed registration, history, val
     const event=await db.prepare('SELECT * FROM events WHERE id=100').first();
     assert.equal(event.status,'draft'); assert.equal(event.published_at,null);
     assert.ok(JSON.parse(event.imported_kampplan)[0]._optimizerRevision);
+    const savedRows=JSON.parse(event.imported_kampplan);
+    assert.deepEqual(savedRows[0]._optimizerWeights,proposal.weights,'used weights survive saving and refresh');
+    assert.equal(savedRows.reduce((total,row)=>total+row._optimizerScore,0),proposal.score,'per-match scores are stored with the saved plan');
     assert.equal((await db.prepare('SELECT count(*) as n FROM matches WHERE event_id=100').first()).n,proposal.matches.length);
     assert.equal((await post('save',{matches:proposal.matches,fingerprint:proposal.fingerprint})).status,409,'saving a stale preview twice must fail');
     tamperScore=true;

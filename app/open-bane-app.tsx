@@ -1457,7 +1457,7 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
       <PlayerLists data={data} view={listView} setView={setListView} act={act} busy={busy} />
       </TabsContent>
       <TabsContent value="matches" className="space-y-6">
-      <OptimizerPanel key={`${data.event.id}:${data.event.importedKampplan}`} event={data.event} rows={importedRows} wishes={wishes} isOpen={data.isOpen} busy={busy} refresh={refresh} />
+      <OptimizerPanel key={`${data.event.id}:${data.event.importedKampplan}`} event={data.event} rows={importedRows} wishes={wishes} initialWeights={data.optimizerWeights} isOpen={data.isOpen} busy={busy} refresh={refresh} />
       {!!openSubstitutions.length && (
         <Card className="border-amber-300 bg-amber-50">
           <CardHeader>
@@ -1567,7 +1567,7 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
         </p>
       )}
       {Array.isArray(data.importedMatches) && data.importedMatches.length > 0 && (
-        <ImportedPlanTable rows={data.importedMatches} />
+        <ImportedPlanTable rows={data.importedMatches} scores={data.adminPlanScores} />
       )}
       <Card className="border-[#dce9e1]">
         <CardHeader>

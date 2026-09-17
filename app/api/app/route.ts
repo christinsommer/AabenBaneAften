@@ -15,6 +15,8 @@ import { initialCr } from '../../../lib/initial-cr';
 import { levelScore } from '../../../lib/ranking';
 import { buildSignupExportRows } from "../../../lib/export-signups";
 import { normalizeKampplanRows } from "../../../lib/kampplan-rows";
+import {parseAlgorithmWeights, scoreMatch} from '../../../lib/optimizer';
+import {loadOptimizerInput} from '../../../lib/optimizer-server';
 
 export const dynamic = "force-dynamic";
 
@@ -45,6 +47,33 @@ async function state() {
   const event = storedEvent ? {...storedEvent, importedKampplan: user?.role === 'admin' || storedEvent.status === 'published' ? storedEvent.importedKampplan : ''} : null;
   const isOpen = event ? registrationIsOpen(event) : false;
   const importedMatches = event && (user?.role === 'admin' || event.status === 'published') ? parseImportedKampplan(event.importedKampplan) : [];
+  let optimizerWeights;
+  let adminPlanScores: (number | null)[] | undefined;
+  if (user?.role === 'admin' && importedMatches.length && event) {
+    const raw = JSON.parse(event.importedKampplan);
+    try { if (raw[0]?._optimizerWeights) optimizerWeights = parseAlgorithmWeights(raw[0]._optimizerWeights); } catch { /* Older plan metadata. */ }
+    if (raw.length === importedMatches.length && raw.every((row: Record<string, unknown>) => Number.isSafeInteger(row._optimizerScore))) {
+      adminPlanScores = raw.map((row: {_optimizerScore: number}) => row._optimizerScore);
+    } else {
+      adminPlanScores = importedMatches.map(() => null);
+      try {
+        const {input, names} = await loadOptimizerInput(event.id, optimizerWeights ?? {}, true);
+        const resolveName = (name: string) => {
+          const normalized = (s: string) => s.normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('da-DK');
+          const ids = [...names].filter(([, value]) => normalized(value) === normalized(name)).map(([id]) => id);
+          if (ids.length !== 1 || !input.players.some(p => p.id === ids[0])) throw new Error('Ukendt spiller');
+          return ids[0];
+        };
+        adminPlanScores = importedMatches.map(row => {
+          try { return scoreMatch({court: Number(row.C.replace(/\D/g, '')), startTime: row.A,
+            team1: [row.D, row.E].filter(Boolean).map(resolveName), team2: [row.F, row.G].filter(Boolean).map(resolveName)}, input).score; }
+          catch { return null; }
+        });
+      } catch { /* Missing CR/history: show an unavailable score rather than a made-up number. */ }
+    }
+  }
+  // Per-match scores and factors belong only in the administrator's view.
+  if (event && user?.role !== 'admin' && event.importedKampplan) event.importedKampplan = JSON.stringify(importedMatches);
   if (!user) return { authenticated: false, event, isOpen, times: TIMES, importedMatches };
   const calendarDates = await db.select({id:events.id,date:events.date,status:events.status,isTest:events.isTest,testActive:events.testActive}).from(events).where(eq(events.archived,false)).orderBy(asc(events.date));
   const allPlayers = user.role === "admin" ? await db.select({id:players.id,memberNo:players.memberNo,name:players.name,firstName:players.firstName,lastName:players.lastName,email:players.email,phone:players.phone,phoneCountryCode:players.phoneCountryCode,christinRanking:players.christinRanking,crReviewedAt:players.crReviewedAt,createdAt:players.createdAt,birthYear:players.birthYear,gender:players.gender,selfLevel:players.selfLevel,adminLevel:players.adminLevel,role:players.role,suspendedEventId:players.suspendedEventId}).from(players).orderBy(asc(players.name)) : [];
@@ -79,7 +108,7 @@ async function state() {
   }));
   const requestRows = await db.select({request:matchRequests,creatorName:players.name}).from(matchRequests).innerJoin(players,eq(players.id,matchRequests.creatorPlayerId)).where(eq(matchRequests.eventId,event.id));
   const requests = requestRows.filter(({request})=>request.creatorPlayerId===user.id||JSON.parse(request.invitedMemberNos).includes(user.memberNo)).map(({request,creatorName})=>({id:request.id,creatorName,status:request.status,isCreator:request.creatorPlayerId===user.id,isInvited:JSON.parse(request.invitedMemberNos).includes(user.memberNo),accepted:JSON.parse(request.acceptedPlayerIds).includes(user.id),acceptedCount:JSON.parse(request.acceptedPlayerIds).length}));
-  return { authenticated:true,user:visibleMember(user),event,isOpen,times:TIMES,calendarDates,importedMatches,signup:signup?{...signup,...signupFields(signup)}:noSignup(event.id,user.id),matches:event.status==="published"?eventMatches:[],adminMatches:user.role==="admin"?eventMatches:[],players:allPlayers,signups:memberSignups,signupHistory:signupHistory.map(row=>({...row,signup:{...row.signup,...signupFields(row.signup)}})),waitlist,names,requests,substitutions:substitutionsForUser };
+  return { authenticated:true,user:visibleMember(user),event,isOpen,times:TIMES,calendarDates,importedMatches,optimizerWeights,adminPlanScores,signup:signup?{...signup,...signupFields(signup)}:noSignup(event.id,user.id),matches:event.status==="published"?eventMatches:[],adminMatches:user.role==="admin"?eventMatches:[],players:allPlayers,signups:memberSignups,signupHistory:signupHistory.map(row=>({...row,signup:{...row.signup,...signupFields(row.signup)}})),waitlist,names,requests,substitutions:substitutionsForUser };
 }
 
 export async function GET(){try{return Response.json(await state());}catch(error){return Response.json({error:error instanceof Error?error.message:"Appen kunne ikke indlæses"},{status:500});}}

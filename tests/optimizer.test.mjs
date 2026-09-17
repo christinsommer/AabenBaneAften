@@ -29,7 +29,10 @@ test('validator enforces CR boundaries, all banned combinations, singles and loc
   assert.throws(() => validateProposal([match], input({players:[p(1,{cr:1}),p(2),p(3),p(4)]})),/CR/);
   for(const [a,b] of [['17108','13993'],['17108','16212'],['11822','15722']])
     assert.throws(() => validateProposal([match], input({players:[p(1,{memberNo:a}),p(2,{memberNo:b}),p(3),p(4)]})),/forbudt/);
-  assert.equal(validateProposal([{...match,team1:[1],team2:[2]}], input({players:[p(1),p(2,{gender:'K'})]})).length,1);
+  const mixedSingle={...match,startTime:'20:30',team1:[1],team2:[2]};
+  const lateInput=input({players:[p(1,{availability:['20:00','20:30']}),p(2,{gender:'K',availability:['20:00','20:30']})],slots:[{court:1,startTime:'20:00'},{court:1,startTime:'20:30'}]});
+  assert.equal(validateProposal([mixedSingle],lateInput).length,1);
+  assert.throws(()=>validateProposal([{...mixedSingle,startTime:'20:00'}],lateInput),/20:30/);
   assert.throws(() => validateProposal([{...match,team1:[1,3],team2:[2,4]}],input({locked:[match]})),/låst/);
   assert.equal(validateProposal([{...match,team1:[4,3],team2:[2,1]}],input({locked:[match]})).length,1);
 });
@@ -61,6 +64,15 @@ test('same-team CR difference penalizes both teams symmetrically and excludes si
   assert.equal(scoreMatch({...match,team1:match.team2,team2:match.team1},data).score,30);
   assert.equal(scoreMatch(match,{...data,weights:{...data.weights,FactorSameTeamDifference:0}}).score,90);
   assert.equal(scoreMatch({...match,team1:[1],team2:[3]},data).balanceSameTeamDifference,0);
+});
+
+test('same-team distance is a hard rule for either partner with CR 1–4', () => {
+  assert.equal(parseAlgorithmWeights({}).FactorDistanceSameTeamA,3);
+  for(const value of [0,1,4,'2',null]) assert.throws(()=>parseAlgorithmWeights({FactorDistanceSameTeamA:value}),/2 eller 3/);
+  const weights={...algorithmWeightDefaults,FactorDistanceSameTeamA:2};
+  assert.throws(()=>validateProposal([match],input({weights,players:[p(1,{cr:4}),p(2,{cr:7}),p(3,{cr:4}),p(4,{cr:7})]})),/FactorDistanceSameTeamA/);
+  assert.equal(validateProposal([match],input({weights,players:[p(1,{cr:4}),p(2,{cr:6}),p(3,{cr:4}),p(4,{cr:6})]})).length,1);
+  assert.equal(validateProposal([match],input({weights,players:[p(1,{cr:5}),p(2,{cr:8}),p(3,{cr:5}),p(4,{cr:8})]})).length,1);
 });
 test('profile accepts optional birth year without erasing it for old clients', () => {
   const base={firstName:'A',lastName:'B',memberNo:'1',email:'a@example.com',level:'B',gender:'K'};

@@ -19,7 +19,9 @@ export async function POST(request: Request) {
       if (body.fingerprint !== loaded.fingerprint) return Response.json({error: 'Tilmeldinger, medlemmer eller kampplan er ændret. Lav et nyt forslag.'}, {status: 409});
       const plan = validateProposal(body.matches, input);
       if (!plan.length) return Response.json({error: 'Et tomt forslag kan ikke gemmes.'}, {status: 400});
-      const rows = proposalRows(plan, names).map((row, index) => index === 0 ? {...row, _optimizerRevision: crypto.randomUUID()} : row);
+      const rows = proposalRows(plan, names).map((row, index) => ({...row, _optimizerScore: scoreMatch(plan[index], input).score,
+        ...(index === 0 ? {_optimizerRevision: crypto.randomUUID(), _optimizerWeights: input.weights} : {}),
+      }));
       const serialized = JSON.stringify(rows);
       const db = getDb();
       const savedGuard = sql`EXISTS (SELECT 1 FROM events WHERE id = ${body.eventId} AND imported_kampplan = ${serialized})`;
@@ -44,10 +46,18 @@ export async function POST(request: Request) {
     if (!env.OPTIMIZER_URL || !env.OPTIMIZER_API_KEY) return Response.json({error: 'Beregningstjenesten er ikke tilsluttet i dette miljø.'}, {status: 503});
     const url = new URL('/solve', env.OPTIMIZER_URL);
     if (url.protocol !== 'https:' && !['localhost', '127.0.0.1'].includes(url.hostname)) throw new Error('Beregningstjenesten skal bruge HTTPS.');
-    const response = await fetch(url, {
+    let response: Response;
+    try { response = await fetch(url, {
       method: 'POST', headers: {'Content-Type': 'application/json', Authorization: `Bearer ${env.OPTIMIZER_API_KEY}`},
       body: JSON.stringify(input), signal: AbortSignal.any([request.signal, AbortSignal.timeout(160_000)]),
-    });
+    }); } catch (error) {
+      const timeout = error instanceof Error && ['TimeoutError', 'AbortError'].includes(error.name);
+      return Response.json({error: timeout
+        ? 'Beregningstjenesten svarede ikke inden tidsgrænsen. Prøv igen.'
+        : ['localhost', '127.0.0.1'].includes(url.hostname)
+          ? 'Den lokale beregningstjeneste kan ikke kontaktes. Start den med npm run optimizer:start, og prøv igen.'
+          : 'Beregningstjenesten kan ikke kontaktes. Prøv igen om lidt.'}, {status: timeout ? 504 : 503});
+    }
     if (!response.ok) {
       const failure = await response.json().catch(() => ({})) as {error?: string};
       return Response.json({error: failure.error || 'Beregningstjenesten kunne ikke lave forslaget.'}, {status: 502});
