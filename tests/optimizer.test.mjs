@@ -36,7 +36,7 @@ test('validator enforces CR boundaries, all banned combinations, singles and loc
 test('score counts every repeated relation once, including overlapping partner penalties', () => {
   const historical = input({history:[{date:'2026-10-09',matches:[match,match]},{date:'2026-10-02',matches:[match]}]});
   assert.equal(historyRelations(historical.history).partners.size,2);
-  assert.deepEqual(scoreMatch(match,historical),{score:10,balanceDifference:0,balanceAge:0,mix:1,sameTeamLastWeek:2,sameTeam3Weeks:2,opponentLastWeek:4});
+  assert.deepEqual(scoreMatch(match,historical),{score:10,balanceDifference:0,balanceSameTeamDifference:0,balanceAge:0,mix:1,sameTeamLastWeek:2,sameTeam3Weeks:2,opponentLastWeek:4});
   const aged = input({players:[p(1,{age:20}),p(2,{age:40}),p(3,{age:50}),p(4,{age:70})],weights:{...algorithmWeightDefaults,FactorAge:1}});
   assert.equal(scoreMatch(match,aged).balanceAge,100);
   assert.equal(scoreMatch(match,aged).score,-10);
@@ -48,6 +48,19 @@ test('single plan survives table normalization and calendar export', () => {
   assert.deepEqual(normalizeKampplanRows(rows),rows);
   assert.match(createMatchCalendar({date:'2026-10-16',startTime:'18:00',court:1,players:['Anna','','Bente','']}),/SUMMARY:Anna vs Bente/);
   assert.equal(normalizeKampplanRows([{...rows[0],G:'Third'}]).length,0);
+});
+
+test('same-team CR difference penalizes both teams symmetrically and excludes singles', () => {
+  assert.equal(parseAlgorithmWeights({}).FactorSameTeamDifference,15);
+  assert.equal(parseAlgorithmWeights({FactorSameTeamDifference:''}).FactorSameTeamDifference,15);
+  const data = input({players:[p(1,{cr:2}),p(2,{cr:5}),p(3,{cr:3}),p(4,{cr:4})]});
+  const scored = scoreMatch(match,data);
+  assert.equal(scored.balanceDifference,0);
+  assert.equal(scored.balanceSameTeamDifference,60);
+  assert.equal(scored.score,30);
+  assert.equal(scoreMatch({...match,team1:match.team2,team2:match.team1},data).score,30);
+  assert.equal(scoreMatch(match,{...data,weights:{...data.weights,FactorSameTeamDifference:0}}).score,90);
+  assert.equal(scoreMatch({...match,team1:[1],team2:[3]},data).balanceSameTeamDifference,0);
 });
 test('profile accepts optional birth year without erasing it for old clients', () => {
   const base={firstName:'A',lastName:'B',memberNo:'1',email:'a@example.com',level:'B',gender:'K'};

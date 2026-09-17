@@ -39,6 +39,13 @@ public static class SelfTests
         var historical = Scheduler.Solve(Data(Enumerable.Range(1,4).Select(i=>P(i)).ToArray(), oneCourt, history:history, locked:[lockMatch]), 30);
         Check(historical.Score == 10, "Two repeated partners get both penalties, four repeated opponent pairs: 100-40-20-20-10");
         var aged = Scheduler.Solve(Data(new[] {P(1, age:20), P(2, age:40), P(3, age:50), P(4, age:70)}, oneCourt, new Weights(FactorAge:1), locked:[lockMatch]), 30);
+        var variedCr = new[] {P(1,cr:2), P(2,cr:5), P(3,cr:3), P(4,cr:4)};
+        var sameTeam = Scheduler.Solve(Data(variedCr, oneCourt, locked:[lockMatch]),30);
+        Check(sameTeam.Score == 30, "Both team differences: 100-10-15*(3+1)=30");
+        var noSameTeam = Scheduler.Solve(Data(variedCr, oneCourt, new Weights(FactorSameTeamDifference:0), locked:[lockMatch]),30);
+        Check(noSameTeam.Score == 90, "Zero factor disables same-team difference");
+        var preferSimilar = Scheduler.Solve(Data(variedCr, oneCourt, new Weights(FactorMatchDifference:0)),30);
+        Check(preferSimilar.Score == 60, "Solver prefers similar partners: 100-10-15*(1+1)=60");
         Check(aged.Score == -10, "Age: 20+20+abs(60-120)=100, score 100-10-100");
         var early = Scheduler.Solve(Data(new[] {P(1), P(2)}, [new Slot(1,"18:00"), new Slot(1,"19:00")]), 30);
         Check(early.Matches.Single().StartTime == "18:00", "Earliest of equal-score plans");

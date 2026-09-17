@@ -1,5 +1,5 @@
 export const algorithmWeightDefaults = {
-  FactorBalDif: 40, FactorSameTeamLastWeek: 20, FactorSameTeam3Weeks: 10,
+  FactorMatchDifference: 40, FactorSameTeamDifference: 15, FactorSameTeamLastWeek: 20, FactorSameTeam3Weeks: 10,
   FactorOpponentLastWeek: 5, FactorMix: 10, FactorAge: 0,
 };
 export type AlgorithmWeights = typeof algorithmWeightDefaults;
@@ -67,10 +67,12 @@ export function scoreMatch(match: ProposedMatch, input: OptimizerInput) {
   }
   for (const p of a) for (const q of b) opponentLastWeek += Number(relations.lastOpponents.has(pairKey(p.id, q.id)));
   const w = input.weights;
-  const score = 100 - w.FactorBalDif * balanceDifference - w.FactorSameTeamLastWeek * sameTeamLastWeek
+  const balanceSameTeamDifference = w.FactorSameTeamDifference * (double
+    ? Math.abs(a[0].cr - a[1].cr) + Math.abs(b[0].cr - b[1].cr) : 0);
+  const score = 100 - w.FactorMatchDifference * balanceDifference - w.FactorSameTeamLastWeek * sameTeamLastWeek
     - w.FactorSameTeam3Weeks * sameTeam3Weeks - w.FactorOpponentLastWeek * opponentLastWeek
-    - w.FactorMix * mix - w.FactorAge * balanceAge;
-  return { score, balanceDifference, balanceAge, mix, sameTeamLastWeek, sameTeam3Weeks, opponentLastWeek };
+    - w.FactorMix * mix - w.FactorAge * balanceAge - balanceSameTeamDifference;
+  return { score, balanceDifference, balanceSameTeamDifference, balanceAge, mix, sameTeamLastWeek, sameTeam3Weeks, opponentLastWeek };
 }
 
 export function validateOptimizerInput(input: OptimizerInput) {

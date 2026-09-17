@@ -50,6 +50,8 @@ Time- og køtrin får op til 8 sekunder hver, scoretrinnet op til 35 sekunder og
 
 ## Kontrol og test
 
+`FactorSameTeamDifference` har standardværdien 15 og kan ændres sammen med de andre faktorer i Kampplan Admin. Fra kampscoren trækkes `FactorSameTeamDifference * (abs(CR1_hold1 - CR2_hold1) + abs(CR1_hold2 - CR2_hold2))`. For single er dette fradrag 0. Faktoren supplerer `FactorMatchDifference`, som vægter forskellen mellem holdenes samlede CR. Værdien 0 deaktiverer det nye fradrag. Ved udgivelse skal både denne .NET-tjeneste og appen opdateres, så solver og scorekontrol bruger samme formel.
+
 `npm run optimizer:test` tester CP-SAT. `node --test tests/optimizer.test.mjs tests/optimizer-api.test.mjs` tester den uafhængige TypeScript-validator og hele forløbet fra API gennem den rigtige .NET-tjeneste til en isoleret D1.
 
 API'et kontrollerer rettigheder, lukket tilmelding, datagyldighed, kampscore og alle hårde kampregler. Forslagets fingeraftryk omfatter medlemmer, tilmeldinger, banekampe, historik og vægte. Gemning bruger en atomisk D1-batch med en betinget opdatering: samtidige ændringer betyder, at hverken den gamle kladde eller kamprækkerne overskrives.

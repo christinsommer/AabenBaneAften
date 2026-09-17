@@ -8,7 +8,7 @@ public record Slot(int Court, string StartTime);
 public record Match(int Court, string StartTime, int[] Team1, int[] Team2);
 public record HistoryMatch(int[] Team1, int[] Team2);
 public record Round(string Date, HistoryMatch[] Matches);
-public record Weights(int FactorBalDif = 40, int FactorSameTeamLastWeek = 20, int FactorSameTeam3Weeks = 10, int FactorOpponentLastWeek = 5, int FactorMix = 10, int FactorAge = 0);
+public record Weights(int FactorMatchDifference = 40, int FactorSameTeamLastWeek = 20, int FactorSameTeam3Weeks = 10, int FactorOpponentLastWeek = 5, int FactorMix = 10, int FactorAge = 0, int FactorSameTeamDifference = 15);
 public record Input(Player[] Players, Slot[] Slots, Round[] History, Match[] Locked, Weights Weights);
 public record Stage(string Name, long Value, string Status);
 public record Result(Match[] Matches, string Status, Stage[] Stages, long Score, double Seconds);
@@ -29,7 +29,7 @@ public static class Scheduler
         if (players.Length > 200 || input.Slots.Length > 32 || input.History.Length > 3 || players.Select(p => p.Id).Distinct().Count() != players.Length)
             throw new ArgumentException("Ugyldigt antal spillere, banetider eller historikrunder.");
         var w = input.Weights;
-        if (new[] {w.FactorBalDif, w.FactorSameTeamLastWeek, w.FactorSameTeam3Weeks, w.FactorOpponentLastWeek, w.FactorMix, w.FactorAge}.Any(v => Math.Abs((long)v) > 1_000_000))
+        if (new[] {w.FactorMatchDifference, w.FactorSameTeamDifference, w.FactorSameTeamLastWeek, w.FactorSameTeam3Weeks, w.FactorOpponentLastWeek, w.FactorMix, w.FactorAge}.Any(v => Math.Abs((long)v) > 1_000_000))
             throw new ArgumentException("Ugyldige vægte.");
         foreach (var p in players)
             if (p.Cr is < 1 or > 9 || p.RequestedHours is < 1 or > 3 || p.SignupOrder < 1 || p.Gender is not ("M" or "K") || p.Status is not ("active" or "waitlist") || p.Availability is null || w.FactorAge != 0 && (p.Age is null or < 0 or > 120))
@@ -86,7 +86,7 @@ public static class Scheduler
             var twoWomen = model.NewBoolVar($"twoWomen{s}");
             model.Add(women == 2).OnlyEnforceIf(twoWomen); model.Add(women != 2).OnlyEnforceIf(twoWomen.Not());
             model.Add(TeamSum(0, p => p.Gender == "K" ? 1 : 0) == 1).OnlyEnforceIf(new ILiteral[] { doubles[s], twoWomen });
-            score.AddTerm(used[s], 100).AddTerm(balance, -w.FactorBalDif).AddTerm(mix, -w.FactorMix);
+            score.AddTerm(used[s], 100).AddTerm(balance, -w.FactorMatchDifference).AddTerm(mix, -w.FactorMix);
             if (w.FactorAge != 0)
             {
                 var ageBalance = model.NewIntVar(0, 240, $"ageBalance{s}");
@@ -99,6 +99,7 @@ public static class Scheduler
                 if (!players[p].Availability.Contains(slots[s].StartTime) || !players[q].Availability.Contains(slots[s].StartTime)) continue;
                 var key = Pair(players[p].Id, players[q].Id);
                 long partnerPenalty = (lastPartners.Contains(key) ? w.FactorSameTeamLastWeek : 0L)
+                    + (long)w.FactorSameTeamDifference * Math.Abs(players[p].Cr - players[q].Cr)
                     + (recentPartners.Contains(key) ? w.FactorSameTeam3Weeks : 0L)
                     + (w.FactorAge != 0 ? (long)w.FactorAge * Math.Abs(players[p].Age!.Value - players[q].Age!.Value) : 0);
                 long opponentPenalty = lastOpponents.Contains(key) ? w.FactorOpponentLastWeek : 0;
