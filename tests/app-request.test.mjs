@@ -23,8 +23,9 @@ test('login sends credentials and verifies the subsequent session', async (t) =>
 test('server errors and non-JSON responses produce useful messages', async (t) => {
   const fetch = t.mock.method(globalThis, 'fetch', async () => Response.json({ error: 'Forkert kode' }, { status: 401 }));
   await assert.rejects(appRequest({ action: 'login' }), /Forkert kode/);
-  fetch.mock.mockImplementation(async () => new Response('<html>Bad gateway</html>', { status: 502 }));
-  await assert.rejects(appRequest(), /uventet svar/);
+  fetch.mock.mockImplementation(async () => new Response('<html>Bad gateway</html>', { status: 502, headers: { 'cf-ray': 'test-ray-CPH' } }));
+  await assert.rejects(appRequest(), /uventet svar \(HTTP 502\).*Reference: test-ray-CPH/);
+  assert.equal(fetch.mock.callCount(), 2, 'failed requests are not replayed automatically');
 });
 
 test('requests time out instead of leaving login pending', async (t) => {

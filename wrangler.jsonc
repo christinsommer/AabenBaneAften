@@ -2,6 +2,10 @@
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "aabenbaneaften",
 	"workers_dev": true,
+	"observability": {
+		"enabled": true,
+		"head_sampling_rate": 1
+	},
 	"routes": [
 		{ "pattern": "aabenbaneaften.dk", "custom_domain": true }
 	],

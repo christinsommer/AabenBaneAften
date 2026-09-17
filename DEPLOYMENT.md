@@ -1,5 +1,11 @@
 # Lokal udvikling og udgivelse
 
+## CR til gennemgang
+
+Migration `0010_cr_review.sql` tilføjer `players.cr_reviewed_at` og markerer de eksisterende medlemmer som gennemgået uden at ændre deres CR. Nye profiler får som standard ingen godkendelsesdato og vises øverst under Medlemmer med “CR skal gennemgås”. Kun administratorer kan gemme og godkende CR. Det kan gøres på ethvert tidspunkt, uanset tilmeldingens og kampplanens status. Godkendelsen påvirker ikke adgangen til tilmelding.
+
+Ændres CR via den almindelige medlemsredigering, kræver den nye værdi en ny godkendelse. Ændringer af navn, kontaktoplysninger og selvvalgt niveau nulstiller ikke i sig selv godkendelsen. Gennemgang fungerer også uden kommende spilledage. Kør migrationen før den nye Worker udgives; den eksisterende releaseprocedure gør dette automatisk. `/api/health` kontrollerer nu også, at den nye kolonne findes.
+
 Appen bruger Cloudflare D1 både lokalt og i produktion. Lokal D1 er simuleret på computeren og ligger i `.wrangler/local-dev/v3`. Den har ingen forbindelse til produktionsdata.
 
 ## Arbejd lokalt

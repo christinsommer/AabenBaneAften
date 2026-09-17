@@ -13,14 +13,23 @@ type Proposal = {
   weights: AlgorithmWeights; historyDates: string[];
   allocation: {id: number; name: string; memberNo: string; signupOrder: number; status: string; requested: number; assigned: number}[];
 };
-export function OptimizerPanel({event, isOpen, busy, refresh}: {
-  event: {id: number; status: string}; isOpen: boolean; busy: boolean; refresh: () => unknown;
+export function OptimizerPanel({event, rows, isOpen, busy, refresh}: {
+  event: {id: number; status: string; date: string}; rows: Record<string, unknown>[]; isOpen: boolean; busy: boolean; refresh: () => unknown;
 }) {
   const [weights, setWeights] = useState<Record<string, string>>(() => Object.fromEntries(Object.entries(algorithmWeightDefaults).map(([k,v]) => [k, String(v)])));
   const [proposal, setProposal] = useState<Proposal | null>(null);
   const [working, setWorking] = useState<'solve' | 'save' | null>(null);
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  async function exportPlan() {
+    setExporting(true); setError('');
+    try {
+      const {downloadKampplan} = await import('../lib/kampplan-export');
+      downloadKampplan(rows, event.date);
+    } catch (e) { setError(e instanceof Error ? e.message : 'Kampplanen kunne ikke eksporteres.'); }
+    finally { setExporting(false); }
+  }
   async function run(action: 'solve' | 'save') {
     setWorking(action); setError(''); setSaved(false);
     if (action === 'solve') setProposal(null);
@@ -46,9 +55,14 @@ export function OptimizerPanel({event, isOpen, busy, refresh}: {
   }
   const disabled = busy || working !== null;
   return <section className="space-y-4 rounded-xl border border-slate-200 bg-white p-4" aria-label="Optimering af kampplan">
-    <Button type="button" disabled={disabled || isOpen || event.status !== 'draft'} onClick={() => void run('solve')} className="bg-[#13375e]">
+    <div className="flex flex-wrap gap-3">
+    <Button type="button" disabled={disabled || exporting || isOpen || event.status !== 'draft'} onClick={() => void run('solve')} className="bg-[#13375e]">
       <Sparkles className="mr-2 h-4 w-4" />{working === 'solve' ? 'Beregner kampforslag…' : 'Algoritme foreslå kampe'}
     </Button>
+    <Button type="button" variant="outline" disabled={disabled || exporting || !rows.length} onClick={() => void exportPlan()}>
+      {exporting ? 'Eksporterer…' : 'Eksporter kampplan'}
+    </Button>
+    </div>
     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
       {Object.entries(algorithmWeightDefaults).map(([name, fallback]) => <div key={name} className="space-y-2">
         <Label htmlFor={`algorithm-${name}`}>{name}</Label>

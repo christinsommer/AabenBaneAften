@@ -4,8 +4,10 @@ export function validDate(value: unknown): value is string {
   return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }
 
+const copenhagenDateFormatter = new Intl.DateTimeFormat("en-CA", {timeZone:"Europe/Copenhagen",year:"numeric",month:"2-digit",day:"2-digit"});
+
 export function copenhagenDate(now = new Date()) {
-  const parts = new Intl.DateTimeFormat("en-CA", {timeZone:"Europe/Copenhagen",year:"numeric",month:"2-digit",day:"2-digit"}).formatToParts(now);
+  const parts = copenhagenDateFormatter.formatToParts(now);
   const part = (name: string) => parts.find(p => p.type === name)!.value;
   return `${part("year")}-${part("month")}-${part("day")}`;
 }

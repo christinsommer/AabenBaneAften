@@ -1,5 +1,4 @@
-﻿import { and, asc, count, desc, eq, gt, ne, or, sql } from "drizzle-orm";
-import * as XLSX from "xlsx";
+import { and, asc, count, desc, eq, gt, ne, or, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getDb } from "../../../db";
 import { events, feedback, matches, matchRequests, pinResetTokens, players, sessions, signups, substitutions } from "../../../db/schema";
@@ -15,7 +14,7 @@ import { visibleMember } from "../../../lib/member-visibility";
 import { initialCr } from '../../../lib/initial-cr';
 import { levelScore } from '../../../lib/ranking';
 import { buildSignupExportRows } from "../../../lib/export-signups";
-import { normalizeKampplanRows } from "../../../lib/kampplan-import";
+import { normalizeKampplanRows } from "../../../lib/kampplan-rows";
 
 export const dynamic = "force-dynamic";
 
@@ -45,13 +44,13 @@ async function state() {
   const db = getDb(); const storedEvent = await ensureEvent(); const user = await currentPlayer();
   const event = storedEvent ? {...storedEvent, importedKampplan: user?.role === 'admin' || storedEvent.status === 'published' ? storedEvent.importedKampplan : ''} : null;
   const isOpen = event ? registrationIsOpen(event) : false;
-  const calendarDates = await db.select({id:events.id,date:events.date,status:events.status,isTest:events.isTest,testActive:events.testActive}).from(events).where(eq(events.archived,false)).orderBy(asc(events.date));
   const importedMatches = event && (user?.role === 'admin' || event.status === 'published') ? parseImportedKampplan(event.importedKampplan) : [];
   if (!user) return { authenticated: false, event, isOpen, times: TIMES, importedMatches };
-  if (!event) return {authenticated:true,user:visibleMember(user),event:null,isOpen:false,times:TIMES,calendarDates,importedMatches: []};
+  const calendarDates = await db.select({id:events.id,date:events.date,status:events.status,isTest:events.isTest,testActive:events.testActive}).from(events).where(eq(events.archived,false)).orderBy(asc(events.date));
+  const allPlayers = user.role === "admin" ? await db.select({id:players.id,memberNo:players.memberNo,name:players.name,firstName:players.firstName,lastName:players.lastName,email:players.email,phone:players.phone,phoneCountryCode:players.phoneCountryCode,christinRanking:players.christinRanking,crReviewedAt:players.crReviewedAt,createdAt:players.createdAt,birthYear:players.birthYear,gender:players.gender,selfLevel:players.selfLevel,adminLevel:players.adminLevel,role:players.role,suspendedEventId:players.suspendedEventId}).from(players).orderBy(asc(players.name)) : [];
+  if (!event) return {authenticated:true,user:visibleMember(user),event:null,isOpen:false,times:TIMES,calendarDates,importedMatches: [],players:allPlayers};
   const signup = (await db.select().from(signups).where(and(eq(signups.eventId,event.id),eq(signups.playerId,user.id),ne(signups.status,"cancelled"))).limit(1))[0] ?? null;
-  const eventMatches = await db.select().from(matches).where(eq(matches.eventId,event.id)).orderBy(asc(matches.startTime),asc(matches.court));
-  const allPlayers = user.role === "admin" ? await db.select({id:players.id,memberNo:players.memberNo,name:players.name,firstName:players.firstName,lastName:players.lastName,email:players.email,phone:players.phone,phoneCountryCode:players.phoneCountryCode,christinRanking:players.christinRanking,birthYear:players.birthYear,gender:players.gender,selfLevel:players.selfLevel,adminLevel:players.adminLevel,role:players.role,suspendedEventId:players.suspendedEventId}).from(players).orderBy(asc(players.name)) : [];
+  const eventMatches = user.role === "admin" || event.status === "published" ? await db.select().from(matches).where(eq(matches.eventId,event.id)).orderBy(asc(matches.startTime),asc(matches.court)) : [];
   const eventSignups = user.role === "admin" ? await db.select({signup:signups,player:{id:players.id,name:players.name,memberNo:players.memberNo,gender:players.gender,selfLevel:players.selfLevel,adminLevel:players.adminLevel}}).from(signups).innerJoin(players,eq(players.id,signups.playerId)).where(eq(signups.eventId,event.id)).orderBy(asc(signups.createdAt)) : [];
   const signupByPlayer = new Map(eventSignups.map(row=>[row.player.id,row.signup]));
   const memberSignups = allPlayers.map(player=>{
@@ -71,11 +70,12 @@ async function state() {
     availability:signups.availability,
   }).from(signups).innerJoin(players,eq(players.id,signups.playerId)).where(and(eq(signups.eventId,event.id),eq(signups.status,"waitlist"))).orderBy(asc(signups.createdAt));
   const names = await db.select({id:players.id,name:players.name,firstName:players.firstName}).from(players);
+  const namesById = new Map(names.map(player => [player.id, player.name]));
   const substitutionRows = await db.select().from(substitutions).where(eq(substitutions.eventId,event.id)).orderBy(desc(substitutions.updatedAt));
   const substitutionsForUser = substitutionRows.filter((item)=>user.role==="admin"||item.outgoingPlayerId===user.id).map((item)=>({
     ...item,
-    outgoingName:names.find((player)=>player.id===item.outgoingPlayerId)?.name??"Ukendt spiller",
-    replacementName:item.replacementPlayerId?names.find((player)=>player.id===item.replacementPlayerId)?.name??"Ukendt spiller":null,
+    outgoingName:namesById.get(item.outgoingPlayerId)??"Ukendt spiller",
+    replacementName:item.replacementPlayerId?namesById.get(item.replacementPlayerId)??"Ukendt spiller":null,
   }));
   const requestRows = await db.select({request:matchRequests,creatorName:players.name}).from(matchRequests).innerJoin(players,eq(players.id,matchRequests.creatorPlayerId)).where(eq(matchRequests.eventId,event.id));
   const requests = requestRows.filter(({request})=>request.creatorPlayerId===user.id||JSON.parse(request.invitedMemberNos).includes(user.memberNo)).map(({request,creatorName})=>({id:request.id,creatorName,status:request.status,isCreator:request.creatorPlayerId===user.id,isInvited:JSON.parse(request.invitedMemberNos).includes(user.memberNo),accepted:JSON.parse(request.acceptedPlayerIds).includes(user.id),acceptedCount:JSON.parse(request.acceptedPlayerIds).length}));
@@ -185,7 +185,7 @@ export async function POST(request:Request){
         if(cr!==null&&(typeof cr!=="number"||!Number.isInteger(cr)||cr<1||cr>9))return Response.json({error:"CR skal være et heltal fra 1 til 9 eller ikke vurderet."},{status:400});
 
 
-        await db.update(players).set({...profile,christinRanking:cr}).where(eq(players.id,target.id));
+        await db.update(players).set({...profile,christinRanking:cr,...(cr !== target.christinRanking ? {crReviewedAt:null} : {})}).where(eq(players.id,target.id));
         return NextResponse.json(await state());
       }
       if(action==="update_profile"){
@@ -207,6 +207,16 @@ export async function POST(request:Request){
           if(target.testActive)return Response.json({error:"Afslut testfasen, før du fjerner testrunden."},{status:409});
           await db.update(events).set({archived:true}).where(eq(events.id,target.id));
         }
+        return NextResponse.json(await state());
+      }
+      if(action==="approve_cr" || action==="set_cr"){
+        if(user.role!=="admin")return Response.json({error:"Kun administratorer kan godkende CR."},{status:403});
+        const cr=body.christinRanking;
+        if((cr===null && action==="approve_cr") || (cr!==null && (typeof cr!=="number" || !Number.isInteger(cr) || cr<1 || cr>9)))return Response.json({error:"Vælg CR fra 1 til 9 for at godkende."},{status:400});
+        const playerId=Number(body.playerId);
+        if(!Number.isSafeInteger(playerId)||playerId<1)return Response.json({error:"Medlemmet findes ikke."},{status:404});
+        const changed=await db.update(players).set({christinRanking:cr,crReviewedAt:action==="approve_cr"?new Date().toISOString():null}).where(eq(players.id,playerId)).returning({id:players.id});
+        if(!changed.length)return Response.json({error:"Medlemmet findes ikke."},{status:404});
         return NextResponse.json(await state());
       }
       const event=await ensureEvent();
@@ -235,6 +245,7 @@ export async function POST(request:Request){
           requestedHours: Number(row.requestedHours ?? 0),
         })));
 
+        const XLSX = await import("xlsx");
         const sheet = XLSX.utils.aoa_to_sheet(exportRows);
         const workbook = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(workbook, sheet, "Tilmeldinger");
@@ -263,7 +274,12 @@ export async function POST(request:Request){
         if(!schedule.length) return Response.json({error:"Der blev ikke fundet nogen kampe i Excel-arket."},{status:400});
         const cleaned = normalizeKampplanRows(schedule);
         if(!cleaned.length) return Response.json({error:"Kampplan-arket er tomt eller ikke læseligt."},{status:400});
-        await db.update(events).set({ importedKampplan: JSON.stringify(cleaned) }).where(eq(events.id, event.id));
+        await db.batch([
+          db.delete(feedback).where(sql`${feedback.matchId} IN (SELECT id FROM matches WHERE event_id = ${event.id})`),
+          db.delete(substitutions).where(eq(substitutions.eventId,event.id)),
+          db.delete(matches).where(eq(matches.eventId,event.id)),
+          db.update(events).set({importedKampplan:JSON.stringify(cleaned),status:"draft",publishedAt:null}).where(eq(events.id,event.id)),
+        ]);
         return NextResponse.json(await state());
       }
       if(action === "set_registration_schedule") {
@@ -338,14 +354,6 @@ export async function POST(request:Request){
         else if(action==="end_test"){
           if(!event.testActive)return Response.json({error:"Der er ingen aktiv testrunde."},{status:400});
           await db.update(events).set({testActive:false,registrationOverride:"closed"}).where(eq(events.id,event.id));
-        }
-        else if(action==="set_cr"){
-          const cr=body.christinRanking;
-          if(cr!==null&&(typeof cr!=="number"||!Number.isInteger(cr)||cr<1||cr>9))return Response.json({error:"CR skal være et heltal fra 1 til 9 eller ikke vurderet."},{status:400});
-          const playerId=Number(body.playerId);
-          const [target]=await db.select({id:players.id}).from(players).where(eq(players.id,playerId)).limit(1);
-          if(!target)return Response.json({error:"Spilleren findes ikke."},{status:404});
-          await db.update(players).set({christinRanking:cr}).where(eq(players.id,playerId));
         }
         else if(action==="generate"){
           return Response.json({error:'Brug “Algoritme foreslå kampe” under Kampplan Admin.'},{status:400});

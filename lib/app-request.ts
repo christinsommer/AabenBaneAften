@@ -13,7 +13,9 @@ export async function appRequest(payload?: Record<string, unknown>) {
       } : {}),
     });
     const data = await response.json().catch(() => {
-      throw new Error("Serveren sendte et uventet svar. Genindlæs siden og prøv igen.");
+      const ray = response.headers.get("cf-ray");
+      const reference = ray ? ` Reference: ${ray}.` : "";
+      throw new Error(`Serveren sendte et uventet svar (HTTP ${response.status}). Vent et øjeblik og prøv igen.${reference}`);
     }) as { authenticated?: boolean; error?: string; warning?: string };
     if (!response.ok) throw new Error(data?.error || "Kunne ikke kontakte serveren. Prøv igen.");
     return data;

@@ -5,7 +5,7 @@ import { COURTS, ensureEvent } from './schedule';
 import { registrationIsOpen } from './registration';
 import { copenhagenDate } from './calendar';
 import {ageFromBirthYear, currentYear} from './birth-year';
-import { normalizeKampplanRows } from './kampplan-import';
+import { normalizeKampplanRows } from './kampplan-rows';
 import { HISTORY_START, parseAlgorithmWeights, validateOptimizerInput, validateProposal, type HistoryRound, type OptimizerInput, type ProposedMatch } from './optimizer';
 
 // No credentials in the snapshot. The same SQL is used in the atomic save condition.

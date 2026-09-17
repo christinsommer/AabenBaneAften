@@ -1,7 +1,7 @@
 'use client';
 
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
-import { normalizeKampplanRows } from '../lib/kampplan-import';
+import { normalizeKampplanRows } from '../lib/kampplan-rows';
 import { MatchCalendarButton } from '../components/match-calendar-button';
 import type { CalendarPlayer } from '../lib/match-calendar';
 

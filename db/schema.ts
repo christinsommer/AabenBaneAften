@@ -8,6 +8,7 @@ export const players = sqliteTable("players", {
   firstName: text("first_name").notNull().default(""),
   lastName: text("last_name").notNull().default(""),
   christinRanking: integer("christin_ranking"),
+  crReviewedAt: text("cr_reviewed_at"),
   age: integer("age"),
   birthYear: integer("birth_year"),
   email: text("email").notNull().default(""),

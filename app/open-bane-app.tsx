@@ -1,5 +1,4 @@
-﻿"use client";
-import * as XLSX from "xlsx";
+"use client";
 import { unusedImportedCourts } from "../lib/unused-courts";
 import rulesContent from "../lib/rules-content.json";
 import { includeIntermediateTimes } from "../lib/signup";
@@ -14,7 +13,6 @@ import { registrationDateParts } from "../lib/registration";
 import { InstallApp } from "../components/install-app";
 import { levelScore } from '../lib/ranking';
 import { RankingField } from '../components/ranking-field';
-import { parseWorkbookKampplanRows } from "../lib/kampplan-import";
 import {
   CalendarDays,
   Check,
@@ -110,6 +108,7 @@ export default function OpenBaneApp() {
   const [openProfile, setOpenProfile] = useState(false);
   const [resetToken, setResetToken] = useState("");
   const [refreshing, setRefreshing] = useState(false);
+  const [registrationNotice, setRegistrationNotice] = useState("");
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -147,9 +146,18 @@ export default function OpenBaneApp() {
     setError("");
     try {
       const j = await appRequest(payload);
+      if (payload.action === "register") {
+        setRegistrationNotice("Du er nu oprettet. Tjek din mail om du har modtaget en bekræftelse. Hvis ikke, så kontakt administrator.");
+      }
+      if (payload.action === "logout") setRegistrationNotice("");
       if (payload.action === "register") setOpenProfile(true);
       if (payload.action === "logout" || payload.action === "login") setOpenProfile(false);
-      if (!await load(payload.action === "login" || payload.action === "register")) return false;
+      // Login still verifies that the browser sends the newly issued cookie.
+      if (payload.action === "login" || payload.action === "register" || typeof j.authenticated !== "boolean") {
+        if (!await load(payload.action === "login" || payload.action === "register")) return false;
+      } else {
+        setData(j);
+      }
       if (j.warning) setError(j.warning);
       return true;
     } catch (e) {
@@ -165,14 +173,19 @@ export default function OpenBaneApp() {
   useEffect(() => {
     if (!data?.authenticated || busy) return;
     let active = true;
+    let pending = false;
+    let lastAttempt = Date.now();
     const updateSchedule = async () => {
-      if (document.visibilityState === 'hidden') return;
+      if (document.visibilityState === 'hidden' || pending || Date.now() - lastAttempt < 15000) return;
+      pending = true;
+      lastAttempt = Date.now();
       try {
         const next = await appRequest();
         if (active) setData(next);
       } catch { /* Keep the current screen during temporary background errors. */ }
+      finally { pending = false; }
     };
-    const timer = window.setInterval(updateSchedule, 30000);
+    const timer = window.setInterval(updateSchedule, 60000);
     window.addEventListener('focus', updateSchedule);
     return () => { active = false; window.clearInterval(timer); window.removeEventListener('focus', updateSchedule); };
   }, [data?.authenticated, busy]);
@@ -199,8 +212,12 @@ export default function OpenBaneApp() {
         resetToken={resetToken}
       />
     );
-  if (!data.event) return <EmptyCalendarDashboard data={data} act={act} busy={busy} error={error} openProfile={openProfile} />;
-  return <Dashboard data={data} act={act} busy={busy} error={error} openProfile={openProfile} refresh={refresh} refreshing={refreshing} />;
+  return <>
+    {registrationNotice && <div role="status" className="mx-auto max-w-5xl px-4 pt-4"><p className="rounded-lg border border-green-200 bg-green-50 p-4 text-green-900">{registrationNotice}</p></div>}
+    {!data.event
+      ? <EmptyCalendarDashboard data={data} act={act} busy={busy} error={error} openProfile={openProfile} />
+      : <Dashboard data={data} act={act} busy={busy} error={error} openProfile={openProfile} refresh={refresh} refreshing={refreshing} />}
+  </>;
 }
 
 function AuthScreen({ mode, setMode, act, busy, error, event, resetToken }: any) {
@@ -714,6 +731,7 @@ function Dashboard({ data, act, busy, error, openProfile, refresh, refreshing }:
               <TabsTrigger value="admin" className="px-3 py-2">
                 <ShieldCheck className="mr-2 h-4 w-4" />
                 Admin
+                <CrReviewCount players={data.players} />
               </TabsTrigger>
             )}
           </TabsList>
@@ -784,7 +802,7 @@ function CalendarList({dates,currentId,act,busy=false}: {dates:CalendarDate[];cu
 }
 
 function EmptyCalendarDashboard({data,act,busy,error,openProfile}: {
-  data:{user:MemberProfile & {id:number;role:string};calendarDates:CalendarDate[]};
+  data:{user:MemberProfile & {id:number;role:string};calendarDates:CalendarDate[];players?:MemberProfile[]};
   act:AppAction;busy:boolean;error:string;openProfile:boolean;
 }) {
   return <main className="min-h-screen bg-[#f4f6fa] px-4 py-8">
@@ -793,9 +811,10 @@ function EmptyCalendarDashboard({data,act,busy,error,openProfile}: {
       <p className="rounded-xl bg-white p-4">Der er ingen kommende spilledage på listen. {data.user.role==="admin"?"Tilføj en dato nedenfor for at åbne en ny runde.":"Administratoren skal tilføje flere datoer. Du kan stadig ændre din profil."}</p>
       {error&&<p role="alert" className="rounded-xl bg-red-50 p-4 text-red-700">{error}</p>}
       <Tabs defaultValue={openProfile?"profile":"dates"}>
-        <TabsList><TabsTrigger value="dates"><CalendarDays className="mr-2 h-4 w-4"/>Spilledage</TabsTrigger><TabsTrigger value="profile"><Settings className="mr-2 h-4 w-4"/>Profil</TabsTrigger></TabsList>
+        <TabsList><TabsTrigger value="dates"><CalendarDays className="mr-2 h-4 w-4"/>Spilledage</TabsTrigger><TabsTrigger value="profile"><Settings className="mr-2 h-4 w-4"/>Profil</TabsTrigger>{data.user.role==="admin" && <TabsTrigger value="members">Admin · Medlemmer<CrReviewCount players={data.players}/></TabsTrigger>}</TabsList>
         <TabsContent value="dates"><CalendarList dates={data.calendarDates} act={data.user.role==="admin"?act:undefined} busy={busy}/></TabsContent>
         <TabsContent value="profile"><ProfilePanel user={data.user} act={act} busy={busy}/></TabsContent>
+        {data.user.role==="admin" && <TabsContent value="members"><MembersPanel data={data} act={act} busy={busy}/></TabsContent>}
       </Tabs>
     </div><Disclaimer/>
   </main>;
@@ -806,6 +825,8 @@ type MemberProfile = {
   phone?: string;
   phoneCountryCode?: string;
   christinRanking?: number | null;
+  crReviewedAt?: string | null;
+  createdAt?: string;
   gender: "M" | "K";
   firstName: string;
   lastName: string;
@@ -1378,7 +1399,6 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
     void loadPrompt();
     return () => controller.abort();
   }, []);
-  const sortedMembers = [...data.players].sort((a: MemberProfile, b: MemberProfile) => `${a.firstName} ${a.lastName}`.trim().localeCompare(`${b.firstName} ${b.lastName}`.trim(), "da", { sensitivity: "base" }));
   const [editing, setEditing] = useState<number | null>(null);
   const [listView, setListView] = useState<"current" | "history">("current");
   const [testEmailResult, setTestEmailResult] = useState("");
@@ -1396,7 +1416,7 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
       <TabsList aria-label="Admin" className="flex h-auto w-full flex-wrap justify-start gap-1 bg-[#e7f0e9] p-1 group-data-[orientation=horizontal]/tabs:h-auto [&>button]:h-auto">
         <TabsTrigger value="signups" className="min-h-9 px-2.5">Tilmeldinger</TabsTrigger>
         <TabsTrigger value="matches" className="min-h-9 px-2.5">Kampplan Admin</TabsTrigger>
-        <TabsTrigger value="members" className="min-h-9 px-2.5">Medlemmer</TabsTrigger>
+        <TabsTrigger value="members" className="min-h-9 px-2.5">Medlemmer<CrReviewCount players={data.players}/></TabsTrigger>
         <TabsTrigger value="dates" className="min-h-9 px-2.5">Spilledage</TabsTrigger>
         <TabsTrigger value="settings" className="min-h-9 px-2.5">Indstillinger</TabsTrigger>
       </TabsList>
@@ -1435,7 +1455,7 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
       <PlayerLists data={data} view={listView} setView={setListView} act={act} busy={busy} />
       </TabsContent>
       <TabsContent value="matches" className="space-y-6">
-      <OptimizerPanel key={data.event.id} event={data.event} isOpen={data.isOpen} busy={busy} refresh={refresh} />
+      <OptimizerPanel key={`${data.event.id}:${data.event.importedKampplan}`} event={data.event} rows={importedRows} isOpen={data.isOpen} busy={busy} refresh={refresh} />
       {!!openSubstitutions.length && (
         <Card className="border-amber-300 bg-amber-50">
           <CardHeader>
@@ -1487,6 +1507,7 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
           <input
             id="import-kampplan"
             type="file"
+            disabled={busy || isImporting}
             accept=".xlsx,.xls"
             className="block max-w-[220px] text-sm text-slate-600 file:mr-2 file:rounded-md file:border-0 file:bg-[#13375e] file:px-2 file:py-1 file:text-white"
             onChange={async (event) => {
@@ -1495,6 +1516,8 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
               setIsImporting(true);
               setUploadError("");
               try {
+                const XLSX = await import("xlsx");
+                const { parseWorkbookKampplanRows } = await import("../lib/kampplan-import");
                 const workbook = XLSX.read(await file.arrayBuffer(), { type: "array" });
                 const rows = parseWorkbookKampplanRows(workbook);
                 if (!rows.length) {
@@ -1579,19 +1602,7 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
       </Card>
       </TabsContent>
       <TabsContent value="members" className="space-y-6">
-      <Card className="border-[#dce9e1]">
-        <CardHeader><CardTitle>Medlemmer og Christin Ranking</CardTitle><CardDescription>Nye medlemmer får CR ud fra deres egen ranking ved oprettelse. Du kan rette vurderingen til et heltal fra 1 til 9. CR er kun synlig for administratorer.</CardDescription></CardHeader>
-        <CardContent className="space-y-1.5">
-          {sortedMembers.map((player: MemberProfile & {id:number;name:string;christinRanking:number|null}) => <div key={player.id} className="flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2 [&_button]:h-8 [&_button]:px-2 [&_button]:text-xs">
-            <div className="min-w-0 flex-1 basis-full sm:basis-48"><p className="text-sm font-semibold leading-5">{player.firstName} {player.lastName}</p><p className="break-words text-xs leading-4 text-slate-600">#{player.memberNo} · Egen ranking: {player.selfLevel} · {player.email}{player.phone && <> · {player.phoneCountryCode ?? "+45"} {player.phone}</>}</p></div>
-            <div className="flex items-center gap-2"><Label className="text-xs" htmlFor={`cr-${player.id}`}>CR</Label><select id={`cr-${player.id}`} aria-label={`Christin Ranking for ${player.name}`} disabled={busy} value={player.christinRanking ?? ""} className="h-8 rounded-md border px-2 text-sm" onChange={e => act({action:"set_cr",playerId:player.id,christinRanking:e.target.value === "" ? null : Number(e.target.value)})}>
-              <option value="">Ikke vurderet</option>{[1,2,3,4,5,6,7,8,9].map(cr => <option key={cr} value={cr}>{`${cr}  ${CR_LABELS[cr]}`}</option>)}
-            </select></div>
-            <EditMemberDialog player={player} act={act} busy={busy}/>
-            <DeleteMemberDialog player={player} currentUserId={data.user.id} act={act} busy={busy}/>
-          </div>)}
-        </CardContent>
-      </Card>
+      <MembersPanel data={data} act={act} busy={busy} />
       </TabsContent>
       <TabsContent value="settings" className="space-y-6">
       <AdminManagers data={data} act={act} busy={busy} />
@@ -1971,3 +1982,42 @@ function SelectField({ name, label, options }: any) {
 
 
 
+
+function CrReviewCount({players = []}: {players?: MemberProfile[]}) {
+  const count = players.filter(player => !player.crReviewedAt).length;
+  return count > 0 ? <Badge className="ml-2 bg-amber-100 text-amber-900" aria-label={`${count} medlemmer med CR til gennemgang`}>{count} nye</Badge> : null;
+}
+
+function CrReviewControl({player,act,busy}: {player:MemberProfile & {id:number;name:string};act:AppAction;busy:boolean}) {
+  const [cr, setCr] = useState(player.christinRanking == null ? '' : String(player.christinRanking));
+  const changed = cr !== (player.christinRanking == null ? '' : String(player.christinRanking));
+  return <form className="flex flex-wrap items-center gap-2" onSubmit={event => {
+    event.preventDefault();
+    if (cr) void act({action:'approve_cr',playerId:player.id,christinRanking:Number(cr)});
+  }}>
+    <Label className="text-xs" htmlFor={`cr-${player.id}`}>CR</Label>
+    <select id={`cr-${player.id}`} aria-label={`Christin Ranking for ${player.name}`} disabled={busy} value={cr} onChange={event=>setCr(event.target.value)} className="h-8 rounded-md border px-2 text-sm">
+      <option value="">Vælg CR</option>{[1,2,3,4,5,6,7,8,9].map(value=><option key={value} value={value}>{`${value}  ${CR_LABELS[value]}`}</option>)}
+    </select>
+    {(!player.crReviewedAt || changed) ? <Button type="submit" disabled={busy || !cr}>{changed ? 'Gem og godkend CR' : 'Godkend CR'}</Button> : <span className="text-xs text-green-800">CR godkendt</span>}
+  </form>;
+}
+
+function MembersPanel({data,act,busy}:any) {
+  const sortedMembers = [...(data.players ?? [])].sort((a, b) => Number(Boolean(a.crReviewedAt)) - Number(Boolean(b.crReviewedAt)) || a.name.localeCompare(b.name, 'da'));
+  return (
+      <Card className="border-[#dce9e1]">
+        <CardHeader><CardTitle>Medlemmer og Christin Ranking<CrReviewCount players={data.players}/></CardTitle><CardDescription>Medlemmer med CR til gennemgang står øverst. Godkend den automatiske CR, eller ret værdien og vælg “Gem og godkend CR”. Medlemmet kan tilmelde sig imens. CR er kun synlig for administratorer.</CardDescription></CardHeader>
+        <CardContent className="space-y-1.5">
+          {sortedMembers.map((player: MemberProfile & {id:number;name:string;christinRanking:number|null}) => <div key={player.id} className="flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2 [&_button]:h-8 [&_button]:px-2 [&_button]:text-xs">
+            <div className="min-w-0 flex-1 basis-full sm:basis-48"><p className="text-sm font-semibold leading-5">{player.firstName} {player.lastName}</p><p className="break-words text-xs leading-4 text-slate-600">#{player.memberNo} · Egen ranking: {player.selfLevel} · {player.email}{player.phone && <> · {player.phoneCountryCode ?? "+45"} {player.phone}</>}</p></div>
+            {!player.crReviewedAt && <Badge className="bg-amber-100 text-amber-900">CR skal gennemgås</Badge>}
+            {player.createdAt && <p className="text-xs text-slate-600">Oprettet {new Date(player.createdAt.includes('T') ? player.createdAt : player.createdAt.replace(' ', 'T') + 'Z').toLocaleDateString('da-DK', {timeZone:'Europe/Copenhagen'})}</p>}
+            <CrReviewControl key={`${player.id}:${player.christinRanking}:${player.crReviewedAt}`} player={player} act={act} busy={busy}/>
+            <EditMemberDialog player={player} act={act} busy={busy}/>
+            <DeleteMemberDialog player={player} currentUserId={data.user.id} act={act} busy={busy}/>
+          </div>)}
+        </CardContent>
+      </Card>
+  );
+}
