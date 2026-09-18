@@ -19,7 +19,7 @@ Produktionen bruger Worker `aabenbane-optimizer` og en Cloudflare Container. Kon
 
 Hele deploymentet kan køres med `powershell -ExecutionPolicy Bypass -File .\Deploy.ps1` fra projektets rod. Scriptet bruger sin egen placering som arbejdsmappe, så det kan også startes med en absolut sti fra andre mapper. Node.js, .NET 10, projektets npm-afhængigheder, Cloudflare-login og Docker Desktop med Linux-containere skal være tilgængelige.
 
-Scriptet tester og deployer beregningscontaineren, venter på at den nye version består onlinekontrollen, forbinder hjemmesiden og kører den normale release med build, alle test, verificeret databasebackup, migrationer og sundhedskontrol. Det stopper ved fejl og forhindrer samtidige kørsler. Projektets lokale Next.js-udviklingsserver stoppes midlertidigt under build og genstartes bagefter. Secrets genbruges uden at blive udskrevet. Backup og releasekvittering ligger i `.data/releases/`.
+Scriptet tester og deployer beregningscontaineren, venter på at den nye version består onlinekontrollen, forbinder hjemmesiden og kører den normale release med build, alle test, verificeret databasebackup, migrationer og sundhedskontrol. Det stopper ved fejl og forhindrer samtidige kørsler. Projektets lokale Next.js-udviklingsserver og beregningstjenesten på port 5117 stoppes midlertidigt under build og genstartes bagefter, også ved fejl. Beregningstjenesten identificeres på den indlæste DLL's fulde sti, så andre projekters .NET-processer ikke stoppes. Secrets genbruges uden at blive udskrevet. Backup og releasekvittering ligger i `.data/releases/`.
 
 `Deploy.ps1 -CheckOnly` kører kun lokale releasekontroller; `Deploy.ps1 -WhatIf` viser handlingen uden at udføre den. Containerudrulningen ventes normalt på i op til 15 minutter; det kan justeres med `-ContainerWaitMinutes`.
 
@@ -80,6 +80,16 @@ De anvendte faktorværdier og score pr. kamp gemmes sammen med kampplanen. Formu
 En lokal analyse uden databaseændringer kan køres med `dotnet optimizer-service/bin/Debug/net10.0/OptimizerService.dll --solve-file input.json result.json`. Input følger `/solve`-formatet. Gem virkelige medlemsdata under den git-ignorerede mappe `work/`.
 
 ## Kontrol og test
+
+### Manuel redigering
+
+Under Admin → Kampplan Admin → Kampplan åbner **Redigér kampplan** en redigeringstilstand for kladder med lukket tilmelding. Træk en spiller til en anden spiller for at bytte plads, eller til et tomt felt for at flytte. Mus og touch understøttes; man kan også vælge spiller og destination med klik, tryk eller tastatur. Låste kampe kan ikke flyttes. Flytningerne bevarer spillernes samlede antal kampe og dermed den opnåede timefordeling.
+
+**Afslut redigering og kontrollér** kontrollerer på serveren alle faste kampregler og beregner score med kampplanens gemte faktorer. Berørte spillere vises med rød tekst og forklaringer ved regelbrud. En ugyldig redigering gemmes ikke; **Ret kampplanen igen** eller **Annuller ændringer** kan bruges. Gyldige ændringer gemmes atomisk med de nye scorer. Et ændret datagrundlag siden redigeringens start afviser gemning. Beregningscontaineren kaldes ikke ved manuel redigering.
+
+Eksport, import, automatisk optimering, offentliggørelse og fjernelse er deaktiveret, mens manuelle ændringer afventer kontrol. Redigeringen bevares ved skift mellem administratorfaner; siden advarer før genindlæsning med ugemte ændringer.
+
+`node scripts/check-plan-editor.mjs` tester mus, touch, bytte med klik, røde regelmarkeringer og gyldig/ugyldig gemning i en skjult Edge-browser på Windows. Der bruges fiktive data og en isoleret lokal side uden database- eller produktionsadgang.
 
 `FactorSameTeamDifference` har standardværdien 15 og kan ændres sammen med de andre faktorer i Kampplan Admin. Fra kampscoren trækkes `FactorSameTeamDifference * (abs(CR1_hold1 - CR2_hold1) + abs(CR1_hold2 - CR2_hold2))`. For single er dette fradrag 0. Faktoren supplerer `FactorMatchDifference`, som vægter forskellen mellem holdenes samlede CR. Værdien 0 deaktiverer det nye fradrag. Ved udgivelse skal både denne .NET-tjeneste og appen opdateres, så solver og scorekontrol bruger samme formel.
 

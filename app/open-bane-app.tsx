@@ -5,6 +5,7 @@ import rulesContent from "../lib/rules-content.json";
 import { includeIntermediateTimes } from "../lib/signup";
 import { ImportedPlanTable } from "./imported-plan";
 import { OptimizerPanel } from "./optimizer-panel";
+import { PlanEditor } from './plan-editor';
 import {ageFromBirthYear, birthYearOptions} from '../lib/birth-year';
 import { MatchCalendarButton } from "../components/match-calendar-button";
 import { isPlayersImportedMatch } from "../lib/kampplan-filter";
@@ -1405,6 +1406,7 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
   const [testEmailResult, setTestEmailResult] = useState("");
   const [uploadError, setUploadError] = useState("");
   const [isImporting, setIsImporting] = useState(false);
+  const [planEditPending, setPlanEditPending] = useState(false);
   const draftMatches = data.adminMatches ?? [];
   const importedRows = Array.isArray(data.importedMatches) ? data.importedMatches : [];
   const hasImportedPlan = importedRows.length > 0;
@@ -1456,8 +1458,8 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
       </Card>
       <PlayerLists data={data} view={listView} setView={setListView} act={act} busy={busy} />
       </TabsContent>
-      <TabsContent value="matches" className="space-y-6">
-      <OptimizerPanel key={`${data.event.id}:${data.event.importedKampplan}`} event={data.event} rows={importedRows} wishes={wishes} initialWeights={data.optimizerWeights} isOpen={data.isOpen} busy={busy} refresh={refresh} />
+      <TabsContent value="matches" forceMount className="space-y-6 data-[state=inactive]:hidden">
+      <OptimizerPanel key={`${data.event.id}:${data.event.importedKampplan}`} event={data.event} rows={importedRows} wishes={wishes} initialWeights={data.optimizerWeights} isOpen={data.isOpen} busy={busy || planEditPending} refresh={refresh} />
       {!!openSubstitutions.length && (
         <Card className="border-amber-300 bg-amber-50">
           <CardHeader>
@@ -1509,7 +1511,7 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
           <input
             id="import-kampplan"
             type="file"
-            disabled={busy || isImporting}
+            disabled={busy || isImporting || planEditPending}
             accept=".xlsx,.xls"
             className="block max-w-[220px] text-sm text-slate-600 file:mr-2 file:rounded-md file:border-0 file:bg-[#13375e] file:px-2 file:py-1 file:text-white"
             onChange={async (event) => {
@@ -1539,7 +1541,7 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
           />
         </div>
         <Button
-          disabled={busy || (!draftMatches.length && !data.importedMatches?.length)}
+          disabled={busy || planEditPending || (!draftMatches.length && !data.importedMatches?.length)}
           variant="outline"
           onClick={() => act({ action: "publish" })}
         >
@@ -1547,7 +1549,7 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
         </Button>
         <Button
           variant="outline"
-          disabled={busy || (!draftMatches.length && !data.importedMatches?.length)}
+          disabled={busy || planEditPending || (!draftMatches.length && !data.importedMatches?.length)}
           onClick={() => {
             if (window.confirm("Fjern kampplanen for denne spilledag? Tilmeldingerne bevares."))
               void act({ action: "remove_kampplan" });
@@ -1567,7 +1569,8 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
         </p>
       )}
       {Array.isArray(data.importedMatches) && data.importedMatches.length > 0 && (
-        <ImportedPlanTable rows={data.importedMatches} scores={data.adminPlanScores} />
+        <PlanEditor key={data.event.id} event={data.event} rows={data.importedMatches} scores={data.adminPlanScores}
+          weights={data.optimizerWeights} busy={busy} isOpen={data.isOpen} refresh={refresh} onPendingChange={setPlanEditPending} />
       )}
       <Card className="border-[#dce9e1]">
         <CardHeader>

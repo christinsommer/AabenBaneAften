@@ -5,6 +5,8 @@ import { getDb } from '../../../db';
 import { events, matches, feedback, substitutions } from '../../../db/schema';
 import { loadOptimizerInput, optimizerRevisionSql } from '../../../lib/optimizer-server';
 import { proposalRows, scoreMatch, validateProposal } from '../../../lib/optimizer';
+import {normalizeKampplanRows} from '../../../lib/kampplan-rows';
+import {reviewPlan} from '../../../lib/plan-review';
 
 export async function POST(request: Request) {
   try {
@@ -12,9 +14,27 @@ export async function POST(request: Request) {
     if (!user) return Response.json({error: 'Log ind først.'}, {status: 401});
     if (user.role !== 'admin') return Response.json({error: 'Kun administratorer kan foreslå kampe.'}, {status: 403});
     const body = await request.json() as {action: string; eventId: number; weights: unknown; fingerprint?: string; matches?: unknown} | null;
-    if (!body || !['solve', 'save'].includes(body.action) || !Number.isSafeInteger(body.eventId)) return Response.json({error: 'Ugyldig anmodning.'}, {status: 400});
+    if (!body || !['solve', 'save', 'edit_context', 'review_edit'].includes(body.action) || !Number.isSafeInteger(body.eventId)) return Response.json({error: 'Ugyldig anmodning.'}, {status: 400});
     const loaded = await loadOptimizerInput(body.eventId, body.weights);
     const {input, names} = loaded;
+    if (body.action === 'edit_context') {
+      const normalize = (value: string) => value.normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('da-DK');
+      const resolve = (name: string) => {
+        const ids = [...names].filter(([, value]) => normalize(value) === normalize(name)).map(([id]) => id);
+        if (ids.length !== 1 || !input.players.some(p => p.id === ids[0])) throw new Error(`“${name}” kan ikke knyttes entydigt til en tilmeldt spiller.`);
+        return ids[0];
+      };
+      const rows = normalizeKampplanRows(JSON.parse(loaded.event.importedKampplan || '[]'));
+      if (!rows.length) throw new Error('Der er ingen kampplan at redigere.');
+      const plan = rows.map(row => ({court: Number(row.C.replace(/\D/g, '')), startTime: row.A.replace('.', ':'),
+        team1: [row.D, row.E].filter(Boolean).map(resolve), team2: [row.F, row.G].filter(Boolean).map(resolve)}));
+      return Response.json({matches: plan, players: input.players.map(p => ({id:p.id, name:names.get(p.id)})), locked: input.locked,
+        weights: input.weights, fingerprint: loaded.fingerprint, ...reviewPlan(plan, input)});
+    }
+    if (body.action === 'review_edit') {
+      if (body.fingerprint !== loaded.fingerprint) return Response.json({error: 'Tilmeldinger, medlemmer eller kampplan er ændret. Annuller redigeringen og indlæs den nyeste plan.'}, {status:409});
+      return Response.json(reviewPlan(body.matches as Parameters<typeof reviewPlan>[0], input));
+    }
     if (body.action === 'save') {
       if (body.fingerprint !== loaded.fingerprint) return Response.json({error: 'Tilmeldinger, medlemmer eller kampplan er ændret. Lav et nyt forslag.'}, {status: 409});
       const plan = validateProposal(body.matches, input);

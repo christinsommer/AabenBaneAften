@@ -14,6 +14,7 @@ if (-not $PSCmdlet.ShouldProcess('https://aabenbaneaften.dk', $(if ($CheckOnly) 
 $projectRoot = $PSScriptRoot
 $originalPath = $env:PATH
 $restartDev = $false
+$restartOptimizer = $false
 $deployLock = $null
 $exitCode = 0
 
@@ -21,6 +22,27 @@ function Invoke-Checked {
     param([string]$Executable, [string[]]$Arguments)
     & $Executable @Arguments
     if ($LASTEXITCODE -ne 0) { throw "$Executable $($Arguments -join ' ') failed (exit $LASTEXITCODE). Deployment stopped." }
+}
+
+function Stop-ProjectOptimizer {
+    $dll = [IO.Path]::GetFullPath((Join-Path $projectRoot 'optimizer-service/bin/Debug/net10.0/OptimizerService.dll'))
+    $candidates = @(Get-CimInstance Win32_Process | Where-Object {
+        $_.Name -eq 'dotnet.exe' -and $_.CommandLine -match 'OptimizerService\.dll'
+    })
+    foreach ($candidate in $candidates) {
+        # The command may contain a relative path. Check the actual loaded DLL.
+        $process = Get-Process -Id $candidate.ProcessId -ErrorAction SilentlyContinue
+        if (-not $process) { continue }
+        $ownsDll = @($process.Modules | Where-Object { $_.FileName -eq $dll }).Count -gt 0
+        if (-not $ownsDll) { continue }
+        if ($candidate.CommandLine -notmatch '--urls\s+http://127\.0\.0\.1:5117\b') {
+            throw 'Another process is using the optimizer build. Stop its test or custom service before deploying.'
+        }
+        $script:restartOptimizer = $true
+        Write-Host 'Stopping the local optimizer temporarily to release its DLL.'
+        Stop-Process -Id $process.Id -Force
+        if (-not $process.WaitForExit(10000)) { throw 'The local optimizer did not stop in time.' }
+    }
 }
 
 function Stop-ProjectDevServer {
@@ -75,6 +97,7 @@ try {
     }
 
     Stop-ProjectDevServer
+    Stop-ProjectOptimizer
     if ($CheckOnly) {
         Invoke-Checked 'node.exe' @('scripts/release.mjs', '--check')
         Write-Host 'Local checks passed. Production was not changed.' -ForegroundColor Green
@@ -104,6 +127,13 @@ try {
     Write-Host "DEPLOY FAILED: $($_.Exception.Message)" -ForegroundColor Red
     Write-Host 'Any completed production steps remain applied. No automatic rollback was performed.'
 } finally {
+    if ($restartOptimizer) {
+        try {
+            [void][IO.Directory]::CreateDirectory((Join-Path $projectRoot 'work'))
+            $optimizerProcess = Start-Process -WindowStyle Hidden -FilePath 'node.exe' -ArgumentList 'scripts/optimizer-service.mjs','start' -WorkingDirectory $projectRoot -RedirectStandardOutput (Join-Path $projectRoot 'work/optimizer-restarted.out.log') -RedirectStandardError (Join-Path $projectRoot 'work/optimizer-restarted.err.log') -PassThru
+            Write-Host "Local optimizer restarted (PID $($optimizerProcess.Id))."
+        } catch { Write-Warning "Could not restart the local optimizer: $($_.Exception.Message)" }
+    }
     if ($restartDev) {
         try {
             [void][IO.Directory]::CreateDirectory((Join-Path $projectRoot 'work'))
