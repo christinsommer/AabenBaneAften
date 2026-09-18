@@ -8,6 +8,20 @@ const match={court:1,startTime:'18:00',team1:[1,2],team2:[3,4]};
 const input=(extra={})=>({players:[p(1),p(2),p(3),p(4),p(5),p(6),p(7),p(8)],weights:algorithmWeightDefaults,history:[],locked:[],
   slots:[{court:1,startTime:'18:00'},{court:5,startTime:'18:30'},{court:1,startTime:'19:00'},{court:2,startTime:'20:00'},{court:5,startTime:'20:30'},{court:1,startTime:'21:00'}],...extra});
 
+test('only manual edits may exceed partner distance; other rules still reject the plan',()=>{
+  const data=input({players:[p(1,{cr:4}),p(2,{cr:7}),p(3,{cr:4}),p(4,{cr:7})],weights:{...algorithmWeightDefaults,FactorDistanceSameTeamA:2}});
+  assert.throws(()=>validateProposal([match],data),/FactorDistanceSameTeamA/);
+  assert.deepEqual(validateProposal([match],data,{manualEdit:true}),[match]);
+  data.players[0].availability=['21:00'];
+  assert.throws(()=>validateProposal([match],data,{manualEdit:true}),/tidspunkt/);
+  const review=reviewPlan([match],data);
+  assert.equal(review.valid,false);
+  assert.equal(review.exceptions.length,2);
+  assert.deepEqual(review.issues[0].playerIds,[1]);
+  data.players[0].cr=3;
+  assert.throws(()=>validateProposal([match],data,{manualEdit:true}),/større end 3/);
+});
+
 test('review reports every affected appearance for availability, overlap and excess hours',()=>{
   const data=input({players:[p(1,{availability:['19:00'],requestedHours:1}),p(2),p(3),p(4),p(5),p(6),p(7)]});
   const plan=[match,{court:5,startTime:'18:30',team1:[1,5],team2:[6,7]}];
@@ -22,7 +36,9 @@ test('review reports every affected appearance for availability, overlap and exc
 
 test('review checks CR boundaries, partner distance, mixed teams, forbidden pairs and locked matches',()=>{
   const distance=reviewPlan([match],input({players:[p(1,{cr:4}),p(2,{cr:7}),p(3,{cr:4}),p(4,{cr:7})],weights:{...algorithmWeightDefaults,FactorDistanceSameTeamA:2}}));
-  assert.deepEqual(distance.issues.map(i=>i.playerIds),[[1,2],[3,4]]);
+  assert.equal(distance.valid,true);
+  assert.deepEqual(distance.issues,[]);
+  assert.deepEqual(distance.exceptions.map(i=>i.playerIds),[[1,2],[3,4]]);
   assert.ok(distance.scores.every(Number.isFinite));
   const cr=reviewPlan([match],input({players:[p(1,{cr:1}),p(2,{cr:5}),p(3,{cr:5}),p(4,{cr:5})]}));
   assert.ok(cr.issues.some(i=>i.message.includes('højst være 3') && i.playerIds.includes(1)));

@@ -24,7 +24,7 @@ window.savedCount=0;
 window.fetch=async(url,options)=>{if(url!=='/api/optimizer')throw Error('Unexpected request');const body=JSON.parse(options.body);
 if(body.action==='edit_context')return Response.json({matches:plan,players,locked:[],weights:input.weights,fingerprint:'fixture',...reviewPlan(plan,input)});
 if(body.action==='review_edit')return Response.json(reviewPlan(body.matches,input));
-if(body.action==='save'){const result=reviewPlan(body.matches,input);if(!result.valid)throw Error('Invalid save');plan=body.matches;window.savedCount++;return Response.json({ok:true});}
+if(body.action==='save_edit'){const result=reviewPlan(body.matches,input);if(!result.valid)throw Error('Invalid save');plan=body.matches;window.savedCount++;return Response.json({ok:true});}
 throw Error('Unexpected action');};
 function App(){const [rows,setRows]=useState(proposalRows(plan,names));const [pending,setPending]=useState(false);
 return <><p id="pending">{String(pending)}</p><PlanEditor event={{id:1,status:'draft'}} rows={rows} scores={[90,90]} busy={false} isOpen={false} refresh={()=>setRows(proposalRows(plan,names))} onPendingChange={setPending}/></>;}

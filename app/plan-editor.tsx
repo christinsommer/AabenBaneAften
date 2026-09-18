@@ -7,13 +7,13 @@ import {ImportedPlanTable} from './imported-plan';
 import {editableMatches, proposedMatches, swapPlayerSlots, type EditableMatch, type PlayerSlot, type PlanIssue} from '../lib/plan-review';
 import type {AlgorithmWeights, ProposedMatch} from '../lib/optimizer';
 
-type Review = {valid: boolean; issues: PlanIssue[]; scores: (number | null)[]};
+type Review = {valid: boolean; issues: PlanIssue[]; exceptions?: PlanIssue[]; scores: (number | null)[]};
 type EditContext = Review & {matches: ProposedMatch[]; players: {id: number; name: string}[];
   locked: ProposedMatch[]; weights: AlgorithmWeights; fingerprint: string};
 const slotKey = (s: PlayerSlot) => `${s.match}:${s.team}:${s.slot}`;
 
 export function PlanEditor({event, rows, scores, weights, busy, isOpen, refresh, onPendingChange}: {
-  event: {id: number; status: string}; rows: Record<string, unknown>[]; scores?: (number | null)[];
+  event: {id: number; status: string; importedKampplan?: string}; rows: Record<string, unknown>[]; scores?: (number | null)[];
   weights?: AlgorithmWeights; busy: boolean; isOpen: boolean; refresh: () => unknown;
   onPendingChange: (pending: boolean) => void;
 }) {
@@ -37,6 +37,8 @@ export function PlanEditor({event, rows, scores, weights, busy, isOpen, refresh,
     return () => window.removeEventListener('beforeunload', warn);
   }, [pending]);
   const names = new Map(context?.players.map(p => [p.id, p.name]) ?? []);
+  let distanceNames: string[][] = [];
+  try { distanceNames = JSON.parse(event.importedKampplan || '[]').map((row: {_manualDistanceNames?: string[]}) => row._manualDistanceNames ?? []); } catch { /* Older imported plan. */ }
   const locked = (index: number) => !!draft && !!context?.locked.some(m => m.court === draft[index].court && m.startTime === draft[index].startTime);
   async function request<T = {ok: boolean}>(action: string, extra: Record<string, unknown> = {}): Promise<T> {
     const response = await fetch('/api/optimizer', {method:'POST', credentials:'same-origin',
@@ -63,7 +65,7 @@ export function PlanEditor({event, rows, scores, weights, busy, isOpen, refresh,
       const checked = await request<Review>('review_edit', {matches, fingerprint:context.fingerprint});
       setReview(checked); setEditing(false);
       if (!checked.valid) return;
-      await request('save', {matches, fingerprint:context.fingerprint});
+      await request('save_edit', {matches, fingerprint:context.fingerprint});
       await refresh();
       setDraft(null); setContext(null); setReview(null);
     } catch (e) {setError(e instanceof Error ? e.message : 'Ændringerne kunne ikke gemmes.');}
@@ -100,7 +102,7 @@ export function PlanEditor({event, rows, scores, weights, busy, isOpen, refresh,
     {isOpen && <p className="text-sm text-slate-600">Luk tilmeldingen før redigering.</p>}
     {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
     {editing && <p className="text-sm text-slate-600">Træk en spiller hen på en anden for at bytte plads, eller hen på et tomt felt for at flytte. Du kan også trykke på spilleren og derefter på destinationen, også med tastatur. Låste kampe kan ikke flyttes. Ændringer gemmes først efter kontrol.</p>}
-    {!draft ? <ImportedPlanTable rows={rows} scores={scores} /> : <Card className="gap-2 border-[#dce9e1] py-3">
+    {!draft ? <ImportedPlanTable rows={rows} scores={scores} distanceNames={distanceNames} /> : <Card className="gap-2 border-[#dce9e1] py-3">
       <CardHeader className="px-3"><CardTitle>Kampplan</CardTitle></CardHeader>
       <CardContent className="px-2 sm:px-3">
         <table className="w-full table-fixed text-left text-sm" aria-label="Kampplan under redigering">
@@ -114,12 +116,13 @@ export function PlanEditor({event, rows, scores, weights, busy, isOpen, refresh,
                 const slot: PlayerSlot = {match:matchIndex, team:teamIndex as 0|1, slot:slotIndex as 0|1};
                 const key = slotKey(slot);
                 const violations = review?.issues.filter(i => i.matchIndex === matchIndex && (!i.playerIds.length || id !== null && i.playerIds.includes(id))) ?? [];
+                const exceptions = review?.exceptions?.filter(i => i.matchIndex === matchIndex && id !== null && i.playerIds.includes(id)) ?? [];
                 const label = id === null ? 'Tom plads' : names.get(id) ?? 'Ukendt spiller';
                 return <button key={slotIndex} type="button" data-plan-slot={key}
                   disabled={!editing || working || locked(matchIndex)} aria-pressed={selected ? slotKey(selected) === key : false}
                   aria-label={`${label}, bane ${match.court}, kl. ${match.startTime}, hold ${teamIndex+1}, plads ${slotIndex+1}${violations.length ? '. ' + violations.map(i=>i.message).join(' ') : ''}`}
-                  title={violations.map(i=>i.message).join('\n')}
-                  className={`my-1 min-h-11 w-full rounded border px-1 py-1 text-left text-xs font-semibold [overflow-wrap:anywhere] disabled:opacity-100 ${violations.length ? 'text-red-700 border-red-300' : 'text-[#1f2937] border-transparent'} ${selected && slotKey(selected) === key || over === key ? 'ring-2 ring-blue-600 bg-blue-50' : ''} ${editing && !locked(matchIndex) ? 'touch-none cursor-grab bg-white' : ''}`}
+                  title={[...violations, ...exceptions].map(i=>i.message).join('\n')}
+                  className={`my-1 min-h-11 w-full rounded border px-1 py-1 text-left text-xs font-semibold [overflow-wrap:anywhere] disabled:opacity-100 ${violations.length ? 'text-red-700 border-red-300' : exceptions.length ? 'text-green-700 border-green-300' : 'text-[#1f2937] border-transparent'} ${selected && slotKey(selected) === key || over === key ? 'ring-2 ring-blue-600 bg-blue-50' : ''} ${editing && !locked(matchIndex) ? 'touch-none cursor-grab bg-white' : ''}`}
                   onClick={() => pick(slot)} onKeyDown={e => {if (e.key === 'Escape') {setSelected(null); setOver(null);}}}
                   onPointerDown={e => {
                     ignoreClick.current = false;
@@ -142,13 +145,14 @@ export function PlanEditor({event, rows, scores, weights, busy, isOpen, refresh,
                       setOver(null);
                     }
                   }} onPointerCancel={() => {drag.current=null; setOver(null); setSelected(null);}}>
-                  {label}{violations.length > 0 && <span className="sr-only"> – regelbrud</span>}
+                  {label}{violations.length > 0 && <span className="sr-only"> – regelbrud</span>}{!violations.length && exceptions.length > 0 && <span className="sr-only"> – tilladt manuel undtagelse for CR-afstand mellem makkere</span>}
                 </button>;
               })}
             </td>)}
             <td className="px-1 text-xs font-semibold">{review?.scores[matchIndex] ?? '–'}</td>
           </tr>)}</tbody>
         </table>
+        {!!review?.exceptions?.length && <p className="mt-2 text-xs text-green-700">Grønne navne: CR-afstanden mellem makkere overskrides som en tilladt manuel undtagelse. Andre regelbrud markeres fortsat rødt.</p>}
         {!editing && review && !review.valid && <div role="alert" className="mt-3 text-sm text-red-700">
           <p className="font-semibold">Ændringerne er ikke gemt. Ret de røde spillere og kontrollér igen.</p>
           <ul className="mt-2 list-disc space-y-1 pl-5">{review.issues.map((issue,index) => <li key={index}>

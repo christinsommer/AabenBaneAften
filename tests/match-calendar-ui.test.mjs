@@ -23,6 +23,16 @@ test('imported table renders one accessible calendar button per match only when 
   assert.doesNotMatch(render({ rows: [], calendarDate: '2026-09-18' }), /Tilføj kampen/);
 });
 
+test('manual distance exceptions are green only in the admin table', async () => {
+  const { ImportedPlanTable } = await vite.ssrLoadModule('/app/imported-plan.tsx');
+  const render = props => renderToStaticMarkup(React.createElement(ImportedPlanTable, props));
+  const rows=[{...row,_manualDistanceNames:[row.D,row.E]}];
+  assert.doesNotMatch(render({rows}),/text-green-700|Tilladt manuel/);
+  const admin=render({rows,distanceNames:[[row.D,row.E]]});
+  assert.equal((admin.match(/title="Tilladt manuel/g) ?? []).length,2);
+  assert.match(admin,/text-green-700/);
+});
+
 test('per-match scores appear only when the admin explicitly enables them', async () => {
   const { ImportedPlanTable } = await vite.ssrLoadModule('/app/imported-plan.tsx');
   const render = props => renderToStaticMarkup(React.createElement(ImportedPlanTable, props));

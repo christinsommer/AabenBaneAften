@@ -96,7 +96,7 @@ export function validateOptimizerInput(input: OptimizerInput) {
 }
 
 // Independent of CP-SAT: never trust a solver response or a client-submitted proposal.
-export function validateProposal(raw: unknown, input: OptimizerInput): ProposedMatch[] {
+export function validateProposal(raw: unknown, input: OptimizerInput, options: {manualEdit?: boolean} = {}): ProposedMatch[] {
   validateOptimizerInput(input);
   if (!Array.isArray(raw) || raw.length > input.slots.length) throw new Error('Ugyldigt antal kampe.');
   const people = new Map(input.players.map(p => [p.id, p]));
@@ -113,7 +113,7 @@ export function validateProposal(raw: unknown, input: OptimizerInput): ProposedM
     if (forbiddenMemberPairs.some(pair => pair.every(no => players.some(p => p.memberNo === no)))) throw new Error('Kampen indeholder en forbudt spillerkombination.');
     if (ids.length === 4) for (const team of [row.team1, row.team2]) {
       const [a, b] = team.map((id: number) => people.get(id)!);
-      if (Math.min(a.cr, b.cr) <= 4 && Math.abs(a.cr - b.cr) > input.weights.FactorDistanceSameTeamA)
+      if (!options.manualEdit && Math.min(a.cr, b.cr) <= 4 && Math.abs(a.cr - b.cr) > input.weights.FactorDistanceSameTeamA)
         throw new Error('CR-forskellen mellem makkere overskrider FactorDistanceSameTeamA.');
     }
     if (ids.length === 4 && players.filter(p => p.gender === 'K').length === 2 && people.get(row.team1[0])!.gender === people.get(row.team1[1])!.gender)

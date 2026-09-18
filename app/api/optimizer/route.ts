@@ -14,7 +14,7 @@ export async function POST(request: Request) {
     if (!user) return Response.json({error: 'Log ind først.'}, {status: 401});
     if (user.role !== 'admin') return Response.json({error: 'Kun administratorer kan foreslå kampe.'}, {status: 403});
     const body = await request.json() as {action: string; eventId: number; weights: unknown; fingerprint?: string; matches?: unknown} | null;
-    if (!body || !['solve', 'save', 'edit_context', 'review_edit'].includes(body.action) || !Number.isSafeInteger(body.eventId)) return Response.json({error: 'Ugyldig anmodning.'}, {status: 400});
+    if (!body || !['solve', 'save', 'save_edit', 'edit_context', 'review_edit'].includes(body.action) || !Number.isSafeInteger(body.eventId)) return Response.json({error: 'Ugyldig anmodning.'}, {status: 400});
     const loaded = await loadOptimizerInput(body.eventId, body.weights);
     const {input, names} = loaded;
     if (body.action === 'edit_context') {
@@ -35,11 +35,13 @@ export async function POST(request: Request) {
       if (body.fingerprint !== loaded.fingerprint) return Response.json({error: 'Tilmeldinger, medlemmer eller kampplan er ændret. Annuller redigeringen og indlæs den nyeste plan.'}, {status:409});
       return Response.json(reviewPlan(body.matches as Parameters<typeof reviewPlan>[0], input));
     }
-    if (body.action === 'save') {
+    if (body.action === 'save' || body.action === 'save_edit') {
       if (body.fingerprint !== loaded.fingerprint) return Response.json({error: 'Tilmeldinger, medlemmer eller kampplan er ændret. Lav et nyt forslag.'}, {status: 409});
-      const plan = validateProposal(body.matches, input);
+      const plan = validateProposal(body.matches, input, {manualEdit: body.action === 'save_edit'});
+      const exceptions = body.action === 'save_edit' ? reviewPlan(plan, input).exceptions : [];
       if (!plan.length) return Response.json({error: 'Et tomt forslag kan ikke gemmes.'}, {status: 400});
       const rows = proposalRows(plan, names).map((row, index) => ({...row, _optimizerScore: scoreMatch(plan[index], input).score,
+        _manualDistanceNames: exceptions.filter(issue => issue.matchIndex === index).flatMap(issue => issue.playerIds.map(id => names.get(id))),
         ...(index === 0 ? {_optimizerRevision: crypto.randomUUID(), _optimizerWeights: input.weights} : {}),
       }));
       const serialized = JSON.stringify(rows);

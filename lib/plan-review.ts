@@ -8,6 +8,7 @@ export function reviewPlan(plan: ProposedMatch[], input: OptimizerInput) {
     [...m.team1, ...m.team2].some(id => !Number.isSafeInteger(id)))) throw new Error('Ugyldig kampplan.');
   const people = new Map(input.players.map(p => [p.id, p]));
   const issues: PlanIssue[] = [];
+  const exceptions: PlanIssue[] = [];
   const add = (matchIndex: number, playerIds: number[], message: string) => {
     const unique = [...new Set(playerIds)];
     if (!issues.some(i => i.matchIndex === matchIndex && i.message === message && i.playerIds.join() === unique.join()))
@@ -40,7 +41,7 @@ export function reviewPlan(plan: ProposedMatch[], input: OptimizerInput) {
     for (const team of [m.team1, m.team2]) if (team.length === 2) {
       const [a, b] = team.map(id => people.get(id)!);
       if (Math.min(a.cr, b.cr) <= 4 && Math.abs(a.cr - b.cr) > input.weights.FactorDistanceSameTeamA)
-        add(index, team, 'CR-forskellen mellem makkere overskrider FactorDistanceSameTeamA.');
+        exceptions.push({matchIndex: index, playerIds: team, message: 'CR-forskellen mellem makkere overskrider FactorDistanceSameTeamA. Tilladt ved manuel redigering.'});
     }
     if (complete && ids.length === 4 && players.filter(p => p!.gender === 'K').length === 2 &&
       people.get(m.team1[0])!.gender === people.get(m.team1[1])!.gender)
@@ -67,10 +68,10 @@ export function reviewPlan(plan: ProposedMatch[], input: OptimizerInput) {
   }
   // The save validator remains the final authority if a rule is added in the future.
   if (!issues.length) {
-    try { validateProposal(plan, input); }
+    try { validateProposal(plan, input, {manualEdit: true}); }
     catch (error) { add(-1, [], error instanceof Error ? error.message : 'Kampplanen er ugyldig.'); }
   }
-  return {valid: issues.length === 0, issues, scores};
+  return {valid: issues.length === 0, issues, exceptions, scores};
 }
 
 export type PlayerSlot = {match: number; team: 0 | 1; slot: 0 | 1};

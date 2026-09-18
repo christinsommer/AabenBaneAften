@@ -154,6 +154,18 @@ test('real CP-SAT service and D1: permissions, closed registration, history, val
     const imported = [{A:'18:00',B:'19:00',C:'1',D:'Player 1 Test',E:'Player 2 Test',F:'Player 3 Test',G:'Player 4 Test'}];
     await db.prepare('UPDATE events SET imported_kampplan=? WHERE id=2').bind(JSON.stringify(imported)).run();
     assert.equal((await post()).status,200,'resolve full names in legacy Excel history');
+    await db.prepare('UPDATE players SET christin_ranking=CASE WHEN id=1 THEN 4 ELSE 7 END').run();
+    const weights={...algorithmWeightDefaults,FactorDistanceSameTeamA:2};
+    const manual=await (await post('edit_context',{weights})).json();
+    assert.equal(manual.valid,true);
+    assert.equal(manual.exceptions.length,1);
+    const payload={matches:manual.matches,fingerprint:manual.fingerprint,weights};
+    assert.equal((await post('save',payload)).status,400,'optimizer save remains strict');
+    assert.equal((await post('save_edit',payload)).status,200,'manual exception is saveable');
+    const storedManual=JSON.parse((await db.prepare('SELECT imported_kampplan FROM events WHERE id=100').first()).imported_kampplan);
+    assert.equal(storedManual[0]._manualDistanceNames.length,2);
+    assert.ok(storedManual[0]._manualDistanceNames.includes('Player 1 Test'));
+    assert.equal((await (await post('edit_context',{weights})).json()).exceptions.length,1,'exception survives reload');
     imported[0].D='Unknown member';
     await db.prepare('UPDATE events SET imported_kampplan=? WHERE id=2').bind(JSON.stringify(imported)).run();
     assert.match((await (await post()).json()).error,/entydigt/);
