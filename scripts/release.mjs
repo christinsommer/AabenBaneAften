@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync, openSync, closeSync, unlinkSync, readdirSync, statSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import Database from 'better-sqlite3';
@@ -10,30 +10,50 @@ const adapter = 'node_modules/@opennextjs/cloudflare/dist/cli/index.js';
 mkdirSync('.data/releases', { recursive: true });
 const lock = '.data/releases/release.lock';
 const fd = openSync(lock, 'wx');
-function run(script, args = [], output) {
+async function run(script, args = [], output) {
   console.log(`Running ${script} ${args.join(' ')}`);
   const env = { ...process.env, CI: '1', WRANGLER_SEND_METRICS: 'false' };
   delete env.NODE_TEST_CONTEXT;
-  const result = spawnSync(process.execPath, [script, ...args], {
-    stdio: output ? ['ignore', 'pipe', 'pipe'] : 'inherit', encoding: 'utf8',
-    env, timeout: 900000,
+  const started = Date.now();
+  await new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [script, ...args], {
+      stdio: output ? ['ignore', 'pipe', 'pipe'] : ['ignore', 'inherit', 'inherit'], env, windowsHide: true,
+    });
+    let captured = '', timedOut = false;
+    if (output) {
+      child.stdout.on('data', chunk => { captured += chunk; });
+      child.stderr.on('data', chunk => { captured += chunk; });
+    }
+    const heartbeat = setInterval(() => console.log(`Still running (${Math.round((Date.now() - started) / 1000)}s): ${script} ${args.join(' ')}`), 30000);
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      console.error(`Timeout after 15 minutes: ${script} ${args.join(' ')}`);
+      if (process.platform === 'win32') spawnSync('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, timeout: 10000 });
+      else child.kill('SIGKILL');
+    }, 900000);
+    const cleanup = () => { clearInterval(heartbeat); clearTimeout(timeout); };
+    child.once('error', error => { cleanup(); reject(error); });
+    child.once('close', (code, signal) => {
+      cleanup();
+      if (output) writeFileSync(output, captured);
+      if (timedOut || code !== 0) reject(new Error(`Stopped: ${script} ${args.join(' ')}; ${timedOut ? 'timed out' : `exit ${code}, signal ${signal}`}${output ? `; details: ${output}` : ''}`));
+      else { console.log(`Completed in ${Math.round((Date.now() - started) / 1000)}s: ${script}`); resolve(); }
+    });
   });
-  if (output) writeFileSync(output, (result.stdout ?? '') + (result.stderr ?? ''));
-  if (result.error || result.status !== 0) throw new Error(`Stopped: ${script} failed${output ? `; details: ${output}` : ''}`, { cause: result.error });
 }
 try {
-  run('scripts/check-cloudflare-config.mjs');
-  run('scripts/optimizer-service.mjs', ['test']);
+  await run('scripts/check-cloudflare-config.mjs');
+  await run('scripts/optimizer-service.mjs', ['test']);
   const id = randomUUID();
   writeFileSync('lib/release-info.json', JSON.stringify({ id }) + '\n');
-  run(adapter, ['build']);
-  run('--test', ['--test-concurrency=1', ...readdirSync('tests').filter(f => f.endsWith('.test.mjs')).map(f => `tests/${f}`)]);
+  await run(adapter, ['build']);
+  await run('--test', ['--test-concurrency=1', ...readdirSync('tests').filter(f => f.endsWith('.test.mjs')).map(f => `tests/${f}`)]);
   if (check) {
     console.log('Release check passed. No production commands executed.');
   } else {
     const directory = `.data/releases/${new Date().toISOString().replace(/[:.]/g, '-')}`;
     mkdirSync(directory);
-    run(wrangler, ['d1', 'export', 'DB', '--remote', `--output=${directory}/database.sql`], `${directory}/backup.log`);
+    await run(wrangler, ['d1', 'export', 'DB', '--remote', `--output=${directory}/database.sql`], `${directory}/backup.log`);
     if (statSync(`${directory}/database.sql`).size < 100) throw new Error('Backup is empty; deployment stopped');
     const restored = new Database(':memory:');
     try {
@@ -42,8 +62,8 @@ try {
       restored.prepare('SELECT id FROM events LIMIT 0').all();
       if (restored.pragma('quick_check', { simple: true }) !== 'ok') throw new Error('Backup integrity check failed');
     } finally { restored.close(); }
-    run(wrangler, ['d1', 'migrations', 'apply', 'DB', '--remote']);
-    run(adapter, ['deploy']);
+    await run(wrangler, ['d1', 'migrations', 'apply', 'DB', '--remote']);
+    await run(adapter, ['deploy']);
     let verified = false;
     for (let attempt = 0; attempt < 20; attempt++) {
       try {

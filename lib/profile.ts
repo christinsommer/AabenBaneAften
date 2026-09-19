@@ -5,6 +5,7 @@ export function profileValues(body: Record<string, unknown>): {
   firstName: string; lastName: string; name: string; memberNo: string;
   email: string; selfLevel: SelfLevel; gender: "M" | "K";
   phone?: string; phoneCountryCode?: string; birthYear?: number | null;
+  emailVisible?: boolean; phoneVisible?: boolean;
 } {
   const firstName = String(body.firstName ?? "").trim();
   const lastName = String(body.lastName ?? "").trim();
@@ -19,7 +20,12 @@ export function profileValues(body: Record<string, unknown>): {
   if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
     throw new Error("Angiv en gyldig e-mailadresse.");
   if (!isSelfLevel(selfLevel)) throw new Error("Vælg egen ranking: A, AB, B, BC, C eller Begynder.");
-  const telephone: {phone?:string;phoneCountryCode?:string} = {};
+  const telephone: {phone?:string;phoneCountryCode?:string;emailVisible?:boolean;phoneVisible?:boolean} = {};
+  for (const field of ['emailVisible', 'phoneVisible'] as const) {
+    if (body[field] === undefined) continue;
+    if (typeof body[field] !== 'boolean') throw new Error('Må vises skal være valgt eller fravalgt.');
+    telephone[field] = body[field];
+  }
   if (body.phone !== undefined) {
     const phone = String(body.phone).trim();
     if (!/^[0-9]*$/.test(phone) || phone.length > 15) throw new Error("Telefonnummer skal være kun cifre uden landekode (højst 15 cifre).");

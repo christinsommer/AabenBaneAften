@@ -34,6 +34,20 @@ test('signup input preserves requested hours and counts possible start times',()
   assert.deepEqual(signupInput({requestedHours:2,availability:times},times),valid);
 });
 
+test('at least two alternatives and enough non-overlapping full hours are required',()=>{
+  const slots=['18:00','18:30','19:00','19:30','20:00','20:30'];
+  const input=(nHours,szPossible)=>signupInput({nHours,szPossible,nPossible:szPossible.length},slots);
+  assert.throws(()=>input(1,['18:00']),/mindst 2 tider/);
+  assert.throws(()=>input(1,[]),/mindst 2 tider/);
+  assert.equal(input(1,['18:00','18:30']).nHours,1);
+  assert.throws(()=>input(2,['18:00','18:30']),/ikke overlapper/);
+  assert.equal(input(2,['18:00','19:00']).nHours,2);
+  assert.throws(()=>input(3,['18:00','18:30','19:00']),/ikke overlapper/);
+  assert.equal(input(3,['20:00','18:00','19:00']).nHours,3);
+  assert.equal(input(3,slots).nHours,3);
+  assert.throws(()=>signupInput({requestedHours:2,availability:['18:00','18:30']},slots),/ikke overlapper/);
+});
+
 test('member responses never disclose administrator rankings or PIN hashes',()=>{
   const member={id:1,role:'player',pinHash:'secret',christinRanking:7,adminLevel:'A',name:'Member'};
   assert.deepEqual(visibleMember(member),{id:1,role:'player',name:'Member'});

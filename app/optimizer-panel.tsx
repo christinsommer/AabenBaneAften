@@ -45,7 +45,7 @@ export function OptimizerPanel({event, rows, wishes, initialWeights, isOpen, bus
     try {
       async function request(body: Record<string, unknown>) {
         const response = await fetch('/api/optimizer', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
-          signal: AbortSignal.timeout(180_000), body: JSON.stringify({...body, eventId: event.id})});
+          signal: AbortSignal.timeout(720_000), body: JSON.stringify({...body, eventId: event.id})});
         const data = await response.json() as Proposal & {error?: string};
         if (!response.ok) throw new Error(data.error || 'Forslaget kunne ikke behandles.');
         return data;
@@ -101,7 +101,7 @@ export function OptimizerPanel({event, rows, wishes, initialWeights, isOpen, bus
     <p className="text-sm text-slate-600">Første spilletime prioriteres før anden og tredje time for tilmeldte spillere. Derefter prioriteres flere kampe, kampscore og til sidst tidlige tider. Single er tilladt fra kl. 20.30, også på tværs af køn.</p>
     {isOpen && <p className="text-sm text-slate-600">Luk tilmeldingen, før du laver et kampforslag.</p>}
     {event.status !== 'draft' && <p className="text-sm text-slate-600">Der kan kun laves forslag til en kampplan, som er en kladde.</p>}
-    {working && <p role="status" className="text-sm">{working === 'solve' ? 'Fordeler timer og optimerer kampe. Opstart og beregning kan tage op til tre minutter.' : 'Kontrollerer og gemmer kampplanen…'}</p>}
+    {working && <p role="status" className="text-sm">{working === 'solve' ? 'Fordeler timer og optimerer kampe. Beregningen har op til 10 minutter; med opstart kan det tage op til 12 minutter.' : 'Kontrollerer og gemmer kampplanen…'}</p>}
     {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
     {saved && <p role="status" className="text-sm font-semibold text-[#13375e]">Kampplanen er gemt og vises nedenfor sammen med “Baner, der ikke bruges”. Du kan nu offentliggøre kampplanen.</p>}
     {proposal && <div className="space-y-4">

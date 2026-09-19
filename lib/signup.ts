@@ -20,6 +20,18 @@ export type SignupInput = {
   szPossible: string[];
 };
 
+export function signupSelectionError(selected: readonly string[], hours: number): string | null {
+  if (hours === 0) return null;
+  const starts = [...new Set(selected)].map(time => {
+    const [h,m] = time.split(':').map(Number);
+    return h * 60 + m;
+  }).sort((a,b) => a-b);
+  if (starts.length < 2) return 'Du skal vælge mindst 2 tider, også selvom du kun ønsker 1 time.';
+  let count = 0, nextStart = -Infinity;
+  for (const start of starts) if (start >= nextStart) { count++; nextStart = start + 60; }
+  return count < hours ? `Du ønsker ${hours} timer. Vælg mindst ${hours} tider, som ikke overlapper. Hver kamp varer 1 time.` : null;
+}
+
 export function signupInput(body: Record<string, unknown>, times: readonly string[]): SignupInput {
   // Accept the previous field names while already-open clients update.
   const nHours = body.nHours ?? body.requestedHours;
@@ -34,7 +46,8 @@ export function signupInput(body: Record<string, unknown>, times: readonly strin
     throw new Error('Antal mulige tidspunkter skal svare til listen af tider.');
   if (new Set(szPossible).size !== szPossible.length)
     throw new Error('Et starttidspunkt må kun vælges én gang.');
-  if (nHours > nPossible) throw new Error('Vælg mindst lige så mange mulige tidspunkter som ønskede timer.');
+  const selectionError = signupSelectionError(szPossible, nHours);
+  if (selectionError) throw new Error(selectionError);
   return {nHours:nHours as SignupInput['nHours'],nPossible,szPossible:[...szPossible].sort()};
 }
 

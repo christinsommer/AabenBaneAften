@@ -6,10 +6,12 @@ import { createSession, currentPlayer, destroySession, hashPin, hashToken, verif
 import { ensureEvent, TIMES } from "../../../lib/schedule";
 import { sendEmail } from "../../../lib/email";
 import { sendWelcomeEmail } from "../../../lib/welcome-email";
-import { registrationIsOpen, registrationSchedule } from "../../../lib/registration";
+import { firstMatchInstant, waitlistIsOpen, registrationIsOpen, registrationSchedule } from "../../../lib/registration";
+import { spouseSettings } from '../../../lib/spouse-settings';
 import { profileValues } from "../../../lib/profile";
 import { calendarEvent, validDate } from "../../../lib/calendar";
 import { signupInput, signupFields, noSignup } from "../../../lib/signup";
+import { visiblePlanContact } from '../../../lib/contact-visibility';
 import { visibleMember } from "../../../lib/member-visibility";
 import { initialCr } from '../../../lib/initial-cr';
 import { levelScore } from '../../../lib/ranking';
@@ -40,6 +42,13 @@ function resetLinkEmail(to: string, token: string) {
     text: `Hej\n\nDer blev anmodet om nulstilling af din pinkode til Åben Bane Aften.\nKlik på linket for at vælge en ny kode:\n\n${resetUrl}\n\nLinket er gyldigt i 60 minutter.\n\nHvis du ikke har anmodet om dette, kan du ignorere denne e-mail.`,
     html: `<p>Hej</p><p>Der blev anmodet om nulstilling af din pinkode til Åben Bane Aften.</p><p><a href="${resetUrl}">Klik her for at vælge en ny kode</a></p><p>Linket er gyldigt i 60 minutter.</p><p>Hvis du ikke har anmodet om dette, kan du ignorere denne e-mail.</p>`,
   };
+}
+
+async function eventFirstMatchAt(event: typeof events.$inferSelect) {
+  const stored = await getDb().select({startTime:matches.startTime}).from(matches).where(eq(matches.eventId,event.id));
+  const imported = parseImportedKampplan(event.importedKampplan);
+  const starts = imported.length ? imported.map(row => String(row.A)) : stored.map(row => row.startTime);
+  return firstMatchInstant(event.date, starts.length ? starts : TIMES);
 }
 
 async function state() {
@@ -76,9 +85,10 @@ async function state() {
   if (event && user?.role !== 'admin' && event.importedKampplan) event.importedKampplan = JSON.stringify(importedMatches);
   if (!user) return { authenticated: false, event, isOpen, times: TIMES, importedMatches };
   const calendarDates = await db.select({id:events.id,date:events.date,status:events.status,isTest:events.isTest,testActive:events.testActive}).from(events).where(eq(events.archived,false)).orderBy(asc(events.date));
-  const allPlayers = user.role === "admin" ? await db.select({id:players.id,memberNo:players.memberNo,name:players.name,firstName:players.firstName,lastName:players.lastName,email:players.email,phone:players.phone,phoneCountryCode:players.phoneCountryCode,christinRanking:players.christinRanking,crReviewedAt:players.crReviewedAt,createdAt:players.createdAt,birthYear:players.birthYear,gender:players.gender,selfLevel:players.selfLevel,adminLevel:players.adminLevel,role:players.role,suspendedEventId:players.suspendedEventId}).from(players).orderBy(asc(players.name)) : [];
+  const allPlayers = user.role === "admin" ? await db.select({id:players.id,memberNo:players.memberNo,name:players.name,firstName:players.firstName,lastName:players.lastName,email:players.email,phone:players.phone,phoneCountryCode:players.phoneCountryCode,emailVisible:players.emailVisible,phoneVisible:players.phoneVisible,christinRanking:players.christinRanking,crReviewedAt:players.crReviewedAt,spouseNo:players.spouseNo,spouseMode:players.spouseMode,createdAt:players.createdAt,birthYear:players.birthYear,gender:players.gender,selfLevel:players.selfLevel,adminLevel:players.adminLevel,role:players.role,suspendedEventId:players.suspendedEventId}).from(players).orderBy(asc(players.name)) : [];
   if (!event) return {authenticated:true,user:visibleMember(user),event:null,isOpen:false,times:TIMES,calendarDates,importedMatches: [],players:allPlayers};
-  const signup = (await db.select().from(signups).where(and(eq(signups.eventId,event.id),eq(signups.playerId,user.id),ne(signups.status,"cancelled"))).limit(1))[0] ?? null;
+  const firstMatchAt = await eventFirstMatchAt(storedEvent!);
+  const signup = (await db.select().from(signups).where(and(eq(signups.eventId,event.id),eq(signups.playerId,user.id))).limit(1))[0] ?? null;
   const eventMatches = user.role === "admin" || event.status === "published" ? await db.select().from(matches).where(eq(matches.eventId,event.id)).orderBy(asc(matches.startTime),asc(matches.court)) : [];
   const eventSignups = user.role === "admin" ? await db.select({signup:signups,player:{id:players.id,name:players.name,memberNo:players.memberNo,gender:players.gender,selfLevel:players.selfLevel,adminLevel:players.adminLevel}}).from(signups).innerJoin(players,eq(players.id,signups.playerId)).where(eq(signups.eventId,event.id)).orderBy(asc(signups.createdAt)) : [];
   const signupByPlayer = new Map(eventSignups.map(row=>[row.player.id,row.signup]));
@@ -94,11 +104,17 @@ async function state() {
   const waitlist = await db.select({
     id:players.id,
     name:players.name,
-    email:players.email,
+    email:sql<string>`CASE WHEN ${players.emailVisible} = 1 THEN ${players.email} ELSE '' END`,
     level:players.selfLevel,
     availability:signups.availability,
   }).from(signups).innerJoin(players,eq(players.id,signups.playerId)).where(and(eq(signups.eventId,event.id),eq(signups.status,"waitlist"))).orderBy(asc(signups.createdAt));
   const names = await db.select({id:players.id,name:players.name,firstName:players.firstName}).from(players);
+  const normalizeContactName = (name: string) => name.normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('da-DK');
+  const planNames = new Set(importedMatches.flatMap(row => ['D','E','F','G'].map(key => normalizeContactName(String(row[key] ?? '')))).filter(Boolean));
+  const planIds = new Set<number>(eventMatches.flatMap(match => JSON.parse(match.playerIds)));
+  const contactRows = user.role === 'admin' || event.status === 'published'
+    ? await db.select({id:players.id,name:players.name,email:players.email,phone:players.phone,phoneCountryCode:players.phoneCountryCode,emailVisible:players.emailVisible,phoneVisible:players.phoneVisible}).from(players) : [];
+  const planContacts = contactRows.filter(player => planIds.has(player.id) || planNames.has(normalizeContactName(player.name))).map(visiblePlanContact);
   const namesById = new Map(names.map(player => [player.id, player.name]));
   const substitutionRows = await db.select().from(substitutions).where(eq(substitutions.eventId,event.id)).orderBy(desc(substitutions.updatedAt));
   const substitutionsForUser = substitutionRows.filter((item)=>user.role==="admin"||item.outgoingPlayerId===user.id).map((item)=>({
@@ -108,7 +124,7 @@ async function state() {
   }));
   const requestRows = await db.select({request:matchRequests,creatorName:players.name}).from(matchRequests).innerJoin(players,eq(players.id,matchRequests.creatorPlayerId)).where(eq(matchRequests.eventId,event.id));
   const requests = requestRows.filter(({request})=>request.creatorPlayerId===user.id||JSON.parse(request.invitedMemberNos).includes(user.memberNo)).map(({request,creatorName})=>({id:request.id,creatorName,status:request.status,isCreator:request.creatorPlayerId===user.id,isInvited:JSON.parse(request.invitedMemberNos).includes(user.memberNo),accepted:JSON.parse(request.acceptedPlayerIds).includes(user.id),acceptedCount:JSON.parse(request.acceptedPlayerIds).length}));
-  return { authenticated:true,user:visibleMember(user),event,isOpen,times:TIMES,calendarDates,importedMatches,optimizerWeights,adminPlanScores,signup:signup?{...signup,...signupFields(signup)}:noSignup(event.id,user.id),matches:event.status==="published"?eventMatches:[],adminMatches:user.role==="admin"?eventMatches:[],players:allPlayers,signups:memberSignups,signupHistory:signupHistory.map(row=>({...row,signup:{...row.signup,...signupFields(row.signup)}})),waitlist,names,requests,substitutions:substitutionsForUser };
+  return { authenticated:true,user:visibleMember(user),event,isOpen,firstMatchAt,times:TIMES,calendarDates,importedMatches,optimizerWeights,adminPlanScores,signup:signup?{...signup,...signupFields(signup)}:noSignup(event.id,user.id),matches:event.status==="published"?eventMatches:[],adminMatches:user.role==="admin"?eventMatches:[],players:allPlayers,signups:memberSignups,signupHistory:signupHistory.map(row=>({...row,signup:{...row.signup,...signupFields(row.signup)}})),waitlist,names,planContacts,requests,substitutions:substitutionsForUser };
 }
 
 export async function GET(){try{return Response.json(await state());}catch(error){return Response.json({error:error instanceof Error?error.message:"Appen kunne ikke indlæses"},{status:500});}}
@@ -199,6 +215,7 @@ export async function POST(request:Request){
           db.delete(substitutions).where(and(authorized,eq(substitutions.outgoingPlayerId,playerId))),
           db.update(substitutions).set({replacementPlayerId:null,status:'unresolved',updatedAt:new Date().toISOString()}).where(and(authorized,eq(substitutions.replacementPlayerId,playerId))),
           db.delete(players).where(and(authorized,eq(players.id,playerId))).returning({id:players.id}),
+          db.update(players).set({spouseNo:null,spouseMode:null}).where(and(authorized,Number.isSafeInteger(Number(target.memberNo)) ? eq(players.spouseNo,Number(target.memberNo)) : sql`0`)),
         ]);
         const deleted = results[7];
         if(!deleted.length)return Response.json({error:"Medlemmet blev ikke slettet. Genindlæs og kontrollér administratoradgangen."},{status:409});
@@ -214,7 +231,10 @@ export async function POST(request:Request){
         if(cr!==null&&(typeof cr!=="number"||!Number.isInteger(cr)||cr<1||cr>9))return Response.json({error:"CR skal være et heltal fra 1 til 9 eller ikke vurderet."},{status:400});
 
 
-        await db.update(players).set({...profile,christinRanking:cr,...(cr !== target.christinRanking ? {crReviewedAt:null} : {})}).where(eq(players.id,target.id));
+        let spouse;
+        try { spouse = spouseSettings(body, target, target.memberNo, await db.select({memberNo:players.memberNo}).from(players)); }
+        catch(error) { return Response.json({error:error instanceof Error ? error.message : 'Ugyldig partner.'},{status:400}); }
+        await db.update(players).set({...profile,...spouse,christinRanking:cr,...(cr !== target.christinRanking ? {crReviewedAt:null} : {})}).where(eq(players.id,target.id));
         return NextResponse.json(await state());
       }
       if(action==="update_profile"){
@@ -338,6 +358,16 @@ export async function POST(request:Request){
       }
       const registrationOpen=registrationIsOpen(event);
       if(["signup","cancel_signup","request_match","accept_match_request","lookup_member"].includes(action)&&!registrationOpen)return Response.json({error:event.registrationOverride==="closed"?"Tilmeldingen er lukket af administratoren.":`Tilmeldingen er lukket. Tidsplan: ${new Date(event.registrationOpensAt).toLocaleString('da-DK',{timeZone:'Europe/Copenhagen'})} til ${new Date(event.registrationClosesAt).toLocaleString('da-DK',{timeZone:'Europe/Copenhagen'})}.`},{status:400});
+      if(action === 'join_waitlist') {
+        if (Number(body.eventId) !== event.id) return Response.json({error:'Spillerunden er ændret. Genindlæs siden.'},{status:409});
+        if (!waitlistIsOpen(event, await eventFirstMatchAt(event))) return Response.json({error:'Ventelisten er kun åben efter tilmeldingsfristen, når tilmeldingen er lukket, og før første kamp.'},{status:400});
+        let input;
+        try { input = signupInput(body,TIMES); if (input.nHours < 1) throw new Error('Vælg mindst 1 time.'); }
+        catch(error) { return Response.json({error:error instanceof Error ? error.message : 'Kontrollér dine ønsker.'},{status:400}); }
+        await db.insert(signups).values({eventId:event.id,playerId:user.id,availability:JSON.stringify(input.szPossible),requestedHours:input.nHours,status:'waitlist'})
+          .onConflictDoUpdate({target:[signups.eventId,signups.playerId],set:{availability:JSON.stringify(input.szPossible),requestedHours:input.nHours,status:'waitlist'}});
+        return NextResponse.json(await state());
+      }
       if(action==="lookup_member"){
         const memberNo=String(body.memberNo??"").trim();
         if(!memberNo)return Response.json({found:false,error:"Indtast et medlemsnummer."},{status:400});
@@ -349,7 +379,7 @@ export async function POST(request:Request){
         try {input=signupInput(body,TIMES);} catch(error) {return Response.json({error:error instanceof Error?error.message:"Kontrollér dine tidsønsker."},{status:400});}
         const availability=input.szPossible,requestedHours=input.nHours;
         await db.insert(signups).values({eventId:event.id,playerId:user.id,availability:JSON.stringify(availability),requestedHours,status:"active"}).onConflictDoUpdate({target:[signups.eventId,signups.playerId],set:{availability:JSON.stringify(availability),requestedHours,status:"active"}});
-      }else if(action==="cancel_signup")await db.update(signups).set({status:"cancelled"}).where(and(eq(signups.eventId,event.id),eq(signups.playerId,user.id)));
+      }else if(action==="cancel_signup")await db.insert(signups).values({eventId:event.id,playerId:user.id,status:"cancelled",requestedHours:0,availability:'[]'}).onConflictDoUpdate({target:[signups.eventId,signups.playerId],set:{status:"cancelled",requestedHours:0,availability:'[]'}});
       else if(action==="request_match"){
         const invited=Array.from(new Set((body.memberNos??[]).map((x:unknown)=>String(x).trim()).filter(Boolean))) as string[]; if(invited.length!==3||invited.includes(user.memberNo))return Response.json({error:"Angiv tre forskellige medlemsnumre."},{status:400});
         for(const memberNo of invited){
@@ -433,6 +463,3 @@ export async function POST(request:Request){
     return NextResponse.json(await state());
   }catch(error){const message=error instanceof Error?error.message:"Noget gik galt";return Response.json({error:message.includes("UNIQUE")?"Medlemsnummeret er allerede oprettet. Vælg “Log ind” og brug din personlige kode.":message},{status:500});}
 }
-
-
-

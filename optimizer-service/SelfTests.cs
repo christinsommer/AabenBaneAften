@@ -10,10 +10,56 @@ public static class SelfTests
     public static void Run()
     {
         var oneCourt = new[] { new Slot(1, "18:00") };
+        var spouses = new[] {P(1,cr:1) with {SpouseNo=2,SpouseMode=2}, P(2,cr:5),P(3,cr:3),P(4,cr:3)};
+        var together = Scheduler.Solve(Data(spouses,oneCourt),30);
+        Check(together.Matches.Length==1 && together.Matches.SelectMany(m=>new[]{m.Team1,m.Team2}).Any(t=>t.Contains(1)&&t.Contains(2)), "Spouses must partner despite CR gap");
+        Check(together.Score==90, "Spouses' CR difference must not reduce score");
+        var repeatSlots = new[] {new Slot(1,"18:00"),new Slot(1,"19:00")};
+        var repeatedLocks = new[] {new Match(1,"18:00",[1,2],[3,4]),new Match(1,"19:00",[2,1],[4,3])};
+        var repeatPlayers = Enumerable.Range(1,4).Select(i=>P(i,2)).ToArray();
+        var repeatsRejected=false;
+        try {Scheduler.Solve(Data(repeatPlayers,repeatSlots,locked:repeatedLocks),30);}
+        catch(ArgumentException e) when(e.Message.Contains("Ingen gyldig")) {repeatsRejected=true;}
+        Check(repeatsRejected,"Repeated partners in locked matches must be rejected");
+        repeatPlayers[0]=repeatPlayers[0] with {SpouseNo=2,SpouseMode=2};
+        repeatPlayers[2]=repeatPlayers[2] with {SpouseNo=4,SpouseMode=2};
+        Check(Scheduler.Solve(Data(repeatPlayers,repeatSlots,locked:repeatedLocks),30).Matches.Length==2,"Spouse teams may repeat");
+        var simultaneous = Enumerable.Range(1,8).Select(i=>P(i)).ToArray();
+        simultaneous[0]=simultaneous[0] with {SpouseNo=2,SpouseMode=1};
+        var separate = Scheduler.Solve(Data(simultaneous,[new Slot(1,"18:00"),new Slot(2,"18:00")],
+            locked:[new Match(1,"18:00",[1,3],[4,5]),new Match(2,"18:00",[2,6],[7,8])]),30);
+        Check(separate.Matches.Length==2, "Simultaneous spouses may play on separate courts");
+        var unequal = Scheduler.Solve(Data([P(1,2) with {SpouseNo=2,SpouseMode=1},P(2),P(3,2),P(4,2)],
+            [new Slot(1,"18:00"),new Slot(1,"19:00")]),30);
+        Check(Count(unequal,1)==1 && Count(unequal,2)==1,"All spouse hours must coincide even with unequal requests");
+        var absent = Scheduler.Solve(Data([P(1) with {SpouseNo=99,SpouseMode=2},P(2),P(3),P(4)],oneCourt),30);
+        Check(Count(absent,1)==1,"Absent spouse must not prevent play");
+        var conflictRejected=false;
+        try { Scheduler.Solve(Data(spouses,oneCourt,locked:[new Match(1,"18:00",[1,3],[2,4])]),30); }
+        catch(ArgumentException e) when(e.Message.Contains("Ingen gyldig")) {conflictRejected=true;}
+        Check(conflictRejected,"Locked matches cannot override spouse partnership");
+        foreach (var (times, expected) in new[] {
+            (new[] { "18:00", "19:30" }, 2),
+            (new[] { "18:00", "20:00" }, 1),
+            (new[] { "18:00", "19:30", "21:00" }, 3)
+        }) {
+            var rest = Scheduler.Solve(Data(Enumerable.Range(1, 4).Select(i => P(i, 3, times)).ToArray(),
+                times.Select((time, i) => new Slot(i + 1, time)).ToArray()), 30);
+            Check(Enumerable.Range(1, 4).All(id => Count(rest, id) == expected), "Maximum 30-minute rest, including across courts and three matches");
+        }
+        var lockedRestRejected = false;
+        try {
+            Scheduler.Solve(Data(Enumerable.Range(1,4).Select(i => P(i,2,["18:00","20:00"])).ToArray(),
+                [new Slot(1,"18:00"),new Slot(1,"20:00")],
+                locked: [new Match(1,"18:00",[1,2],[3,4]),new Match(1,"20:00",[1,2],[3,4])]),30);
+        } catch (ArgumentException e) when (e.Message.Contains("Ingen gyldig")) { lockedRestRejected = true; }
+        Check(lockedRestRejected, "Locked matches must not override the maximum rest");
         var slots = new[] { new Slot(1, "18:00"), new Slot(5, "18:30"), new Slot(1, "19:00"), new Slot(1, "20:00") };
         var priorities = Scheduler.Solve(Data(Enumerable.Range(1, 4).Select(i => P(i, 3)).ToArray(), slots), 30);
         Check(Enumerable.Range(1, 4).All(id => Count(priorities, id) == 3), "Must fulfil three hours without half-hour overlap");
         Check(priorities.Matches.All(m => m.StartTime != "18:30"), "18:30 cannot overlap 18:00 or 19:00");
+        var partnerKeys=priorities.Matches.SelectMany(m=>new[]{m.Team1,m.Team2}).Where(t=>t.Length==2).Select(t=>string.Join(":",t.Order())).ToArray();
+        Check(partnerKeys.Distinct().Count()==partnerKeys.Length,"Three hours must use different partners even with zero partner penalties");
         var queue = Scheduler.Solve(Data(Enumerable.Range(1, 6).Select(i => P(i)).ToArray(), oneCourt), 30);
         Check(Enumerable.Range(1, 4).All(id => Count(queue, id) == 1) && Count(queue, 5) == 0 && Count(queue, 6) == 0, "Earlier signup wins shortage");
         var waiting = Scheduler.Solve(Data(new[] {P(10), P(11), P(12), P(13), P(1, status:"waitlist"), P(2, status:"waitlist")}, oneCourt), 30);

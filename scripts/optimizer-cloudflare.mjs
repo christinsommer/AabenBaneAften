@@ -36,22 +36,30 @@ if (mode === 'deploy') {
   console.log('Container deployed. Run check after Cloudflare finishes provisioning.');
 } else {
   const headers = {authorization:`Bearer ${key}`, 'content-type':'application/json'};
-  const health = await fetch(`${url}/health`, {headers,signal:AbortSignal.timeout(160000)});
+  const health = await fetch(`${url}/health`, {headers,signal:AbortSignal.timeout(660000)});
   assert.equal(health.status,200,`Container health returned ${health.status}`);
-  assert.equal((await health.json()).scoringVersion,'late-singles-team-distance-v2');
+  assert.equal((await health.json()).scoringVersion,'unique-partners-v4');
   const match = {court:1,startTime:'18:00',team1:[1,2],team2:[3,4]};
   const input = {
     players:[2,5,3,4].map((cr,i)=>({id:i+1,memberNo:`smoke-${i+1}`,cr,gender:'M',age:40,availability:['18:00'],requestedHours:1,signupOrder:i+1,status:'active'})),
     slots:[{court:1,startTime:'18:00'}],history:[],locked:[match],weights:algorithmWeightDefaults,
   };
-  const reply = await fetch(`${url}/solve`,{method:'POST',headers,body:JSON.stringify(input),signal:AbortSignal.timeout(160000)});
+  const reply = await fetch(`${url}/solve`,{method:'POST',headers,body:JSON.stringify(input),signal:AbortSignal.timeout(660000)});
   assert.equal(reply.status,200,`Container solve returned ${reply.status}`);
   const result = await reply.json();
   validateProposal(result.matches,input);
   assert.equal(result.score,scoreMatch(match,input).score);
   assert.equal(result.score,30);
+  const spouseInput = {...input, players: input.players.map((p,i) => ({...p,memberNo:String(i+1),cr:[1,5,3,3][i],
+    ...(i === 0 ? {spouseNo:2,spouseMode:2} : {})}))};
+  const spouseReply = await fetch(`${url}/solve`,{method:'POST',headers,body:JSON.stringify(spouseInput),signal:AbortSignal.timeout(660000)});
+  assert.equal(spouseReply.status,200,`Container spouse check returned ${spouseReply.status}`);
+  const spouseResult = await spouseReply.json();
+  validateProposal(spouseResult.matches,spouseInput);
+  assert.equal(spouseResult.score,scoreMatch(match,spouseInput).score);
+  assert.equal(spouseResult.score,90);
   assert.equal((await fetch(`${url}/health`)).status,401);
-  console.log('Production optimizer verified: authenticated Linux solver, both CR factors, score 30, unauthorized access rejected. No database changes.');
+  console.log('Production optimizer verified: authenticated Linux solver, CR factors, spouse constraints and score exception, unauthorized access rejected. No database changes.');
   if (mode === 'connect') {
     wrangler(['secret','bulk','--config','wrangler.jsonc'],JSON.stringify({OPTIMIZER_URL:url,OPTIMIZER_API_KEY:key}));
     console.log('aabenbaneaften connected to the verified optimizer.');

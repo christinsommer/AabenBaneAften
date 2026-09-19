@@ -32,3 +32,16 @@ export function registrationIsOpen(event: RegistrationWindow, now = Date.now()) 
   if (event.registrationOverride === "closed") return false;
   return now >= Date.parse(event.registrationOpensAt) && now <= Date.parse(event.registrationClosesAt);
 }
+
+export function firstMatchInstant(date: string, starts: readonly string[]) {
+  const first = starts.map(time => time.replace('.', ':')).filter(time => /^\d{2}:\d{2}$/.test(time)).sort()[0];
+  if (!first) throw new Error('Første kamptid mangler.');
+  const [hour, minute] = first.split(':');
+  if (Number(minute) > 59) throw new Error('Ugyldig kamptid.');
+  return new Date(Date.parse(registrationInstant(date, hour)) + Number(minute) * 60000).toISOString();
+}
+
+export function waitlistIsOpen(event: RegistrationWindow, firstMatchAt: string, now = Date.now()) {
+  return event.status !== 'cancelled' && !registrationIsOpen(event, now)
+    && now > Date.parse(event.registrationClosesAt) && now < Date.parse(firstMatchAt);
+}

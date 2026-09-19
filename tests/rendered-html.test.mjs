@@ -155,7 +155,9 @@ test("Cloudflare Worker renders and authenticates against isolated D1", { timeou
     assert.equal((await post({action:"set_cr",playerId:updated.user.id,christinRanking:null},cookie)).status,200);
     assert.equal((await post({action:"set_registration",mode:"closed"},playerCookie)).status,403);
     assert.equal((await post({action:"end_test"},playerCookie)).status,403);
-    const signupBody={action:"signup",availability:["18:00"],requestedHours:1};
+    assert.equal((await post({action:'signup',availability:['18:00'],requestedHours:1},playerCookie)).status,400);
+    assert.equal((await post({action:'signup',availability:['18:00','18:30'],requestedHours:2},playerCookie)).status,400);
+    const signupBody={action:"signup",availability:["18:00","19:00"],requestedHours:1};
     const example={action:'signup',nHours:2,nPossible:3,szPossible:['18:30','19:30','20:30']};
     const saved=await (await post(example,playerCookie)).json();
     assert.equal(saved.signup.nHours,2);
@@ -182,6 +184,9 @@ test("Cloudflare Worker renders and authenticates against isolated D1", { timeou
     assert.equal(roster.signups[0].signup.signupOrder,saved.signup.signupOrder);
     const cancelled=await (await post({action:'cancel_signup'},playerCookie)).json();
     assert.equal(cancelled.signup.nHours,0);
+    assert.equal(cancelled.signup.status,'cancelled');
+    assert.deepEqual(cancelled.signup.szPossible,[]);
+    assert.equal(cancelled.signup.availability,'[]');
     const cancelledRoster=await (await worker.fetch('/api/app',{headers:{cookie}})).json();
     assert.equal(cancelledRoster.signups.find(row=>row.player.memberNo==='test-player').signup.nHours,0);
     assert.equal((await post({...example,nPossible:2},playerCookie)).status,400);

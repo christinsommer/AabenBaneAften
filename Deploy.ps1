@@ -17,11 +17,15 @@ $restartDev = $false
 $restartOptimizer = $false
 $deployLock = $null
 $exitCode = 0
+$transcribing = $false
 
 function Invoke-Checked {
     param([string]$Executable, [string[]]$Arguments)
+    $stepTimer = [Diagnostics.Stopwatch]::StartNew()
+    Write-Host "Starting: $Executable $($Arguments -join ' ')" -ForegroundColor Cyan
     & $Executable @Arguments
     if ($LASTEXITCODE -ne 0) { throw "$Executable $($Arguments -join ' ') failed (exit $LASTEXITCODE). Deployment stopped." }
+    Write-Host "Completed in $([int]$stepTimer.Elapsed.TotalSeconds) seconds." -ForegroundColor Green
 }
 
 function Stop-ProjectOptimizer {
@@ -82,6 +86,11 @@ try {
     }
     [void][IO.Directory]::CreateDirectory((Join-Path $projectRoot '.data'))
     $deployLock = [IO.File]::Open((Join-Path $projectRoot '.data/full-deploy.lock'), [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    $logPath = Join-Path $projectRoot ('.data/deploy-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.log')
+    Start-Transcript -Path $logPath | Out-Null
+    $transcribing = $true
+    Write-Host "Deployment log: $logPath"
+    Write-Host 'The OpenNext Windows warning is informational. Release steps report progress every 30 seconds and time out after 15 minutes.'
 
     if (-not $CheckOnly) {
         $dockerCommand = Get-Command docker.exe -ErrorAction SilentlyContinue
@@ -142,6 +151,7 @@ try {
         } catch { Write-Warning "Could not restart the local development server: $($_.Exception.Message)" }
     }
     if ($deployLock) { $deployLock.Dispose() }
+    if ($transcribing) { Stop-Transcript | Out-Null }
     $env:PATH = $originalPath
     Pop-Location
 }

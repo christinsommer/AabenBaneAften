@@ -12,7 +12,7 @@ import { HISTORY_START, parseAlgorithmWeights, validateOptimizerInput, validateP
 export function optimizerRevisionSql(eventId: number) {
   return sql`json_array(
     (SELECT json_group_array(json_array(id,date,status,registration_opens_at,registration_closes_at,registration_override,imported_kampplan,is_test,test_active,archived)) FROM (SELECT * FROM events ORDER BY id)),
-    (SELECT json_group_array(json_array(id,member_no,name,christin_ranking,birth_year,gender,suspended_event_id)) FROM (SELECT * FROM players ORDER BY id)),
+    (SELECT json_group_array(json_array(id,member_no,name,christin_ranking,birth_year,gender,spouse_no,spouse_mode,suspended_event_id)) FROM (SELECT * FROM players ORDER BY id)),
     (SELECT json_group_array(json_array(id,player_id,availability,requested_hours,signup_order,status)) FROM (SELECT * FROM signups WHERE event_id = ${eventId} ORDER BY id)),
     (SELECT json_group_array(json_array(id,event_id,court,start_time,player_ids,locked)) FROM (SELECT * FROM matches ORDER BY id))
   )`;
@@ -28,7 +28,7 @@ export async function loadOptimizerInput(eventId: number, weights: unknown, forS
   if (!forScoring && (registrationIsOpen(event) || event.registrationOverride === 'auto' && new Date() < new Date(event.registrationClosesAt)))
     throw new Error('Luk tilmeldingen, før der foreslås kampe.');
   const now = new Date();
-  const members = await db.select({id: players.id, memberNo: players.memberNo, name: players.name, cr: players.christinRanking, birthYear: players.birthYear, gender: players.gender, suspendedEventId: players.suspendedEventId}).from(players).orderBy(asc(players.id));
+  const members = await db.select({id: players.id, memberNo: players.memberNo, name: players.name, cr: players.christinRanking, spouseNo: players.spouseNo, spouseMode: players.spouseMode, birthYear: players.birthYear, gender: players.gender, suspendedEventId: players.suspendedEventId}).from(players).orderBy(asc(players.id));
   const registrations = await db.select().from(signups).where(and(eq(signups.eventId, event.id), ne(signups.status, 'cancelled'))).orderBy(asc(signups.signupOrder), asc(signups.id));
   const existing = await db.select().from(matches).where(eq(matches.eventId, event.id));
   const people = new Map(members.map(p => [p.id, p]));
@@ -63,13 +63,13 @@ export async function loadOptimizerInput(eventId: number, weights: unknown, forS
     players: registrations.filter(s => s.requestedHours > 0 && people.get(s.playerId)?.suspendedEventId !== event.id).map(s => {
       const p = people.get(s.playerId);
       if (!p) throw new Error('En tilmeldt spiller findes ikke længere.');
-      return {id: p.id, memberNo: p.memberNo, cr: p.cr!, age: ageFromBirthYear(p.birthYear, now), gender: p.gender, availability: JSON.parse(s.availability), requestedHours: s.requestedHours, signupOrder: s.signupOrder!, status: s.status as 'active' | 'waitlist'};
+      return {id: p.id, memberNo: p.memberNo, spouseNo: p.spouseNo, spouseMode: p.spouseMode, cr: p.cr!, age: ageFromBirthYear(p.birthYear, now), gender: p.gender, availability: JSON.parse(s.availability), requestedHours: s.requestedHours, signupOrder: s.signupOrder!, status: s.status as 'active' | 'waitlist'};
     }),
     slots: Object.entries(COURTS).flatMap(([startTime, courts]) => courts.map(court => ({startTime, court}))),
     locked: existing.filter(m => m.locked).map(nativeMatch), history, weights: parseAlgorithmWeights(weights),
   };
   validateOptimizerInput(input);
-  if (!forScoring) validateProposal(input.locked, input);
+  if (!forScoring) validateProposal(input.locked, input, {partial: true});
   const after = await db.all<{revision: string}>(sql`SELECT ${optimizerRevisionSql(eventId)} AS revision`);
   if (after[0].revision !== revision) throw new Error('Data blev ændret under indlæsningen. Prøv igen.');
   const fingerprintBytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify({revision, weights: input.weights, year: currentYear(now)})));

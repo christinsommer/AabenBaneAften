@@ -16,7 +16,7 @@ var app = builder.Build();
 var secret = Environment.GetEnvironmentVariable("OPTIMIZER_API_KEY");
 if (string.IsNullOrWhiteSpace(secret) || secret.Length < 32) throw new InvalidOperationException("Set OPTIMIZER_API_KEY to a secret of at least 32 characters.");
 using var gate = new SemaphoreSlim(1);
-app.MapGet("/health", () => Results.Ok(new { service = "OR-Tools CP-SAT", version = "9.15.6755", scoringVersion = "late-singles-team-distance-v2" }));
+app.MapGet("/health", () => Results.Ok(new { service = "OR-Tools CP-SAT", version = "9.15.6755", scoringVersion = "unique-partners-v4" }));
 app.MapPost("/solve", async (HttpContext context, Input input) => {
     var expected = SHA256.HashData(Encoding.UTF8.GetBytes($"Bearer {secret}"));
     var actual = SHA256.HashData(Encoding.UTF8.GetBytes(context.Request.Headers.Authorization.ToString()));

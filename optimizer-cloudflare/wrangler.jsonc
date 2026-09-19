@@ -8,7 +8,7 @@
   "containers": [{
     "class_name": "OptimizerContainer",
     "image": "../optimizer-service/Dockerfile",
-    "instance_type": "standard-2",
+    "instance_type": "standard-4",
     "max_instances": 1
   }],
   "durable_objects": {

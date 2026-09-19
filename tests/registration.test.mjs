@@ -1,6 +1,25 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {registrationIsOpen, registrationSchedule, registrationDateParts} from '../lib/registration.ts';
+import {firstMatchInstant, waitlistIsOpen, registrationIsOpen, registrationSchedule, registrationDateParts} from '../lib/registration.ts';
+
+test('late waitlist requires passed deadline, closed registration and a future first match',()=>{
+  const event={registrationOverride:'auto',registrationOpensAt:'2026-09-16T10:00:00Z',registrationClosesAt:'2026-09-17T10:00:00Z',status:'draft'};
+  const first=firstMatchInstant('2026-09-18',['19:00','18:00','18:30']);
+  assert.equal(first,'2026-09-18T16:00:00.000Z');
+  assert.equal(firstMatchInstant('2026-12-18',['18:30']),'2026-12-18T17:30:00.000Z');
+  const deadline=Date.parse(event.registrationClosesAt), start=Date.parse(first);
+  for (const status of ['draft','published']) {
+    assert.equal(waitlistIsOpen({...event,status},first,deadline),false);
+    assert.equal(waitlistIsOpen({...event,status},first,deadline+1),true);
+    assert.equal(waitlistIsOpen({...event,status},first,start-1),true);
+    assert.equal(waitlistIsOpen({...event,status},first,start),false);
+    assert.equal(waitlistIsOpen({...event,status},first,start+1),false);
+  }
+  assert.equal(waitlistIsOpen({...event,registrationOverride:'closed'},first,deadline-1),false);
+  assert.equal(waitlistIsOpen({...event,registrationOverride:'closed'},first,deadline+1),true);
+  assert.equal(waitlistIsOpen({...event,registrationOverride:'open'},first,deadline+1),false);
+  assert.equal(waitlistIsOpen({...event,status:'cancelled'},first,deadline+1),false);
+});
 
 test('custom registration hours use Copenhagen time in summer and winter',()=>{
   for(const [date,utcHour] of [['2026-09-16','07'],['2026-12-16','08']]) {

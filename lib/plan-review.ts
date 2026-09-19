@@ -1,4 +1,4 @@
-import {forbiddenMemberPairs, minutes, scoreMatch, validateOptimizerInput, validateProposal, type OptimizerInput, type ProposedMatch} from './optimizer.ts';
+import {spouseTogether, forbiddenMemberPairs, minutes, scoreMatch, validateOptimizerInput, validateProposal, type OptimizerInput, type ProposedMatch} from './optimizer.ts';
 
 export type PlanIssue = {matchIndex: number; playerIds: number[]; message: string};
 export function reviewPlan(plan: ProposedMatch[], input: OptimizerInput) {
@@ -15,6 +15,7 @@ export function reviewPlan(plan: ProposedMatch[], input: OptimizerInput) {
       issues.push({matchIndex, playerIds: unique, message});
   };
   const appearances = new Map<number, {index: number; start: number}[]>();
+  const partnerMatches = new Map<string, number>();
   const scores = plan.map((m, index) => {
     const ids = [...m.team1, ...m.team2];
     const start = minutes(m.startTime);
@@ -34,13 +35,21 @@ export function reviewPlan(plan: ProposedMatch[], input: OptimizerInput) {
     if (players.some(p => !p)) return null;
     for (let a = 0; a < ids.length; a++) for (let b = a + 1; b < ids.length; b++) {
       const p = people.get(ids[a])!, q = people.get(ids[b])!;
-      if (Math.abs(p.cr - q.cr) > 3) add(index, [p.id, q.id], 'CR-forskellen i kampen må højst være 3.');
+      if (!spouseTogether(p,q) && Math.abs(p.cr - q.cr) > 3) add(index, [p.id, q.id], 'CR-forskellen i kampen må højst være 3.');
       if (forbiddenMemberPairs.some(pair => pair.includes(p.memberNo) && pair.includes(q.memberNo) && p.id !== q.id))
         add(index, [p.id, q.id], 'Spillerne må ikke være i samme kamp.');
     }
     for (const team of [m.team1, m.team2]) if (team.length === 2) {
       const [a, b] = team.map(id => people.get(id)!);
-      if (Math.min(a.cr, b.cr) <= 4 && Math.abs(a.cr - b.cr) > input.weights.FactorDistanceSameTeamA)
+      const pair = [a.id,b.id].sort((x,y)=>x-y).join(':');
+      const previous = partnerMatches.get(pair);
+      if (!spouseTogether(a,b) && previous !== undefined) {
+        const message = 'Samme makker må kun bruges én gang i kampplanen.';
+        add(previous,[a.id,b.id],message);
+        add(index,[a.id,b.id],message);
+      }
+      partnerMatches.set(pair,index);
+      if (!spouseTogether(a,b) && Math.min(a.cr, b.cr) <= 4 && Math.abs(a.cr - b.cr) > input.weights.FactorDistanceSameTeamA)
         exceptions.push({matchIndex: index, playerIds: team, message: 'CR-forskellen mellem makkere overskrider FactorDistanceSameTeamA. Tilladt ved manuel redigering.'});
     }
     if (complete && ids.length === 4 && players.filter(p => p!.gender === 'K').length === 2 &&

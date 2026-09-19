@@ -4,6 +4,7 @@ export const algorithmWeightDefaults = {
 };
 export type AlgorithmWeights = typeof algorithmWeightDefaults;
 export type OptimizerPlayer = {
+  spouseNo?: number | null; spouseMode?: number | null;
   id: number; memberNo: string; cr: number; gender: 'M' | 'K'; age: number | null;
   availability: string[]; requestedHours: number; signupOrder: number; status: 'active' | 'waitlist';
 };
@@ -22,6 +23,22 @@ export const minutes = (time: string) => {
   return h * 60 + m;
 };
 export const pairKey = (a: number, b: number) => a < b ? `${a}:${b}` : `${b}:${a}`;
+export function spouseTogether(a: OptimizerPlayer, b: OptimizerPlayer) {
+  return a.spouseMode === 2 && a.spouseNo === Number(b.memberNo) || b.spouseMode === 2 && b.spouseNo === Number(a.memberNo);
+}
+export function spousePairs(input: OptimizerInput) {
+  const pairs = new Map<string, {a: OptimizerPlayer; b: OptimizerPlayer; mode: number}>();
+  for (const a of input.players) {
+    if (a.spouseNo == null) continue;
+    const found = input.players.filter(b => Number(b.memberNo) === a.spouseNo);
+    if (found.length > 1) throw new Error('Partnerens medlemsnummer er ikke entydigt.');
+    const b = found[0];
+    if (!b) continue;
+    const key = pairKey(a.id, b.id);
+    pairs.set(key, {a,b,mode: Math.max(a.spouseMode!, pairs.get(key)?.mode ?? 0)});
+  }
+  return [...pairs.values()];
+}
 export function parseAlgorithmWeights(raw: unknown): AlgorithmWeights {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('Vægtene mangler.');
   return Object.fromEntries(Object.entries(algorithmWeightDefaults).map(([key, fallback]) => {
@@ -70,7 +87,7 @@ export function scoreMatch(match: ProposedMatch, input: OptimizerInput) {
   for (const p of a) for (const q of b) opponentLastWeek += Number(relations.lastOpponents.has(pairKey(p.id, q.id)));
   const w = input.weights;
   const balanceSameTeamDifference = w.FactorSameTeamDifference * (double
-    ? Math.abs(a[0].cr - a[1].cr) + Math.abs(b[0].cr - b[1].cr) : 0);
+    ? (spouseTogether(a[0],a[1]) ? 0 : Math.abs(a[0].cr - a[1].cr)) + (spouseTogether(b[0],b[1]) ? 0 : Math.abs(b[0].cr - b[1].cr)) : 0);
   const score = 100 - w.FactorMatchDifference * balanceDifference - w.FactorSameTeamLastWeek * sameTeamLastWeek
     - w.FactorSameTeam3Weeks * sameTeam3Weeks - w.FactorOpponentLastWeek * opponentLastWeek
     - w.FactorMix * mix - w.FactorAge * balanceAge - balanceSameTeamDifference;
@@ -82,6 +99,9 @@ export function validateOptimizerInput(input: OptimizerInput) {
   if (input.players.length > 200) throw new Error('Der kan højst beregnes for 200 spillere ad gangen.');
   const ids = new Set<number>(), members = new Set<string>();
   for (const p of input.players) {
+    if ((p.spouseNo != null || p.spouseMode != null) &&
+      (!Number.isSafeInteger(p.spouseNo) || p.spouseNo! <= 0 || p.spouseNo === Number(p.memberNo) || ![1,2].includes(p.spouseMode!)))
+      throw new Error('Ugyldig partnerbetingelse.');
     if (!Number.isSafeInteger(p.id) || ids.has(p.id) || members.has(p.memberNo)) throw new Error('Dubleret eller ugyldig spiller.');
     ids.add(p.id); members.add(p.memberNo);
     if (!Number.isInteger(p.cr) || p.cr < 1 || p.cr > 9) throw new Error(`Medlem ${p.memberNo} mangler en gyldig CR (1–9).`);
@@ -96,11 +116,12 @@ export function validateOptimizerInput(input: OptimizerInput) {
 }
 
 // Independent of CP-SAT: never trust a solver response or a client-submitted proposal.
-export function validateProposal(raw: unknown, input: OptimizerInput, options: {manualEdit?: boolean} = {}): ProposedMatch[] {
+export function validateProposal(raw: unknown, input: OptimizerInput, options: {manualEdit?: boolean; partial?: boolean} = {}): ProposedMatch[] {
   validateOptimizerInput(input);
   if (!Array.isArray(raw) || raw.length > input.slots.length) throw new Error('Ugyldigt antal kampe.');
   const people = new Map(input.players.map(p => [p.id, p]));
   const usage = new Map<number, number[]>(), courtUsage = new Map<number, number[]>();
+  const partners = new Set<string>();
   const result: ProposedMatch[] = [];
   for (const row of raw) {
     if (!row || !Array.isArray(row.team1) || !Array.isArray(row.team2) || ![1, 2].includes(row.team1.length) || row.team1.length !== row.team2.length)
@@ -109,11 +130,12 @@ export function validateProposal(raw: unknown, input: OptimizerInput, options: {
     const ids = [...row.team1, ...row.team2] as number[];
     if (new Set(ids).size !== ids.length || ids.some(id => !people.has(id))) throw new Error('En spiller mangler tilmelding eller optræder flere gange i samme kamp.');
     const players = ids.map(id => people.get(id)!);
-    if (Math.max(...players.map(p => p.cr)) - Math.min(...players.map(p => p.cr)) > 3) throw new Error('CR-forskellen i en kamp er større end 3.');
+    for (const a of players) for (const b of players)
+      if (!spouseTogether(a,b) && Math.abs(a.cr - b.cr) > 3) throw new Error('CR-forskellen i en kamp er større end 3.');
     if (forbiddenMemberPairs.some(pair => pair.every(no => players.some(p => p.memberNo === no)))) throw new Error('Kampen indeholder en forbudt spillerkombination.');
     if (ids.length === 4) for (const team of [row.team1, row.team2]) {
       const [a, b] = team.map((id: number) => people.get(id)!);
-      if (!options.manualEdit && Math.min(a.cr, b.cr) <= 4 && Math.abs(a.cr - b.cr) > input.weights.FactorDistanceSameTeamA)
+      if (!options.manualEdit && !spouseTogether(a,b) && Math.min(a.cr, b.cr) <= 4 && Math.abs(a.cr - b.cr) > input.weights.FactorDistanceSameTeamA)
         throw new Error('CR-forskellen mellem makkere overskrider FactorDistanceSameTeamA.');
     }
     if (ids.length === 4 && players.filter(p => p.gender === 'K').length === 2 && people.get(row.team1[0])!.gender === people.get(row.team1[1])!.gender)
@@ -134,6 +156,25 @@ export function validateProposal(raw: unknown, input: OptimizerInput, options: {
   }
   const key = (m: ProposedMatch) => `${m.court}/${m.startTime}/${[m.team1.slice().sort((a,b) => a-b).join(','), m.team2.slice().sort((a,b) => a-b).join(',')].sort().join('/')}`;
   for (const locked of input.locked) if (!result.some(m => key(m) === key(locked))) throw new Error('En låst kamp er ændret eller mangler.');
+  for (const match of result) for (const team of [match.team1,match.team2]) if (team.length === 2) {
+    const [a,b] = team.map(id => people.get(id)!);
+    const key = pairKey(a.id,b.id);
+    if (!spouseTogether(a,b) && partners.has(key))
+      throw new Error(`Medlem ${a.memberNo} og ${b.memberNo} må kun være makkere én gang i kampplanen.`);
+    partners.add(key);
+  }
+  if (!options.partial) for (const {a,b,mode} of spousePairs(input)) {
+    const aTimes = (usage.get(a.id) ?? []).slice().sort((x,y) => x-y);
+    const bTimes = (usage.get(b.id) ?? []).slice().sort((x,y) => x-y);
+    if (aTimes.join() !== bTimes.join()) throw new Error(`Medlem ${a.memberNo} og ${b.memberNo} skal spille samtidigt.`);
+    if (mode === 2 && result.some(m => [m.team1,m.team2].some(team => team.includes(a.id) !== team.includes(b.id))))
+      throw new Error(`Medlem ${a.memberNo} og ${b.memberNo} skal spille sammen på samme hold.`);
+  }
+  if (!options.partial) for (const [id, times] of usage) {
+    times.sort((a, b) => a - b);
+    if (times.some((time, i) => i > 0 && time - times[i - 1] > 90))
+      throw new Error(`Medlem ${people.get(id)!.memberNo} har mere end 30 minutters pause mellem kampe.`);
+  }
   return result.sort((a, b) => a.startTime.localeCompare(b.startTime) || a.court - b.court);
 }
 

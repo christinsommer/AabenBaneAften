@@ -3,6 +3,7 @@
 import {useEffect, useRef, useState} from 'react';
 import {Button} from '../components/ui/button';
 import {Card, CardContent, CardHeader, CardTitle} from '../components/ui/card';
+import type {PlanContact} from '../components/player-contact';
 import {ImportedPlanTable} from './imported-plan';
 import {editableMatches, proposedMatches, swapPlayerSlots, type EditableMatch, type PlayerSlot, type PlanIssue} from '../lib/plan-review';
 import type {AlgorithmWeights, ProposedMatch} from '../lib/optimizer';
@@ -12,10 +13,10 @@ type EditContext = Review & {matches: ProposedMatch[]; players: {id: number; nam
   locked: ProposedMatch[]; weights: AlgorithmWeights; fingerprint: string};
 const slotKey = (s: PlayerSlot) => `${s.match}:${s.team}:${s.slot}`;
 
-export function PlanEditor({event, rows, scores, weights, busy, isOpen, refresh, onPendingChange}: {
+export function PlanEditor({event, rows, scores, weights, busy, isOpen, refresh, onPendingChange, contacts}: {
   event: {id: number; status: string; importedKampplan?: string}; rows: Record<string, unknown>[]; scores?: (number | null)[];
   weights?: AlgorithmWeights; busy: boolean; isOpen: boolean; refresh: () => unknown;
-  onPendingChange: (pending: boolean) => void;
+  onPendingChange: (pending: boolean) => void; contacts?: PlanContact[];
 }) {
   const [context, setContext] = useState<EditContext | null>(null);
   const [draft, setDraft] = useState<EditableMatch[] | null>(null);
@@ -102,7 +103,7 @@ export function PlanEditor({event, rows, scores, weights, busy, isOpen, refresh,
     {isOpen && <p className="text-sm text-slate-600">Luk tilmeldingen før redigering.</p>}
     {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
     {editing && <p className="text-sm text-slate-600">Træk en spiller hen på en anden for at bytte plads, eller hen på et tomt felt for at flytte. Du kan også trykke på spilleren og derefter på destinationen, også med tastatur. Låste kampe kan ikke flyttes. Ændringer gemmes først efter kontrol.</p>}
-    {!draft ? <ImportedPlanTable rows={rows} scores={scores} distanceNames={distanceNames} /> : <Card className="gap-2 border-[#dce9e1] py-3">
+    {!draft ? <ImportedPlanTable contacts={contacts} rows={rows} scores={scores} distanceNames={distanceNames} /> : <Card className="gap-2 border-[#dce9e1] py-3">
       <CardHeader className="px-3"><CardTitle>Kampplan</CardTitle></CardHeader>
       <CardContent className="px-2 sm:px-3">
         <table className="w-full table-fixed text-left text-sm" aria-label="Kampplan under redigering">

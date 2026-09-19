@@ -3,9 +3,10 @@
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { normalizeKampplanRows } from '../lib/kampplan-rows';
 import { MatchCalendarButton } from '../components/match-calendar-button';
+import { PlayerContact, contactByName, type PlanContact } from '../components/player-contact';
 import type { CalendarPlayer } from '../lib/match-calendar';
 
-export function ImportedPlanTable({ rows, scores, distanceNames, calendarDate, calendarPlayers = [] }: { rows: Record<string, unknown>[]; scores?: (number | null)[]; distanceNames?: string[][]; calendarDate?: string; calendarPlayers?: CalendarPlayer[] }) {
+export function ImportedPlanTable({ rows, scores, distanceNames, calendarDate, calendarPlayers = [], contacts = [] }: { rows: Record<string, unknown>[]; scores?: (number | null)[]; distanceNames?: string[][]; calendarDate?: string; contacts?: PlanContact[]; calendarPlayers?: CalendarPlayer[] }) {
   rows = normalizeKampplanRows(rows);
   const value = (row: Record<string, unknown>, key: string) => String(row[key] ?? '').trim();
   return <Card className="min-w-0 gap-2 border-[#dce9e1] py-3">
@@ -33,7 +34,7 @@ export function ImportedPlanTable({ rows, scores, distanceNames, calendarDate, c
                 <span className="block sm:inline">{value(row, 'A')}</span><span className="sr-only sm:not-sr-only">–</span><span className="block sm:inline">{value(row, 'B')}</span>
               </td>
               {[['D', 'E'], ['F', 'G']].map((keys, team) => <td key={team} className="px-1 py-2 align-middle sm:px-2">
-                {keys.map(key => <p key={key} title={distanceNames?.[index]?.includes(value(row, key)) ? 'Tilladt manuel undtagelse: CR-afstanden mellem makkere overskrider FactorDistanceSameTeamA.' : undefined} className={`whitespace-normal text-xs font-semibold leading-5 ${distanceNames?.[index]?.includes(value(row, key)) ? 'text-green-700' : 'text-[#1f2937]'} [overflow-wrap:anywhere] [&+p]:mt-1`}>{value(row, key)}</p>)}
+                {keys.map(key => <p key={key} title={distanceNames?.[index]?.includes(value(row, key)) ? 'Tilladt manuel undtagelse: CR-afstanden mellem makkere overskrider FactorDistanceSameTeamA.' : undefined} className={`whitespace-normal text-xs font-semibold leading-5 ${distanceNames?.[index]?.includes(value(row, key)) ? 'text-green-700' : 'text-[#1f2937]'} [overflow-wrap:anywhere] [&+p]:mt-1`}><PlayerContact name={value(row, key)} contact={contactByName(value(row, key), contacts)} /></p>)}
               </td>)}
               {scores && <td className="px-1 py-2 text-xs font-semibold" title={scores[index] == null ? 'Score kan ikke beregnes med de tilgængelige medlems- og historikoplysninger.' : undefined}>{scores[index] ?? '–'}</td>}
               {calendarDate && <td className="px-1 py-2 align-middle"><MatchCalendarButton match={{

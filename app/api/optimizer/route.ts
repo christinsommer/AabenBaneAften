@@ -71,7 +71,7 @@ export async function POST(request: Request) {
     let response: Response;
     try { response = await fetch(url, {
       method: 'POST', headers: {'Content-Type': 'application/json', Authorization: `Bearer ${env.OPTIMIZER_API_KEY}`},
-      body: JSON.stringify(input), signal: AbortSignal.any([request.signal, AbortSignal.timeout(160_000)]),
+      body: JSON.stringify(input), signal: AbortSignal.any([request.signal, AbortSignal.timeout(660_000)]),
     }); } catch (error) {
       const timeout = error instanceof Error && ['TimeoutError', 'AbortError'].includes(error.name);
       return Response.json({error: timeout

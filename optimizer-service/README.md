@@ -15,7 +15,7 @@ Next.js/Cloudflare kalder denne .NET 10-tjeneste over HTTP. Google.OrTools 9.15.
 
 ## Produktion
 
-Produktionen bruger Worker `aabenbane-optimizer` og en Cloudflare Container. Konfigurationen er i `optimizer-cloudflare/wrangler.jsonc`. Én `standard-2`-instans genbruges og går i dvale efter to minutters inaktivitet. Alle HTTP-kald, inklusive `/health`, kræver den hemmelige nøgle, før containeren startes. Containeren har ikke internetadgang.
+Produktionen bruger Worker `aabenbane-optimizer` og en Cloudflare Container. Konfigurationen er i `optimizer-cloudflare/wrangler.jsonc`. Én `standard-4`-instans genbruges og går i dvale efter to minutters inaktivitet. Alle HTTP-kald, inklusive `/health`, kræver den hemmelige nøgle, før containeren startes. Containeren har ikke internetadgang.
 
 Hele deploymentet kan køres med `powershell -ExecutionPolicy Bypass -File .\Deploy.ps1` fra projektets rod. Scriptet bruger sin egen placering som arbejdsmappe, så det kan også startes med en absolut sti fra andre mapper. Node.js, .NET 10, projektets npm-afhængigheder, Cloudflare-login og Docker Desktop med Linux-containere skal være tilgængelige.
 
@@ -43,7 +43,7 @@ docker build -t hik-optimizer optimizer-service
 docker run --rm -p 8080:8080 -e OPTIMIZER_API_KEY hik-optimizer
 ```
 
-Brug HTTPS foran tjenesten. Sæt `OPTIMIZER_URL` og `OPTIMIZER_API_KEY` i Cloudflare Workers-miljøet og samme nøgle hos tjenesten. API-nøglen skal være en secret, aldrig en `NEXT_PUBLIC_*`-variabel. `/health` er offentlig; `/solve` kræver Bearer-nøglen. Tjenesten behandler én beregning ad gangen og svarer 429, når den er optaget. Sørg for mindst 125 sekunders HTTP-timeout hos proxyen. Computation er begrænset til 100 sekunder plus indlæsning/modelopbygning og højst 200 deltagere; der afskæres ikke en vilkårlig del af deltagerlisten.
+Brug HTTPS foran tjenesten. Sæt `OPTIMIZER_URL` og `OPTIMIZER_API_KEY` i Cloudflare Workers-miljøet og samme nøgle hos tjenesten. API-nøglen skal være en secret, aldrig en `NEXT_PUBLIC_*`-variabel. `/health` er offentlig; `/solve` kræver Bearer-nøglen. Tjenesten behandler én beregning ad gangen og svarer 429, når den er optaget. Sørg for mindst 660 sekunders HTTP-timeout hos proxyen. Computation er begrænset til 600 sekunder plus indlæsning/modelopbygning og højst 200 deltagere; der afskæres ikke en vilkårlig del af deltagerlisten.
 
 Der sendes kun interne spiller-ID'er, medlemsnumre (til forbudsregler), CR, køn, alder, tilmeldingsrækkefølge, status og tilmeldingstider samt hold-ID'er fra historikken. Navne, e-mailadresser, telefonnumre og loginoplysninger sendes ikke til beregningstjenesten.
 
@@ -69,7 +69,7 @@ CP-SAT løser følgende mål i rækkefølge. Det opnåede resultat for hvert tri
 6. Maksimér summen af kampscorer.
 7. Maksimér spiller-timer ved den tidligste start, derefter ved hver senere start, uden at forringe tidligere mål.
 
-De tre time-trin optimeres samlet pr. status med heltalsvægte: ved n spillere er første time vægtet (n+1)², anden time n+1 og tredje time 1. Dermed kan alle senere timer tilsammen ikke opveje én mistet første time. Timefordelingen får op til 20 sekunder, køprioritet 5 sekunder, score 40 sekunder og tidlige tider samlet 10 sekunder inden for de 100 sekunder. De almindelige syv starttider vægtes tilsvarende leksikografisk i ét trin, så modelbehandlingen ikke skal gentages for hver starttid.
+De tre time-trin optimeres samlet pr. status med heltalsvægte: ved n spillere er første time vægtet (n+1)², anden time n+1 og tredje time 1. Dermed kan alle senere timer tilsammen ikke opveje én mistet første time. Timefordelingen får op til 120 sekunder, køprioritet 30 sekunder, score 240 sekunder og tidlige tider samlet 60 sekunder inden for de 600 sekunder. De almindelige syv starttider vægtes tilsvarende leksikografisk i ét trin, så modelbehandlingen ikke skal gentages for hver starttid.
 
 Time-, kø-, antal-kampe- og scoretrin har op til to søgestarter med forskellige tilfældige seeds. Antal-kampe-trinnet får op til 5 sekunder. Den bedste komplette løsning genbruges som startforslag og kan ikke tabes ved genstart. Fire solvertråde bruges til CP-SATs forskellige søgestrategier, også når containeren deler én CPU. Ved tidsgrænsen bevares den bedste fundne gyldige løsning, og UI viser **optimalitet er ikke bevist**. Kun når alle trin er bevist optimale, bruges **Optimal løsning fundet**. Flere søgestarter giver ikke garanti for et globalt optimum.
 

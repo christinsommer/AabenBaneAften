@@ -9,6 +9,16 @@ const p = (id, extra = {}) => ({id, memberNo: String(id), cr:5, gender:'M', age:
 const match = {court:1, startTime:'18:00', team1:[1,2], team2:[3,4]};
 const input = extra => ({players:[p(1),p(2),p(3),p(4)], weights:algorithmWeightDefaults, history:[], locked:[], slots:[{court:1,startTime:'18:00'},{court:5,startTime:'18:30'},{court:1,startTime:'19:00'}],...extra});
 
+test('rest is limited to 30 minutes between consecutive matches, including manual edits', () => {
+  const times = ['18:00', '19:30', '21:00'];
+  const data = input({players: [1,2,3,4].map(id => p(id, {availability: times})), slots: times.map(startTime => ({court:1,startTime}))});
+  const matches = times.map((startTime,i) => ({...match,startTime,team1:[[1,2],[1,3],[1,4]][i],team2:[[3,4],[2,4],[2,3]][i]}));
+  assert.equal(validateProposal(matches.toReversed(), data).length, 3);
+  for (const options of [{}, {manualEdit:true}])
+    assert.throws(() => validateProposal([matches[0], matches[2]], data, options), /30 minutters pause/);
+  assert.equal(validateProposal([matches[0], matches[2]], data, {partial:true}).length, 2);
+});
+
 test('integer weights default only missing and empty values, reject invalid values', () => {
   assert.deepEqual(parseAlgorithmWeights({}), algorithmWeightDefaults);
   assert.equal(parseAlgorithmWeights({FactorMix:''}).FactorMix,10);
@@ -16,11 +26,11 @@ test('integer weights default only missing and empty values, reject invalid valu
   for (const value of [1.2,'40',null,true,Infinity,1000001]) assert.throws(() => parseAlgorithmWeights({FactorMix:value}));
 });
 test('independent validator rejects half-hour overlap, double-booked courts, duplicate players and excess hours', () => {
-  assert.equal(validateProposal([match,{...match,startTime:'19:00'}], input()).length,2);
+  assert.equal(validateProposal([match,{...match,startTime:'19:00',team1:[1,3],team2:[2,4]}], input()).length,2);
   assert.throws(() => validateProposal([match,{...match,court:5,startTime:'18:30'}],input()),/overlappende/);
   assert.throws(() => validateProposal([match,match],input()),/bane/);
   assert.throws(() => validateProposal([{...match,team2:[1,4]}],input()),/flere gange/);
-  assert.throws(() => validateProposal([match,{...match,startTime:'19:00'}], input({players:[p(1,{requestedHours:1}),p(2),p(3),p(4)]})),/flere timer/);
+  assert.throws(() => validateProposal([match,{...match,startTime:'19:00',team1:[1,3],team2:[2,4]}], input({players:[p(1,{requestedHours:1}),p(2),p(3),p(4)]})),/flere timer/);
   assert.throws(() => validateProposal([match], input({players:[p(1,{availability:['19:00']}),p(2),p(3),p(4)]})),/tidspunktet/);
   assert.throws(() => validateProposal([{...match,court:7}],input()),/rådighed/);
 });

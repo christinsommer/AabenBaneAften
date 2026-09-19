@@ -2,16 +2,19 @@
 import { unusedImportedCourts } from "../lib/unused-courts";
 import { unfulfilledWishes } from "../lib/unfulfilled-wishes";
 import rulesContent from "../lib/rules-content.json";
-import { includeIntermediateTimes } from "../lib/signup";
+import { includeIntermediateTimes, signupSelectionError } from "../lib/signup";
+import { ContactVisibilityField } from '../components/contact-visibility-field';
+import { AlertDialog, AlertDialogTrigger, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter } from '../components/ui/alert-dialog';
+import { PlayerContact } from '../components/player-contact';
 import { ImportedPlanTable } from "./imported-plan";
 import { OptimizerPanel } from "./optimizer-panel";
 import { PlanEditor } from './plan-editor';
 import {ageFromBirthYear, birthYearOptions} from '../lib/birth-year';
 import { MatchCalendarButton } from "../components/match-calendar-button";
 import { isPlayersImportedMatch } from "../lib/kampplan-filter";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { appRequest, requireLoginSession } from "../lib/app-request";
-import { registrationDateParts } from "../lib/registration";
+import { firstMatchInstant, registrationIsOpen, waitlistIsOpen, registrationDateParts } from "../lib/registration";
 import { InstallApp } from "../components/install-app";
 import { levelScore } from '../lib/ranking';
 import { RankingField } from '../components/ranking-field';
@@ -823,6 +826,10 @@ function EmptyCalendarDashboard({data,act,busy,error,openProfile}: {
 }
 
 type MemberProfile = {
+  spouseNo?: number | null;
+  spouseMode?: number | null;
+  emailVisible?: boolean;
+  phoneVisible?: boolean;
   birthYear?: number | null;
   phone?: string;
   phoneCountryCode?: string;
@@ -839,11 +846,12 @@ type MemberProfile = {
 
 const CR_LABELS = ["", "A+", "A", "A-", "B+", "B", "B-", "C+", "C", "C-"];
 
-function ProfilePanel({ user, act, busy, adminMode=false }: {
+function ProfilePanel({ user, act, busy, adminMode=false, members=[] }: {
   user: MemberProfile;
   act: (body: Record<string, unknown>) => Promise<boolean>;
   busy: boolean;
   adminMode?: boolean;
+  members?: MemberProfile[];
 }) {
   const [saved, setSaved] = useState(false);
   const [birthYear, setBirthYear] = useState(user.birthYear?.toString() ?? '');
@@ -851,7 +859,7 @@ function ProfilePanel({ user, act, busy, adminMode=false }: {
     event.preventDefault();
     setSaved(false);
     const values = Object.fromEntries(new FormData(event.currentTarget).entries());
-    if (await act({ ...values, action: "update_profile" })) setSaved(true);
+    if (await act({ ...values, emailVisible: values.emailVisible === "on", phoneVisible: values.phoneVisible === "on", action: "update_profile" })) setSaved(true);
   }
   return (
     <Card className="max-w-2xl border-[#dce9e1]">
@@ -866,11 +874,14 @@ function ProfilePanel({ user, act, busy, adminMode=false }: {
             <Field name="lastName" label="Efternavn" defaultValue={user.lastName} autoComplete="family-name" maxLength={100} />
           </div>
           <Field name="memberNo" label="Medlemsnummer" defaultValue={user.memberNo} readOnly />
-          <Field name="email" label="E-mailadresse" type="email" defaultValue={user.email} autoComplete="email" maxLength={254} />
-          <div className="grid grid-cols-[7rem_1fr] gap-3">
+          <div className="grid items-end gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+            <Field name="email" label="E-mailadresse" type="email" defaultValue={user.email} autoComplete="email" maxLength={254} />
+            <ContactVisibilityField name="emailVisible" label="E-mailadresse" defaultChecked={user.emailVisible ?? true} />
+          </div>
+          <div className="grid items-end gap-2 sm:grid-cols-[minmax(0,1fr)_auto]"><div className="grid grid-cols-[7rem_minmax(0,1fr)] gap-3">
             <Field name="phoneCountryCode" label="Landekode" defaultValue={user.phoneCountryCode ?? "+45"} autoComplete="tel-country-code" pattern="\+[1-9][0-9]{0,2}" maxLength={4} />
             <Field name="phone" label="Telefonnummer (valgfrit)" type="tel" inputMode="numeric" autoComplete="tel-national" defaultValue={user.phone??""} required={false} pattern="[0-9]*" maxLength={15} />
-          </div>
+          </div><ContactVisibilityField name="phoneVisible" label="Telefonnummer" defaultChecked={user.phoneVisible ?? true} /></div>
           <div className="grid gap-2">
             <Label htmlFor="profile-gender">Køn</Label>
             <select id="profile-gender" name="gender" defaultValue={user.gender} required className="h-10 rounded-md border border-input bg-transparent px-3">
@@ -888,6 +899,20 @@ function ProfilePanel({ user, act, busy, adminMode=false }: {
             {birthYear && <p className="text-sm text-slate-600">Beregnet alder: {ageFromBirthYear(Number(birthYear))} år.</p>}
           </div>
           {adminMode && <div className="grid gap-2"><Label htmlFor="edit-member-cr">CR</Label><select id="edit-member-cr" name="christinRanking" defaultValue={user.christinRanking??""} className="h-10 rounded-md border px-3"><option value="">Ikke vurderet</option>{[1,2,3,4,5,6,7,8,9].map(cr=><option key={cr} value={cr}>{`${cr}  ${CR_LABELS[cr]}`}</option>)}</select></div>}
+          {adminMode && <>
+            <div className="grid gap-2"><Label htmlFor="edit-spouse-no">Spouse No.</Label>
+              <select id="edit-spouse-no" name="spouseNo" defaultValue={user.spouseNo ?? ''} className="h-10 min-w-0 rounded-md border px-3">
+                <option value="">Ingen partner</option>
+                {members.filter(p => p.memberNo !== user.memberNo).slice().sort((a,b) => (a.firstName+' '+a.lastName).localeCompare(b.firstName+' '+b.lastName,'da')).map(p =>
+                  <option key={p.memberNo} value={p.memberNo} disabled={!/^\d+$/.test(p.memberNo) || !Number.isSafeInteger(Number(p.memberNo)) || Number(p.memberNo) <= 0}>{p.firstName} {p.lastName} ({p.memberNo})</option>)}
+              </select>
+            </div>
+            <div className="grid gap-2"><Label htmlFor="edit-spouse-mode">Spillebetingelse</Label>
+              <select id="edit-spouse-mode" name="spouseMode" defaultValue={user.spouseMode ?? ''} className="h-10 rounded-md border px-3">
+                <option value="">Ingen betingelse</option><option value="1">Spille samtidigt</option><option value="2">Spille sammen med</option>
+              </select>
+            </div>
+          </>}
           <Button disabled={busy} className="bg-[#13375e]">{busy ? "Gemmer…" : "Gem profil"}</Button>
           {saved && <p role="status" className="text-sm font-semibold text-[#13375e]">Din profil er gemt.</p>}
         </form>
@@ -896,16 +921,16 @@ function ProfilePanel({ user, act, busy, adminMode=false }: {
   );
 }
 
-function EditMemberDialog({player,act,busy}:{player:MemberProfile & {id:number};act:AppAction;busy:boolean}) {
+function EditMemberDialog({player,act,busy,members}:{player:MemberProfile & {id:number};act:AppAction;busy:boolean;members:MemberProfile[]}) {
   const [open,setOpen]=useState(false);
   const [error,setError]=useState('');
   async function save(values:Record<string,unknown>) {
     setError('');
-    const success=await act({...values,action:'update_member',playerId:player.id,christinRanking:values.christinRanking===''?null:Number(values.christinRanking)});
+    const success=await act({...values,action:'update_member',playerId:player.id,spouseNo:values.spouseNo === '' ? null : Number(values.spouseNo),spouseMode:values.spouseMode === '' ? null : Number(values.spouseMode),christinRanking:values.christinRanking===''?null:Number(values.christinRanking)});
     if(success)setOpen(false);else setError('Oplysningerne blev ikke gemt. Kontrollér felterne.');
     return success;
   }
-  return <Dialog open={open} onOpenChange={setOpen}><DialogTrigger asChild><Button variant="outline" disabled={busy}><Pencil className="mr-2 h-4 w-4"/>Ret medlem</Button></DialogTrigger><DialogContent className="max-h-[90dvh] overflow-y-auto"><DialogHeader><DialogTitle>Ret {player.firstName} {player.lastName}</DialogTitle><DialogDescription>Medlemsnummeret kan ikke ændres. CR redigeres særskilt og er kun synlig for administratorer.</DialogDescription></DialogHeader><ProfilePanel user={player} act={save} busy={busy} adminMode/>{error&&<p role="alert" className="text-sm text-red-700">{error}</p>}</DialogContent></Dialog>;
+  return <Dialog open={open} onOpenChange={setOpen}><DialogTrigger asChild><Button variant="outline" disabled={busy}><Pencil className="mr-2 h-4 w-4"/>Ret medlem</Button></DialogTrigger><DialogContent className="max-h-[90dvh] overflow-y-auto"><DialogHeader><DialogTitle>Ret {player.firstName} {player.lastName}</DialogTitle><DialogDescription>Medlemsnummeret kan ikke ændres. CR redigeres særskilt og er kun synlig for administratorer.</DialogDescription></DialogHeader><ProfilePanel user={player} act={save} busy={busy} adminMode members={members}/>{error&&<p role="alert" className="text-sm text-red-700">{error}</p>}</DialogContent></Dialog>;
 }
 
 function DeleteMemberDialog({player,currentUserId,act,busy}:{player:MemberProfile & {id:number};currentUserId:number;act:AppAction;busy:boolean}) {
@@ -928,6 +953,32 @@ function DeleteMemberDialog({player,currentUserId,act,busy}:{player:MemberProfil
 }
 
 function SignupPanel({ data, act, busy }: any) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const [selectionError, setSelectionError] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmError, setConfirmError] = useState('');
+  const [confirmBusy, setConfirmBusy] = useState(false);
+  const confirmPending = useRef(false);
+  async function confirmWish(save: boolean) {
+    if (confirmPending.current || busy) return;
+    confirmPending.current = true;
+    setConfirmBusy(true);
+    setConfirmError('');
+    try {
+      const success = await (save ? saveWish() : removeSignup());
+      if (success) setConfirmOpen(false);
+      else setConfirmError(save ? 'Ønskerne blev ikke gemt. Prøv igen.' : 'Ønskerne blev ikke fjernet. Prøv igen.');
+    } catch {
+      setConfirmError('Handlingen kunne ikke gennemføres. Prøv igen.');
+    } finally {
+      confirmPending.current = false;
+      setConfirmBusy(false);
+    }
+  }
   const current = data.signup?.status === "not_registered" ? null : data.signup;
   const [selected, setSelected] = useState<string[]>(
     current?.szPossible ?? [],
@@ -948,8 +999,26 @@ function SignupPanel({ data, act, busy }: any) {
   const ownRequests = (data.requests ?? []).filter(
     (request: any) => request.isCreator,
   );
-  const canEdit = data.isOpen;
+  const canEdit = registrationIsOpen(data.event, now);
+  const roundStart = data.firstMatchAt ?? firstMatchInstant(data.event.date, data.times);
+  const roundDate = new Date(`${data.event.date}T12:00:00Z`);
+  const roundTime = new Date(roundStart).toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit', hourCycle:'h23', timeZone:'Europe/Copenhagen'});
+  const confirmationText = `Du har nu ønsket at spille ${hours} ${hours === 1 ? 'time' : 'timer'} ${roundDate.toLocaleDateString('da-DK', {weekday:'long', timeZone:'Europe/Copenhagen'})} d. ${roundDate.toLocaleDateString('da-DK', {day:'2-digit', month:'long', timeZone:'Europe/Copenhagen'})}.\nRunden starter kl. ${roundTime}.`;
+  const canJoinWaitlist = waitlistIsOpen(data.event, roundStart, now);
+  const canChoose = canEdit || canJoinWaitlist;
+  async function joinWaitlist() {
+    const error = signupSelectionError(selected, hours);
+    if (error) { setSelectionError(error); setConfirmError(''); setConfirmOpen(true); return; }
+    const expanded = includeIntermediateTimes(selected, data.times);
+    if (await act({action:'join_waitlist',eventId:data.event.id,nHours:hours,nPossible:expanded.length,szPossible:expanded})) {
+      setSelected(expanded);
+      setSaved(false);
+      setRemoved(false);
+    }
+  }
   async function saveWish() {
+    const error = signupSelectionError(selected, hours);
+    if (error) { setSelectionError(error); return false; }
     setSaved(false);
     setRemoved(false);
     const expanded = includeIntermediateTimes(selected, data.times);
@@ -963,7 +1032,9 @@ function SignupPanel({ data, act, busy }: any) {
     ) {
       setSelected(expanded);
       setSaved(true);
+      return true;
     }
+    return false;
   }
   async function removeSignup() {
     setSaved(false);
@@ -971,7 +1042,9 @@ function SignupPanel({ data, act, busy }: any) {
       setSelected([]);
       setHours(1);
       setRemoved(true);
+      return true;
     }
+    return false;
   }
   async function sendInvites() {
     setInviteSent(false);
@@ -1016,7 +1089,7 @@ function SignupPanel({ data, act, busy }: any) {
         <CardHeader className="gap-1 px-4">
           <CardTitle>Dine spilleønsker</CardTitle>
           <CardDescription>
-            Vælg 1-3 timer; vælg ALLE mulige tidspunkter du kan; tryk "Gem mine ønsker"
+            Vælg 1-3 timer; vælg ALLE mulige tidspunkter du kan; tryk "Gem mine ønsker". Vælg mindst 2 tider, også ved ønske om 1 time. Ved 2 eller 3 timer skal mindst henholdsvis 2 eller 3 af tiderne være uden overlap.
           </CardDescription>
         </CardHeader>
         <CardContent className="px-4">
@@ -1025,7 +1098,7 @@ function SignupPanel({ data, act, busy }: any) {
             <div className="mt-2 grid grid-cols-3 gap-2">
               {[1,2,3].map(value => <button
                 key={value}
-                disabled={!canEdit}
+                disabled={!canChoose || busy}
                 aria-pressed={hours === value}
                 onClick={() => {
                   setSaved(false);
@@ -1065,7 +1138,7 @@ function SignupPanel({ data, act, busy }: any) {
                       className={`flex min-h-11 items-center gap-2 rounded-lg border px-3 py-2 ${canEdit ? "cursor-pointer" : "cursor-not-allowed opacity-55"} ${selected.includes(t) ? "border-[#13375e] bg-[#f0f3f8]" : "border-slate-200"}`}
                     >
                       <Checkbox
-                        disabled={!canEdit}
+                        disabled={!canChoose || busy}
                         checked={selected.includes(t)}
                         onCheckedChange={(yes) => {
                           setSaved(false);
@@ -1086,22 +1159,35 @@ function SignupPanel({ data, act, busy }: any) {
           </div>
           <p className="mt-4 text-sm text-slate-600">Når du gemmer, vælges mellemliggende tider automatisk, hvis du har valgt to timer i træk. Fx tilføjes 18.30–19.30 ved valg af 18.00–19.00 og 19.00–20.00.</p>
           <div className="mt-4 flex flex-wrap gap-2">
-            <Button
-              disabled={busy || selected.length < hours || !canEdit}
-              onClick={saveWish}
+            <AlertDialog open={confirmOpen} onOpenChange={open => { if (!confirmPending.current) { setSelectionError(open ? signupSelectionError(selected, hours) : null); setConfirmOpen(open); setConfirmError(''); } }}>
+            <AlertDialogTrigger asChild><Button
+              disabled={busy || !canEdit}
               className="bg-[#13375e]"
             >
               {busy ? "Gemmer…" : "Gem mine ønsker"}
-            </Button>
-            {current && data.event.status !== "published" && (
+            </Button></AlertDialogTrigger>
+            <AlertDialogContent onEscapeKeyDown={event => { if (confirmPending.current) event.preventDefault(); }}>
+              <AlertDialogHeader>
+                <AlertDialogTitle>{selectionError ? 'Kontrollér dine tider' : 'Bekræft dine ønsker'}</AlertDialogTitle>
+                <AlertDialogDescription className="whitespace-pre-line">{selectionError ?? confirmationText}</AlertDialogDescription>
+              </AlertDialogHeader>
+              {confirmError && <p role="alert" className="text-sm text-red-700">{confirmError}</p>}
+              <AlertDialogFooter>
+                {!selectionError && <Button variant="outline" disabled={busy || confirmBusy} onClick={() => void confirmWish(false)}>Fortryd</Button>}
+                <Button className="bg-[#13375e]" disabled={busy || confirmBusy || (!selectionError && !canEdit)} onClick={() => selectionError ? setConfirmOpen(false) : void confirmWish(true)}>OK</Button>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+            </AlertDialog>
               <Button
                 disabled={busy || !canEdit}
                 variant="outline"
                 onClick={removeSignup}
               >
-                Fjern min tilmelding
+                Fjern mine ønsker
               </Button>
-            )}
+              {now > Date.parse(data.event.registrationClosesAt) && <Button
+                variant="outline" disabled={busy || !canJoinWaitlist} onClick={() => void joinWaitlist()}
+              >Sæt mig på venteliste</Button>}
           </div>
           {saved && (
             <p className="mt-2 flex items-center gap-2 text-sm font-semibold text-[#13375e]">
@@ -1112,14 +1198,14 @@ function SignupPanel({ data, act, busy }: any) {
           {removed && (
             <p className="mt-2 flex items-center gap-2 text-sm font-semibold text-[#13375e]">
               <Check className="h-4 w-4" />
-              Din tilmelding og dine tidsønsker er fjernet.
+              Dine ønsker er fjernet. Din status er Afbud.
             </p>
           )}
-          {!saved && current && (
+          {!saved && !removed && current && (
             <p className="mt-2 flex items-center gap-2 text-sm font-medium text-[#13375e]">
               <Check className="h-4 w-4" />
-              {current.nHours === 0 ? "Du har valgt ikke at spille." : `Du er ${current.status === "waitlist" ? "på venteliste" : "tilmeldt"}.`}
-              Dine senest gemte ønsker vises ovenfor.
+              {current.status === 'cancelled' ? 'Din status er Afbud.' : current.nHours === 0 ? "Du har valgt ikke at spille." : `Du er ${current.status === "waitlist" ? "på venteliste" : "tilmeldt"}.`}
+              {current.status !== 'cancelled' && 'Dine senest gemte ønsker vises ovenfor.'}
             </p>
           )}
         </CardContent>
@@ -1136,7 +1222,7 @@ function PlanPanel({ data, userMatches, act, busy }: any) {
     data.names.find((p: any) => p.id === id)?.name ?? "Slettet medlem";
   const importedRows = Array.isArray(data.importedMatches) ? data.importedMatches : [];
 
-  if (importedRows.length > 0) return <div className="space-y-2">{filterButton}<ImportedPlanTable calendarDate={calendarDate} calendarPlayers={data.names} rows={onlyMine ? importedRows.filter((row: Record<string, unknown>) => isPlayersImportedMatch(row, data.user.name)) : importedRows} /></div>;
+  if (importedRows.length > 0) return <div className="space-y-2">{filterButton}<ImportedPlanTable contacts={data.planContacts} calendarDate={calendarDate} calendarPlayers={data.names} rows={onlyMine ? importedRows.filter((row: Record<string, unknown>) => isPlayersImportedMatch(row, data.user.name)) : importedRows} /></div>;
 
   if (!data.matches.length && !importedRows.length)
     return (
@@ -1181,7 +1267,7 @@ function PlanPanel({ data, userMatches, act, busy }: any) {
           <CardContent>
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
               {data.matches.map((m: any) => (
-                <MatchCard key={m.id} match={m} name={name} />
+                <MatchCard key={m.id} match={m} name={name} contacts={data.planContacts} />
               ))}
             </div>
           </CardContent>
@@ -1204,7 +1290,7 @@ function PlayerMatchCard({ match, name, data, act, busy, calendarDate }: any) {
   );
   return (
     <div className="space-y-3 rounded-2xl border border-[#13375e] bg-[#f0f3f8] p-3">
-      <MatchCard match={match} name={name} highlight calendarDate={calendarDate} calendarPlayers={data.names} />
+      <MatchCard match={match} name={name} contacts={data.planContacts} highlight calendarDate={calendarDate} calendarPlayers={data.names} />
       {!substitution ? (
         <Dialog>
           <DialogTrigger asChild>
@@ -1333,7 +1419,7 @@ function PlayerMatchCard({ match, name, data, act, busy, calendarDate }: any) {
     </div>
   );
 }
-function MatchCard({ match, name, highlight, calendarDate, calendarPlayers }: any) {
+function MatchCard({ match, name, highlight, calendarDate, calendarPlayers, contacts = [] }: any) {
   const ids = JSON.parse(match.playerIds);
   return (
     <article
@@ -1348,13 +1434,13 @@ function MatchCard({ match, name, highlight, calendarDate, calendarPlayers }: an
       </div>
       <div className="mt-4 grid grid-cols-[1fr_auto_1fr] items-center gap-3">
         <div>
-          <p className="font-semibold">{name(ids[0])}</p>
-          <p className="font-semibold">{name(ids[1])}</p>
+          <p className="font-semibold"><PlayerContact name={name(ids[0])} contact={contacts.find((p: {id: number}) => p.id === ids[0])} /></p>
+          <p className="font-semibold"><PlayerContact name={name(ids[1])} contact={contacts.find((p: {id: number}) => p.id === ids[1])} /></p>
         </div>
         <span className="text-xs font-black text-slate-400">VS</span>
         <div className="text-right">
-          <p className="font-semibold">{name(ids[2])}</p>
-          <p className="font-semibold">{name(ids[3])}</p>
+          <p className="font-semibold"><PlayerContact name={name(ids[2])} contact={contacts.find((p: {id: number}) => p.id === ids[2])} /></p>
+          <p className="font-semibold"><PlayerContact name={name(ids[3])} contact={contacts.find((p: {id: number}) => p.id === ids[3])} /></p>
         </div>
       </div>
     </article>
@@ -1569,7 +1655,7 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
         </p>
       )}
       {Array.isArray(data.importedMatches) && data.importedMatches.length > 0 && (
-        <PlanEditor key={data.event.id} event={data.event} rows={data.importedMatches} scores={data.adminPlanScores}
+        <PlanEditor contacts={data.planContacts} key={data.event.id} event={data.event} rows={data.importedMatches} scores={data.adminPlanScores}
           weights={data.optimizerWeights} busy={busy} isOpen={data.isOpen} refresh={refresh} onPendingChange={setPlanEditPending} />
       )}
       <Card className="border-[#dce9e1]">
@@ -2043,7 +2129,7 @@ function MembersPanel({data,act,busy}:any) {
             {!player.crReviewedAt && <Badge className="bg-amber-100 text-amber-900">CR skal gennemgås</Badge>}
             {player.createdAt && <p className="text-xs text-slate-600">Oprettet {new Date(player.createdAt.includes('T') ? player.createdAt : player.createdAt.replace(' ', 'T') + 'Z').toLocaleDateString('da-DK', {timeZone:'Europe/Copenhagen'})}</p>}
             <CrReviewControl key={`${player.id}:${player.christinRanking}:${player.crReviewedAt}`} player={player} act={act} busy={busy}/>
-            <EditMemberDialog player={player} act={act} busy={busy}/>
+            <EditMemberDialog player={player} act={act} busy={busy} members={data.players}/>
             <DeleteMemberDialog player={player} currentUserId={data.user.id} act={act} busy={busy}/>
           </div>)}
         </CardContent>
