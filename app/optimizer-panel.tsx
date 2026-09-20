@@ -98,7 +98,7 @@ export function OptimizerPanel({event, rows, wishes, initialWeights, isOpen, bus
     </div>
     <p className="text-sm text-slate-600">Vægtene skal være heltal. Tomme felter bruger standardværdien. FactorAge kræver fødselsår på alle tilmeldte medlemmer.</p>
     <p className="text-sm text-slate-600">FactorSameTeamDifference vægter CR-forskellen mellem medspillerne på begge hold. Standardværdien er 15; 0 slår dette fradrag fra. Singlekampe får intet fradrag for denne faktor.</p>
-    <p className="text-sm text-slate-600">Første spilletime prioriteres før anden og tredje time for tilmeldte spillere. Derefter prioriteres flere kampe, kampscore og til sidst tidlige tider. Single er tilladt fra kl. 20.30, også på tværs af køn.</p>
+    <p className="text-sm text-slate-600">Første spilletime prioriteres før anden og tredje time for tilmeldte spillere. Derefter prioriteres flere kampe, kampscore og til sidst tidlige tider. Single er tilladt fra kl. 20:30, også på tværs af køn.</p>
     {isOpen && <p className="text-sm text-slate-600">Luk tilmeldingen, før du laver et kampforslag.</p>}
     {event.status !== 'draft' && <p className="text-sm text-slate-600">Der kan kun laves forslag til en kampplan, som er en kladde.</p>}
     {working && <p role="status" className="text-sm">{working === 'solve' ? 'Fordeler timer og optimerer kampe. Beregningen har op til 10 minutter; med opstart kan det tage op til 12 minutter.' : 'Kontrollerer og gemmer kampplanen…'}</p>}

@@ -22,7 +22,7 @@ export function reviewPlan(plan: ProposedMatch[], input: OptimizerInput) {
     if (!input.slots.some(s => s.court === m.court && s.startTime === m.startTime)) add(index, ids, 'Banen er ikke reserveret på dette tidspunkt.');
     const complete = m.team1.length === m.team2.length && [1, 2].includes(m.team1.length);
     if (!complete) add(index, ids, 'Kampen skal være to mod to eller én mod én.');
-    if (complete && ids.length === 2 && start < minutes('20:30')) add(index, ids, 'Single er først tilladt fra kl. 20.30.');
+    if (complete && ids.length === 2 && start < minutes('20:30')) add(index, ids, 'Single er først tilladt fra kl. 20:30.');
     for (const id of new Set(ids)) {
       const p = people.get(id);
       if (!p) { add(index, [id], 'Spilleren har ikke en gyldig tilmelding.'); continue; }

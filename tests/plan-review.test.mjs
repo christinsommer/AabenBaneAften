@@ -53,7 +53,7 @@ test('review checks CR boundaries, partner distance, mixed teams, forbidden pair
 test('review checks unknown players, unequal teams, early singles and court collisions',()=>{
   assert.equal(reviewPlan([{...match,team1:[99,2]}],input()).scores[0],null);
   assert.equal(reviewPlan([{...match,team1:[1]}],input()).scores[0],null);
-  assert.ok(reviewPlan([{...match,team1:[1],team2:[2]}],input()).issues.some(i=>i.message.includes('20.30')));
+  assert.ok(reviewPlan([{...match,team1:[1],team2:[2]}],input()).issues.some(i=>i.message.includes('20:30')));
   assert.ok(reviewPlan([match,{...match,team1:[5,6],team2:[7,8]}],input()).issues.every(i=>i.message.includes('samme bane')));
 });
 

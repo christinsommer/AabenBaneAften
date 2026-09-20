@@ -10,7 +10,7 @@ Medlemmer ligger i D1-tabellen `players`.
 | E-mailadresse | `email` | Valideret tekst ved oprettelse og profilændring |
 | Køn | `gender` | Påkrævet tekst: M (mand) eller K (kvinde); kan ændres på profilen |
 | Egen ranking | `self_level` | Fri tekst, 1–100 tegn; forslag: A, A-, AB, B+, B, B-, BC, C+, C eller C- |
-| Christin Ranking (CR) | `christin_ranking` | Udfyldes automatisk ved oprettelse; heltal 1–9 eller NULL; kun administratorer kan se og ændre |
+| CR | `christin_ranking` | Udfyldes automatisk ved oprettelse; heltal 1–9 eller NULL; kun administratorer kan se og ændre |
 
 `id` er den interne nøgle, som tilmeldinger, kampe og sessioner refererer til.
 `name` bevares af hensyn til eksisterende visninger og opdateres sammen med

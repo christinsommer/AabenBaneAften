@@ -13,8 +13,14 @@ function registrationInstant(date: unknown, hour: unknown) {
 }
 
 export function registrationSchedule(input: Record<string, unknown>) {
-  const registrationOpensAt = registrationInstant(input.opensDate, input.opensHour);
-  const registrationClosesAt = registrationInstant(input.closesDate, input.closesHour);
+  const instant = (kind: 'opens' | 'closes') => {
+    const time = input[`${kind}Time`];
+    if (time === undefined) return registrationInstant(input[`${kind}Date`],input[`${kind}Hour`]);
+    if (typeof time !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) throw new Error('Angiv tidspunkt som hh:mm.');
+    return new Date(Date.parse(registrationInstant(input[`${kind}Date`],time.slice(0,2))) + Number(time.slice(3)) * 60000).toISOString();
+  };
+  const registrationOpensAt = instant('opens');
+  const registrationClosesAt = instant('closes');
   if (registrationOpensAt >= registrationClosesAt) throw new Error('Sluttidspunktet skal være efter starttidspunktet.');
   return { registrationOpensAt, registrationClosesAt };
 }

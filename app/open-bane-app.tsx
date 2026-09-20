@@ -1,4 +1,10 @@
 "use client";
+import { RegistrationDefaultsForm } from './registration-defaults-form';
+import { EmailPlanButton } from './email-plan-button';
+import { planLink } from '../lib/plan-link';
+import { bccMailtoHref } from '../lib/mailto';
+import { PastPlan } from './past-plan';
+import { copenhagenDate } from '../lib/calendar';
 import { unusedImportedCourts } from "../lib/unused-courts";
 import { unfulfilledWishes } from "../lib/unfulfilled-wishes";
 import rulesContent from "../lib/rules-content.json";
@@ -67,13 +73,13 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const timeLabel: Record<string, string> = {
-  "18:00": "18.00–19.00",
-  "18:30": "18.30–19.30",
-  "19:00": "19.00–20.00",
-  "19:30": "19.30–20.30",
-  "20:00": "20.00–21.00",
-  "20:30": "20.30–21.30",
-  "21:00": "21.00–22.00",
+  "18:00": "18:00–19:00",
+  "18:30": "18:30–19:30",
+  "19:00": "19:00–20:00",
+  "19:30": "19:30–20:30",
+  "20:00": "20:00–21:00",
+  "20:30": "20:30–21:30",
+  "21:00": "21:00–22:00",
 };
 const niceDate = (v: string) =>
   new Intl.DateTimeFormat("da-DK", {
@@ -82,7 +88,7 @@ const niceDate = (v: string) =>
     month: "long",
   }).format(new Date(`${v}T12:00:00`));
 const fullDate = (v: string) => new Intl.DateTimeFormat("da-DK", {weekday:"long",day:"numeric",month:"long",year:"numeric"}).format(new Date(`${v}T12:00:00`));
-const deadlineLabel = (v: string) => new Intl.DateTimeFormat("da-DK", {timeZone:"Europe/Copenhagen",weekday:"long",day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}).format(new Date(v));
+const deadlineLabel = (v: string) => new Intl.DateTimeFormat("da-DK", {timeZone:"Europe/Copenhagen",weekday:"long",day:"numeric",month:"short",hour:"2-digit",minute:"2-digit",hourCycle:"h23"}).format(new Date(v)).replace(/(\d{2})[.](\d{2})(?!\d)/g, '$1:$2');
 
 const toMinutes = (time: string) => {
   const [hours, mins] = time.split(":").map(Number);
@@ -665,7 +671,7 @@ function Dashboard({ data, act, busy, error, openProfile, refresh, refreshing }:
                   {niceDate(data.event.date)}
                 </h1>
                 <p className="mt-2 text-white/75">
-                  Bane 1–4 fra kl. 18 · Bane 5–7 fra kl. 18.30
+                  Bane 1–4 fra kl. 18:00 · Bane 5–7 fra kl. 18:30
                 </p>
                 <div className="flex flex-wrap gap-3">
                   <RulesDialog light />
@@ -712,13 +718,13 @@ function Dashboard({ data, act, busy, error, openProfile, refresh, refreshing }:
                   </p>
                 )}
                 <p className="mt-0.5 text-[11px] text-slate-500">
-                  {data.event.registrationOverride === "auto" ? `Kampplan senest ${niceDate(data.event.date)}, kl. 12.00` : "Den normale tidsplan er tilsidesat"}
+                  {data.event.registrationOverride === "auto" ? `Kampplan senest ${niceDate(data.event.date)}, kl. 12:00` : "Den normale tidsplan er tilsidesat"}
                 </p>
               </div>
             </CardContent>
           </Card>
         </section>
-        <Tabs defaultValue={openProfile ? "profile" : userMatches.length ? "plan" : "signup"}>
+        <Tabs defaultValue={typeof window !== 'undefined' && planLink(window.location.search).open ? 'plan' : openProfile ? "profile" : userMatches.length ? "plan" : "signup"}>
           <TabsList className="mb-6 h-auto w-full justify-start gap-1 overflow-x-auto rounded-2xl bg-white p-1.5 shadow-sm">
             <TabsTrigger value="signup" className="px-3 py-2">
               <CalendarDays className="mr-2 h-4 w-4" />
@@ -784,18 +790,21 @@ function CalendarList({dates,currentId,act,busy=false}: {dates:CalendarDate[];cu
       {act && <form onSubmit={add} className="flex flex-wrap items-end gap-3">
         <div className="grid gap-2"><Label htmlFor="new-event-date">Ny spilledag</Label><Input id="new-event-date" type="date" required value={newDate} onChange={event=>setNewDate(event.target.value)} /></div>
         <Button disabled={busy||!newDate}>Tilføj dato</Button>
-        <p className="w-full text-sm text-slate-600">Du kan også tilføje andre ugedage. Tilmeldingen åbner som standard to dage før kl. 12 og lukker dagen før kl. 12, dansk tid.</p>
+        <p className="w-full text-sm text-slate-600">Du kan også tilføje andre ugedage. Tilmeldingen åbner som standard to dage før kl. 12:00 og lukker dagen før kl. 12:00, dansk tid.</p>
       </form>}
       {message && <p role="status" className="text-sm text-[#13375e]">{message}</p>}
       <details open={Boolean(act)}>
         <summary className="cursor-pointer font-semibold text-[#13375e]">Se datolisten</summary>
         {!dates.length && <p className="mt-3 text-sm text-slate-600">Der er ingen datoer på listen.</p>}
-        <ul className="mt-3 grid gap-2 sm:grid-cols-2">
-          {dates.map(day=><li key={day.id} className="flex items-center justify-between gap-2 rounded-xl border p-3">
+        <ul className={`mt-3 grid gap-2 ${act ? '' : 'sm:grid-cols-2'}`}>
+          {dates.map(day=><li key={day.id} className="min-w-0 rounded-xl border p-3">
+            <div className="flex items-center justify-between gap-2">
             <div><p className="text-sm font-medium capitalize">{fullDate(day.date)}</p>
               <div className="mt-1 flex flex-wrap gap-1">{day.id===currentId&&<Badge>Aktuel runde</Badge>}{day.isTest&&<Badge variant="outline">Test</Badge>}{day.status==="cancelled"&&<Badge variant="outline">Aflyst</Badge>}</div>
             </div>
             {act&&<Button type="button" variant="ghost" size="sm" disabled={busy||day.testActive} title={day.testActive?"Afslut testfasen først":undefined} aria-label={`Fjern ${fullDate(day.date)}`} onClick={()=>setRemoving(day)}><Trash2 className="mr-1 h-4 w-4"/>Fjern</Button>}
+            </div>
+            {act && day.date < copenhagenDate() && !day.testActive && <PastPlan eventId={day.id}/>}
           </li>)}
         </ul>
       </details>
@@ -930,7 +939,7 @@ function EditMemberDialog({player,act,busy,members}:{player:MemberProfile & {id:
     if(success)setOpen(false);else setError('Oplysningerne blev ikke gemt. Kontrollér felterne.');
     return success;
   }
-  return <Dialog open={open} onOpenChange={setOpen}><DialogTrigger asChild><Button variant="outline" disabled={busy}><Pencil className="mr-2 h-4 w-4"/>Ret medlem</Button></DialogTrigger><DialogContent className="max-h-[90dvh] overflow-y-auto"><DialogHeader><DialogTitle>Ret {player.firstName} {player.lastName}</DialogTitle><DialogDescription>Medlemsnummeret kan ikke ændres. CR redigeres særskilt og er kun synlig for administratorer.</DialogDescription></DialogHeader><ProfilePanel user={player} act={save} busy={busy} adminMode members={members}/>{error&&<p role="alert" className="text-sm text-red-700">{error}</p>}</DialogContent></Dialog>;
+  return <Dialog open={open} onOpenChange={setOpen}><DialogTrigger asChild><Button variant="outline" className="size-10 p-0 sm:w-auto sm:px-3" aria-label={`Ret ${player.firstName} ${player.lastName}`} title="Ret medlem" disabled={busy}><Pencil className="size-4 sm:mr-1"/><span className="sr-only sm:not-sr-only">Ret medlem</span></Button></DialogTrigger><DialogContent className="max-h-[90dvh] overflow-y-auto"><DialogHeader><DialogTitle>Ret {player.firstName} {player.lastName}</DialogTitle><DialogDescription>Medlemsnummeret kan ikke ændres. CR redigeres særskilt og er kun synlig for administratorer.</DialogDescription></DialogHeader><ProfilePanel user={player} act={save} busy={busy} adminMode members={members}/>{error&&<p role="alert" className="text-sm text-red-700">{error}</p>}</DialogContent></Dialog>;
 }
 
 function DeleteMemberDialog({player,currentUserId,act,busy}:{player:MemberProfile & {id:number};currentUserId:number;act:AppAction;busy:boolean}) {
@@ -943,7 +952,7 @@ function DeleteMemberDialog({player,currentUserId,act,busy}:{player:MemberProfil
     else setError('Medlemmet blev ikke slettet. Genindlæs listen og prøv igen.');
   }
   return <Dialog open={open} onOpenChange={value=>{setOpen(value);setConfirmed(false);setError('');}}>
-    <DialogTrigger asChild><Button variant="destructive" disabled={busy||player.id===currentUserId} title={player.id===currentUserId?'Du kan ikke slette din egen konto':undefined}><Trash2 className="mr-2 h-4 w-4"/>Slet medlem</Button></DialogTrigger>
+    <DialogTrigger asChild><Button variant="outline" className="size-10 p-0 text-red-700 hover:bg-red-50 hover:text-red-800 sm:w-auto sm:px-3" aria-label={`Slet ${player.firstName} ${player.lastName}`} disabled={busy||player.id===currentUserId} title={player.id===currentUserId?'Du kan ikke slette din egen konto':undefined}><Trash2 className="size-4 sm:mr-1"/><span className="sr-only sm:not-sr-only">Slet medlem</span></Button></DialogTrigger>
     <DialogContent><DialogHeader><DialogTitle>Slet {player.firstName} {player.lastName}?</DialogTitle><DialogDescription>Medlemsnummer {player.memberNo}. Medlemsoplysninger, adgang, tilmeldinger og tilknyttede kampinvitationer slettes. Det kan ikke fortrydes. Kampene bevares med teksten “Slettet medlem”; eventuelle kampplaner skal rettes bagefter.</DialogDescription></DialogHeader>
       <label className="flex items-center gap-3 text-sm"><Checkbox checked={confirmed} onCheckedChange={value=>setConfirmed(value===true)}/>Jeg vil slette medlem #{player.memberNo}.</label>
       {error&&<p role="alert" className="text-sm text-red-700">{error}</p>}
@@ -1157,7 +1166,7 @@ function SignupPanel({ data, act, busy }: any) {
               </section>
             ))}
           </div>
-          <p className="mt-4 text-sm text-slate-600">Når du gemmer, vælges mellemliggende tider automatisk, hvis du har valgt to timer i træk. Fx tilføjes 18.30–19.30 ved valg af 18.00–19.00 og 19.00–20.00.</p>
+          <p className="mt-4 text-sm text-slate-600">Når du gemmer, vælges mellemliggende tider automatisk, hvis du har valgt to timer i træk. Fx tilføjes 18:30–19:30 ved valg af 18:00–19:00 og 19:00–20:00.</p>
           <div className="mt-4 flex flex-wrap gap-2">
             <AlertDialog open={confirmOpen} onOpenChange={open => { if (!confirmPending.current) { setSelectionError(open ? signupSelectionError(selected, hours) : null); setConfirmOpen(open); setConfirmError(''); } }}>
             <AlertDialogTrigger asChild><Button
@@ -1215,12 +1224,14 @@ function SignupPanel({ data, act, busy }: any) {
 }
 
 function PlanPanel({ data, userMatches, act, busy }: any) {
-  const [onlyMine, setOnlyMine] = useState(false);
+  const [onlyMine, setOnlyMine] = useState(() => typeof window !== 'undefined' && planLink(window.location.search).onlyMine);
   const calendarDate = onlyMine && data.event.status === "published" ? data.event.date : undefined;
   const filterButton = <Button variant={onlyMine ? "default" : "outline"} aria-pressed={onlyMine} onClick={() => setOnlyMine(!onlyMine)}>{onlyMine ? "Vis alle kampe" : "Vis kun mine kampe"}</Button>;
   const name = (id: number) =>
     data.names.find((p: any) => p.id === id)?.name ?? "Slettet medlem";
   const importedRows = Array.isArray(data.importedMatches) ? data.importedMatches : [];
+  const linkedDate = typeof window !== 'undefined' ? planLink(window.location.search).date : null;
+  if (linkedDate && linkedDate !== data.event.date) return <p role="status" className="rounded-xl border bg-white p-4">Linket gælder en anden spilledag end den aktuelle. <Button variant="link" onClick={() => { window.location.href = '/?view=plan&mine=1'; }}>Vis den aktuelle kampplan</Button></p>;
 
   if (importedRows.length > 0) return <div className="space-y-2">{filterButton}<ImportedPlanTable contacts={data.planContacts} calendarDate={calendarDate} calendarPlayers={data.names} rows={onlyMine ? importedRows.filter((row: Record<string, unknown>) => isPlayersImportedMatch(row, data.user.name)) : importedRows} /></div>;
 
@@ -1234,7 +1245,7 @@ function PlanPanel({ data, userMatches, act, busy }: any) {
               Kampplanen er ikke offentliggjort endnu
             </h2>
             <p className="mt-2 text-slate-500">
-              Den kommer senest fredag kl. 12.00.
+              Den kommer senest fredag kl. 12:00.
             </p>
           </div>
         </CardContent>
@@ -1459,9 +1470,7 @@ function RegistrationScheduleForm({ event, act, busy }: any) {
       {([{ name: 'opens', label: 'Tilmelding åbner', value: opens }, { name: 'closes', label: 'Tilmelding lukker', value: closes }]).map(({ name, label, value }) => <fieldset key={name} disabled={busy} className="space-y-2">
         <legend className="text-sm font-semibold">{label}</legend>
         <label className="grid gap-1 text-sm">Dato<Input type="date" name={`${name}Date`} defaultValue={value.date} required /></label>
-        <label className="grid gap-1 text-sm">Klokkeslæt<select name={`${name}Hour`} defaultValue={value.hour} required className="h-10 rounded-md border border-input bg-transparent px-3">
-          {Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0')).map(hour => <option key={hour} value={hour}>{hour}:00</option>)}
-        </select></label>
+        <label className="grid gap-1 text-sm">Klokkeslæt<Input type="text" pattern="([01][0-9]|2[0-3]):[0-5][0-9]" maxLength={5} placeholder="hh:mm" title="24-timers ur, fx 06:30 eller 18:00" name={`${name}Time`} defaultValue={new Date(name === 'opens' ? event.registrationOpensAt : event.registrationClosesAt).toLocaleTimeString('en-GB',{timeZone:'Europe/Copenhagen',hour:'2-digit',minute:'2-digit',hourCycle:'h23'})} required /></label>
       </fieldset>)}
     </div>
     <Button type="submit" disabled={busy}>{busy ? 'Gemmer…' : 'Gem tidsplan'}</Button>
@@ -1643,6 +1652,7 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
         >
           Fjern kampplan
         </Button>
+        <EmailPlanButton key={data.event.id} eventId={data.event.id} disabled={busy || planEditPending || data.event.status !== 'published' || (!draftMatches.length && !data.importedMatches?.length)} />
       </div>
       {isImporting && (
         <p className="rounded-xl border border-[#dce9e1] bg-[#f0f3f8] p-3 text-sm font-medium text-[#13375e]">
@@ -1721,45 +1731,7 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
       </TabsContent>
       <TabsContent value="settings" className="space-y-6">
       <AdminManagers data={data} act={act} busy={busy} />
-      <Card className="border-[#dce9e1]">
-        <CardHeader>
-          <CardTitle>Eksport til Excel</CardTitle>
-          <CardDescription>
-            Downloader den aktuelle tilmeldingsliste som en Excel-fil direkte til din enhed.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <Button
-            disabled={busy}
-            className="bg-[#13375e]"
-            onClick={async () => {
-              const response = await fetch("/api/app", {
-                method: "POST",
-                headers: { "content-type": "application/json" },
-                body: JSON.stringify({ action: "export_signups" }),
-              });
-
-              if (!response.ok) {
-                const body = await response.json().catch(() => ({})) as { error?: string };
-                throw new Error(body.error || "Eksporten kunne ikke genereres.");
-              }
-
-              const blob = await response.blob();
-              const url = URL.createObjectURL(blob);
-              const link = document.createElement("a");
-              link.href = url;
-              link.download = "AabenBane.xlsx";
-              document.body.appendChild(link);
-              link.click();
-              link.remove();
-              URL.revokeObjectURL(url);
-            }}
-          >
-            <Download className="mr-2 h-4 w-4" />
-            Download Excel
-          </Button>
-        </CardContent>
-      </Card>
+      <RegistrationDefaultsForm key={JSON.stringify(data.registrationDefaults)} defaults={data.registrationDefaults} act={act} busy={busy} />
       <Card className="border-[#dce9e1]">
         <CardHeader>
           <CardTitle>Test e-mail</CardTitle>
@@ -2106,31 +2078,42 @@ function CrReviewCount({players = []}: {players?: MemberProfile[]}) {
 function CrReviewControl({player,act,busy}: {player:MemberProfile & {id:number;name:string};act:AppAction;busy:boolean}) {
   const [cr, setCr] = useState(player.christinRanking == null ? '' : String(player.christinRanking));
   const changed = cr !== (player.christinRanking == null ? '' : String(player.christinRanking));
-  return <form className="flex flex-wrap items-center gap-2" onSubmit={event => {
+  return <form className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5" onSubmit={event => {
     event.preventDefault();
     if (cr) void act({action:'approve_cr',playerId:player.id,christinRanking:Number(cr)});
   }}>
     <Label className="text-xs" htmlFor={`cr-${player.id}`}>CR</Label>
-    <select id={`cr-${player.id}`} aria-label={`Christin Ranking for ${player.name}`} disabled={busy} value={cr} onChange={event=>setCr(event.target.value)} className="h-8 rounded-md border px-2 text-sm">
+    <select id={`cr-${player.id}`} aria-label={`CR for ${player.name}`} disabled={busy} value={cr} onChange={event=>setCr(event.target.value)} className="h-10 min-w-0 rounded-md border px-1.5 text-base sm:text-sm">
       <option value="">Vælg CR</option>{[1,2,3,4,5,6,7,8,9].map(value=><option key={value} value={value}>{`${value}  ${CR_LABELS[value]}`}</option>)}
     </select>
-    {(!player.crReviewedAt || changed) ? <Button type="submit" disabled={busy || !cr}>{changed ? 'Gem og godkend CR' : 'Godkend CR'}</Button> : <span className="text-xs text-green-800">CR godkendt</span>}
+    {(!player.crReviewedAt || changed) ? <Button type="submit" className="h-10 px-2 text-xs" aria-label={changed ? 'Gem og godkend CR' : 'Godkend CR'} disabled={busy || !cr}><span className="sm:hidden">Godkend</span><span className="hidden sm:inline">{changed ? 'Gem og godkend CR' : 'Godkend CR'}</span></Button> : <span className="text-xs text-green-800" title="CR godkendt"><Check className="size-4" aria-hidden="true"/><span className="sr-only">CR godkendt</span></span>}
   </form>;
 }
 
 function MembersPanel({data,act,busy}:any) {
+  const allMembersEmail = bccMailtoHref(data.players.map((player: {email?:string}) => player.email));
   const sortedMembers = [...(data.players ?? [])].sort((a, b) => Number(Boolean(a.crReviewedAt)) - Number(Boolean(b.crReviewedAt)) || a.name.localeCompare(b.name, 'da'));
   return (
       <Card className="border-[#dce9e1]">
-        <CardHeader><CardTitle>Medlemmer og Christin Ranking<CrReviewCount players={data.players}/></CardTitle><CardDescription>Medlemmer med CR til gennemgang står øverst. Godkend den automatiske CR, eller ret værdien og vælg “Gem og godkend CR”. Medlemmet kan tilmelde sig imens. CR er kun synlig for administratorer.</CardDescription></CardHeader>
-        <CardContent className="space-y-1.5">
-          {sortedMembers.map((player: MemberProfile & {id:number;name:string;christinRanking:number|null}) => <div key={player.id} className="flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2 [&_button]:h-8 [&_button]:px-2 [&_button]:text-xs">
-            <div className="min-w-0 flex-1 basis-full sm:basis-48"><p className="text-sm font-semibold leading-5">{player.firstName} {player.lastName}</p><p className="break-words text-xs leading-4 text-slate-600">#{player.memberNo} · Egen ranking: {player.selfLevel} · {player.email}{player.phone && <> · {player.phoneCountryCode ?? "+45"} {player.phone}</>}</p></div>
-            {!player.crReviewedAt && <Badge className="bg-amber-100 text-amber-900">CR skal gennemgås</Badge>}
-            {player.createdAt && <p className="text-xs text-slate-600">Oprettet {new Date(player.createdAt.includes('T') ? player.createdAt : player.createdAt.replace(' ', 'T') + 'Z').toLocaleDateString('da-DK', {timeZone:'Europe/Copenhagen'})}</p>}
+        <CardHeader><div className="flex flex-wrap items-center justify-between gap-3"><CardTitle>Medlemmer og CR<CrReviewCount players={data.players}/></CardTitle>
+          {allMembersEmail ? <Button asChild variant="outline"><a href={allMembersEmail}><Mail className="mr-2 size-4" aria-hidden="true"/>E-mail alle medlemmer</a></Button> : <Button variant="outline" disabled>E-mail alle medlemmer</Button>}
+        </div><CardDescription>Medlemmer med CR til gennemgang står øverst. Godkend den automatiske CR, eller ret værdien og vælg “Gem og godkend CR”. Medlemmet kan tilmelde sig imens. CR er kun synlig for administratorer.</CardDescription></CardHeader>
+        <CardContent className="space-y-2 px-3 sm:px-6">
+          {sortedMembers.map((player: MemberProfile & {id:number;name:string;christinRanking:number|null}) => <div key={player.id} className="min-w-0 space-y-1.5 rounded-lg border px-2.5 py-2">
+            <div className="flex items-start justify-between gap-2"><div className="min-w-0"><p className="text-sm font-semibold leading-5 [overflow-wrap:anywhere]">{player.firstName} {player.lastName}</p><p className="text-xs leading-4 text-slate-600">#{player.memberNo} · Egen ranking: {player.selfLevel}</p></div>
+            {!player.crReviewedAt && <Badge className="shrink-0 bg-amber-100 px-1.5 text-[10px] text-amber-900">CR til gennemgang</Badge>}</div>
+            <div className="flex items-center gap-1.5">
             <CrReviewControl key={`${player.id}:${player.christinRanking}:${player.crReviewedAt}`} player={player} act={act} busy={busy}/>
+            <div className="flex shrink-0 gap-1">
             <EditMemberDialog player={player} act={act} busy={busy} members={data.players}/>
             <DeleteMemberDialog player={player} currentUserId={data.user.id} act={act} busy={busy}/>
+            </div></div>
+            <details className="text-xs text-slate-600"><summary className="cursor-pointer py-1 leading-5">Kontakt og oplysninger</summary>
+              <div className="space-y-1 pb-1 pt-1 [overflow-wrap:anywhere]"><p>{player.email || 'Ingen e-mailadresse'}</p>
+              {player.phone && <p>{player.phoneCountryCode ?? '+45'} {player.phone}</p>}
+              {player.createdAt && <p>Oprettet {new Date(player.createdAt.includes('T') ? player.createdAt : player.createdAt.replace(' ', 'T') + 'Z').toLocaleDateString('da-DK', {timeZone:'Europe/Copenhagen'})}</p>}
+              </div>
+            </details>
           </div>)}
         </CardContent>
       </Card>

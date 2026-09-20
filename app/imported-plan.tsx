@@ -8,7 +8,10 @@ import type { CalendarPlayer } from '../lib/match-calendar';
 
 export function ImportedPlanTable({ rows, scores, distanceNames, calendarDate, calendarPlayers = [], contacts = [] }: { rows: Record<string, unknown>[]; scores?: (number | null)[]; distanceNames?: string[][]; calendarDate?: string; contacts?: PlanContact[]; calendarPlayers?: CalendarPlayer[] }) {
   rows = normalizeKampplanRows(rows);
-  const value = (row: Record<string, unknown>, key: string) => String(row[key] ?? '').trim();
+  const value = (row: Record<string, unknown>, key: string) => {
+    const text = String(row[key] ?? '').trim();
+    return key === 'A' || key === 'B' ? text.replace('.', ':').padStart(5, '0') : text;
+  };
   return <Card className="min-w-0 gap-2 border-[#dce9e1] py-3">
     <CardHeader className="px-3 pb-0"><CardTitle>Kampplan</CardTitle></CardHeader>
     <CardContent className="min-w-0 px-2 sm:px-3">

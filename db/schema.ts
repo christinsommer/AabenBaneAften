@@ -1,6 +1,14 @@
 import { sql } from "drizzle-orm";
 import { check, index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
+export const registrationDefaults = sqliteTable('registration_defaults', {
+  id: integer('id').primaryKey(),
+  openDays: integer('open_days').notNull().default(2),
+  openTime: text('open_time').notNull().default('06:00'),
+  closeDays: integer('close_days').notNull().default(1),
+  closeTime: text('close_time').notNull().default('12:00'),
+});
+
 export const players = sqliteTable("players", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   memberNo: text("member_no").notNull(),

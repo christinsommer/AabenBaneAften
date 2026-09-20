@@ -1,7 +1,7 @@
 import { and, asc, count, desc, eq, gt, ne, or, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getDb } from "../../../db";
-import { events, feedback, matches, matchRequests, pinResetTokens, players, sessions, signups, substitutions } from "../../../db/schema";
+import { registrationDefaults, events, feedback, matches, matchRequests, pinResetTokens, players, sessions, signups, substitutions } from "../../../db/schema";
 import { createSession, currentPlayer, destroySession, hashPin, hashToken, verifyPin, verifyToken } from "../../../lib/auth";
 import { ensureEvent, TIMES } from "../../../lib/schedule";
 import { sendEmail } from "../../../lib/email";
@@ -9,6 +9,7 @@ import { sendWelcomeEmail } from "../../../lib/welcome-email";
 import { firstMatchInstant, waitlistIsOpen, registrationIsOpen, registrationSchedule } from "../../../lib/registration";
 import { spouseSettings } from '../../../lib/spouse-settings';
 import { profileValues } from "../../../lib/profile";
+import {initialRegistrationDefaults,parseRegistrationDefaults} from '../../../lib/registration-defaults';
 import { calendarEvent, validDate } from "../../../lib/calendar";
 import { signupInput, signupFields, noSignup } from "../../../lib/signup";
 import { visiblePlanContact } from '../../../lib/contact-visibility';
@@ -51,6 +52,11 @@ async function eventFirstMatchAt(event: typeof events.$inferSelect) {
   return firstMatchInstant(event.date, starts.length ? starts : TIMES);
 }
 
+async function loadRegistrationDefaults() {
+  const [stored] = await getDb().select().from(registrationDefaults).where(eq(registrationDefaults.id,1)).limit(1);
+  return stored ? parseRegistrationDefaults(stored) : initialRegistrationDefaults;
+}
+
 async function state() {
   const db = getDb(); const storedEvent = await ensureEvent(); const user = await currentPlayer();
   const event = storedEvent ? {...storedEvent, importedKampplan: user?.role === 'admin' || storedEvent.status === 'published' ? storedEvent.importedKampplan : ''} : null;
@@ -84,9 +90,10 @@ async function state() {
   // Per-match scores and factors belong only in the administrator's view.
   if (event && user?.role !== 'admin' && event.importedKampplan) event.importedKampplan = JSON.stringify(importedMatches);
   if (!user) return { authenticated: false, event, isOpen, times: TIMES, importedMatches };
+  const defaults = user.role === 'admin' ? await loadRegistrationDefaults() : undefined;
   const calendarDates = await db.select({id:events.id,date:events.date,status:events.status,isTest:events.isTest,testActive:events.testActive}).from(events).where(eq(events.archived,false)).orderBy(asc(events.date));
   const allPlayers = user.role === "admin" ? await db.select({id:players.id,memberNo:players.memberNo,name:players.name,firstName:players.firstName,lastName:players.lastName,email:players.email,phone:players.phone,phoneCountryCode:players.phoneCountryCode,emailVisible:players.emailVisible,phoneVisible:players.phoneVisible,christinRanking:players.christinRanking,crReviewedAt:players.crReviewedAt,spouseNo:players.spouseNo,spouseMode:players.spouseMode,createdAt:players.createdAt,birthYear:players.birthYear,gender:players.gender,selfLevel:players.selfLevel,adminLevel:players.adminLevel,role:players.role,suspendedEventId:players.suspendedEventId}).from(players).orderBy(asc(players.name)) : [];
-  if (!event) return {authenticated:true,user:visibleMember(user),event:null,isOpen:false,times:TIMES,calendarDates,importedMatches: [],players:allPlayers};
+  if (!event) return {authenticated:true,user:visibleMember(user),event:null,isOpen:false,times:TIMES,calendarDates,importedMatches: [],players:allPlayers,registrationDefaults:defaults};
   const firstMatchAt = await eventFirstMatchAt(storedEvent!);
   const signup = (await db.select().from(signups).where(and(eq(signups.eventId,event.id),eq(signups.playerId,user.id))).limit(1))[0] ?? null;
   const eventMatches = user.role === "admin" || event.status === "published" ? await db.select().from(matches).where(eq(matches.eventId,event.id)).orderBy(asc(matches.startTime),asc(matches.court)) : [];
@@ -124,7 +131,7 @@ async function state() {
   }));
   const requestRows = await db.select({request:matchRequests,creatorName:players.name}).from(matchRequests).innerJoin(players,eq(players.id,matchRequests.creatorPlayerId)).where(eq(matchRequests.eventId,event.id));
   const requests = requestRows.filter(({request})=>request.creatorPlayerId===user.id||JSON.parse(request.invitedMemberNos).includes(user.memberNo)).map(({request,creatorName})=>({id:request.id,creatorName,status:request.status,isCreator:request.creatorPlayerId===user.id,isInvited:JSON.parse(request.invitedMemberNos).includes(user.memberNo),accepted:JSON.parse(request.acceptedPlayerIds).includes(user.id),acceptedCount:JSON.parse(request.acceptedPlayerIds).length}));
-  return { authenticated:true,user:visibleMember(user),event,isOpen,firstMatchAt,times:TIMES,calendarDates,importedMatches,optimizerWeights,adminPlanScores,signup:signup?{...signup,...signupFields(signup)}:noSignup(event.id,user.id),matches:event.status==="published"?eventMatches:[],adminMatches:user.role==="admin"?eventMatches:[],players:allPlayers,signups:memberSignups,signupHistory:signupHistory.map(row=>({...row,signup:{...row.signup,...signupFields(row.signup)}})),waitlist,names,planContacts,requests,substitutions:substitutionsForUser };
+  return { authenticated:true,user:visibleMember(user),event,isOpen,firstMatchAt,times:TIMES,calendarDates,importedMatches,optimizerWeights,adminPlanScores,signup:signup?{...signup,...signupFields(signup)}:noSignup(event.id,user.id),matches:event.status==="published"?eventMatches:[],adminMatches:user.role==="admin"?eventMatches:[],players:allPlayers,signups:memberSignups,signupHistory:signupHistory.map(row=>({...row,signup:{...row.signup,...signupFields(row.signup)}})),waitlist,names,planContacts,requests,registrationDefaults:defaults,substitutions:substitutionsForUser };
 }
 
 export async function GET(){try{return Response.json(await state());}catch(error){return Response.json({error:error instanceof Error?error.message:"Appen kunne ikke indlæses"},{status:500});}}
@@ -243,13 +250,20 @@ export async function POST(request:Request){
         await db.update(players).set(profile).where(eq(players.id,user.id));
         return NextResponse.json(await state());
       }
+      if(action==='set_registration_defaults') {
+        if(user.role!=='admin')return Response.json({error:'Kun administratorer har adgang.'},{status:403});
+        let defaults;
+        try {defaults=parseRegistrationDefaults(body);} catch(error) {return Response.json({error:error instanceof Error?error.message:'Invalid settings'},{status:400});}
+        await db.insert(registrationDefaults).values({id:1,...defaults}).onConflictDoUpdate({target:registrationDefaults.id,set:defaults});
+        return NextResponse.json(await state());
+      }
       if(action==="add_date"||action==="remove_date"){
         if(user.role!=="admin")return Response.json({error:"Kun administratorer kan ændre datolisten."},{status:403});
         if(action==="add_date"){
           if(!validDate(body.date))return Response.json({error:"Vælg en gyldig dato."},{status:400});
           const [existing]=await db.select().from(events).where(eq(events.date,body.date)).limit(1);
           if(existing&&!existing.archived)return Response.json({error:"Datoen findes allerede på listen."},{status:409});
-          await db.insert(events).values(calendarEvent(body.date)).onConflictDoUpdate({target:events.date,set:{archived:false}});
+          await db.insert(events).values(calendarEvent(body.date, await loadRegistrationDefaults())).onConflictDoUpdate({target:events.date,set:{archived:false}});
         }else{
           const [target]=await db.select().from(events).where(eq(events.id,Number(body.eventId))).limit(1);
           if(!target||target.archived)return Response.json({error:"Datoen findes ikke på listen."},{status:404});
@@ -357,7 +371,7 @@ export async function POST(request:Request){
         return NextResponse.json(await state());
       }
       const registrationOpen=registrationIsOpen(event);
-      if(["signup","cancel_signup","request_match","accept_match_request","lookup_member"].includes(action)&&!registrationOpen)return Response.json({error:event.registrationOverride==="closed"?"Tilmeldingen er lukket af administratoren.":`Tilmeldingen er lukket. Tidsplan: ${new Date(event.registrationOpensAt).toLocaleString('da-DK',{timeZone:'Europe/Copenhagen'})} til ${new Date(event.registrationClosesAt).toLocaleString('da-DK',{timeZone:'Europe/Copenhagen'})}.`},{status:400});
+      if(["signup","cancel_signup","request_match","accept_match_request","lookup_member"].includes(action)&&!registrationOpen)return Response.json({error:event.registrationOverride==="closed"?"Tilmeldingen er lukket af administratoren.":`Tilmeldingen er lukket. Tidsplan: ${new Date(event.registrationOpensAt).toLocaleDateString('da-DK',{timeZone:'Europe/Copenhagen'}) + ' kl. ' + new Date(event.registrationOpensAt).toLocaleTimeString('en-GB',{timeZone:'Europe/Copenhagen',hour:'2-digit',minute:'2-digit',hourCycle:'h23'})} til ${new Date(event.registrationClosesAt).toLocaleDateString('da-DK',{timeZone:'Europe/Copenhagen'}) + ' kl. ' + new Date(event.registrationClosesAt).toLocaleTimeString('en-GB',{timeZone:'Europe/Copenhagen',hour:'2-digit',minute:'2-digit',hourCycle:'h23'})}.`},{status:400});
       if(action === 'join_waitlist') {
         if (Number(body.eventId) !== event.id) return Response.json({error:'Spillerunden er ændret. Genindlæs siden.'},{status:409});
         if (!waitlistIsOpen(event, await eventFirstMatchAt(event))) return Response.json({error:'Ventelisten er kun åben efter tilmeldingsfristen, når tilmeldingen er lukket, og før første kamp.'},{status:400});

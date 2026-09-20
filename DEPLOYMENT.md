@@ -1,5 +1,10 @@
 # Lokal udvikling og udgivelse
 
+Migration `0013_wise_echo.sql` tilføjer gemte standarder for tilmelding under Admin →
+Indstillinger. Uden gemte ændringer åbnes 2 dage før kl. 06:00 og lukkes 1 dag før kl. 12:00.
+Standarderne bruges ved oprettelse af nye spilledage; eksisterende spilledage beholder
+deres tidsplan. Alle tidspunkter fortolkes som dansk tid med minutpræcision.
+
 Hvert makkerpar må kun optræde én gang i samme kampplan. Kun par med Spouse No.
 og “Spille sammen med” (type 2) er undtaget. Reglen gælder også manuel gemning og
 låste kampe; den ændrer ikke historikfradrag på tværs af spilledage.

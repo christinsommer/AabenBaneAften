@@ -2,6 +2,7 @@
 
 import { ContactRound, Mail, Phone } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
+import { mailtoHref } from '../lib/mailto';
 
 export type PlanContact = { id: number; name: string; email?: string | null; phone?: string | null; phoneCountryCode?: string | null };
 
@@ -28,7 +29,7 @@ export function PlayerContact({ name, contact }: { name: string; contact?: PlanC
         {phone && <a href={`tel:${number}`} className="flex min-h-12 items-center gap-3 rounded-md px-2 py-2 hover:bg-slate-100 focus-visible:outline-2">
           <Phone className="size-4 shrink-0" aria-hidden="true" /><span className="min-w-0 text-sm">Ring<span className="block text-xs text-slate-500 [overflow-wrap:anywhere]">{number}</span></span>
         </a>}
-        {email && <a href={`mailto:${encodeURIComponent(email)}`} className="flex min-h-12 items-center gap-3 rounded-md px-2 py-2 hover:bg-slate-100 focus-visible:outline-2">
+        {email && <a href={mailtoHref(email)} className="flex min-h-12 items-center gap-3 rounded-md px-2 py-2 hover:bg-slate-100 focus-visible:outline-2">
           <Mail className="size-4 shrink-0" aria-hidden="true" /><span className="min-w-0 text-sm">Send e-mail<span className="block text-xs text-slate-500 [overflow-wrap:anywhere]">{email}</span></span>
         </a>}
       </PopoverContent>

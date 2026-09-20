@@ -22,6 +22,9 @@ test('late waitlist requires passed deadline, closed registration and a future f
 });
 
 test('custom registration hours use Copenhagen time in summer and winter',()=>{
+  const precise=registrationSchedule({opensDate:'2026-09-16',opensTime:'09:15',closesDate:'2026-09-17',closesTime:'12:45'});
+  assert.equal(precise.registrationOpensAt,'2026-09-16T07:15:00.000Z');
+  assert.equal(precise.registrationClosesAt,'2026-09-17T10:45:00.000Z');
   for(const [date,utcHour] of [['2026-09-16','07'],['2026-12-16','08']]) {
     const window=registrationSchedule({opensDate:date,opensHour:'09',closesDate:date,closesHour:'15'});
     assert.equal(window.registrationOpensAt,`${date}T${utcHour}:00:00.000Z`);
