@@ -21,9 +21,9 @@ test('rest is limited to 30 minutes between consecutive matches, including manua
 
 test('integer weights default only missing and empty values, reject invalid values', () => {
   assert.deepEqual(parseAlgorithmWeights({}), algorithmWeightDefaults);
-  assert.equal(parseAlgorithmWeights({FactorMix:''}).FactorMix,10);
+  assert.equal(parseAlgorithmWeights({FactorSingle:''}).FactorSingle,10);
   assert.equal(parseAlgorithmWeights({FactorAge:0}).FactorAge,0);
-  for (const value of [1.2,'40',null,true,Infinity,1000001]) assert.throws(() => parseAlgorithmWeights({FactorMix:value}));
+  for (const value of [1.2,'40',null,true,Infinity,1000001]) assert.throws(() => parseAlgorithmWeights({FactorSingle:value}));
 });
 test('independent validator rejects half-hour overlap, double-booked courts, duplicate players and excess hours', () => {
   assert.equal(validateProposal([match,{...match,startTime:'19:00',team1:[1,3],team2:[2,4]}], input()).length,2);
@@ -35,7 +35,7 @@ test('independent validator rejects half-hour overlap, double-booked courts, dup
   assert.throws(() => validateProposal([{...match,court:7}],input()),/rådighed/);
 });
 test('validator enforces CR boundaries, all banned combinations, singles and locked teams', () => {
-  assert.equal(validateProposal([match], input({players:[p(1,{cr:1}),p(2,{cr:4}),p(3,{cr:4}),p(4,{cr:4})]})).length,1);
+  assert.equal(validateProposal([match], input({weights:{...algorithmWeightDefaults,FactorDistanceSameTeamA:3},players:[p(1,{cr:1}),p(2,{cr:4}),p(3,{cr:4}),p(4,{cr:4})]})).length,1);
   assert.throws(() => validateProposal([match], input({players:[p(1,{cr:1}),p(2),p(3),p(4)]})),/CR/);
   for(const [a,b] of [['17108','13993'],['17108','16212'],['11822','15722']])
     assert.throws(() => validateProposal([match], input({players:[p(1,{memberNo:a}),p(2,{memberNo:b}),p(3),p(4)]})),/forbudt/);
@@ -49,10 +49,10 @@ test('validator enforces CR boundaries, all banned combinations, singles and loc
 test('score counts every repeated relation once, including overlapping partner penalties', () => {
   const historical = input({history:[{date:'2026-10-09',matches:[match,match]},{date:'2026-10-02',matches:[match]}]});
   assert.equal(historyRelations(historical.history).partners.size,2);
-  assert.deepEqual(scoreMatch(match,historical),{score:10,balanceDifference:0,balanceSameTeamDifference:0,balanceAge:0,mix:1,sameTeamLastWeek:2,sameTeam3Weeks:2,opponentLastWeek:4});
+  assert.deepEqual(scoreMatch(match,historical),{score:15,balanceDifference:0,balanceSameTeamDifference:0,balanceAge:0,mix:1,sameTeamLastWeek:2,sameTeam3Weeks:2,opponentLastWeek:4});
   const aged = input({players:[p(1,{age:20}),p(2,{age:40}),p(3,{age:50}),p(4,{age:70})],weights:{...algorithmWeightDefaults,FactorAge:1}});
   assert.equal(scoreMatch(match,aged).balanceAge,100);
-  assert.equal(scoreMatch(match,aged).score,-10);
+  assert.equal(scoreMatch(match,aged).score,-5);
   assert.throws(() => validateProposal([match], {...aged,players:[p(1,{age:null}),p(2),p(3),p(4)]}),/Alder/);
 });
 test('single plan survives table normalization and calendar export', () => {
@@ -70,15 +70,16 @@ test('same-team CR difference penalizes both teams symmetrically and excludes si
   const scored = scoreMatch(match,data);
   assert.equal(scored.balanceDifference,0);
   assert.equal(scored.balanceSameTeamDifference,60);
-  assert.equal(scored.score,30);
-  assert.equal(scoreMatch({...match,team1:match.team2,team2:match.team1},data).score,30);
-  assert.equal(scoreMatch(match,{...data,weights:{...data.weights,FactorSameTeamDifference:0}}).score,90);
+  assert.equal(scored.score,35);
+  assert.equal(scoreMatch({...match,team1:match.team2,team2:match.team1},data).score,35);
+  assert.equal(scoreMatch(match,{...data,weights:{...data.weights,FactorSameTeamDifference:0}}).score,95);
   assert.equal(scoreMatch({...match,team1:[1],team2:[3]},data).balanceSameTeamDifference,0);
 });
 
 test('same-team distance is a hard rule for either partner with CR 1–4', () => {
-  assert.equal(parseAlgorithmWeights({}).FactorDistanceSameTeamA,3);
-  for(const value of [0,1,4,'2',null]) assert.throws(()=>parseAlgorithmWeights({FactorDistanceSameTeamA:value}),/2 eller 3/);
+  assert.equal(parseAlgorithmWeights({}).FactorDistanceSameTeamA,2);
+  for(const value of [0,1,4,12]) assert.equal(parseAlgorithmWeights({FactorDistanceSameTeamA:value}).FactorDistanceSameTeamA,value);
+  for(const value of [1.5,'2',null,1000001]) assert.throws(()=>parseAlgorithmWeights({FactorDistanceSameTeamA:value}),/heltal/);
   const weights={...algorithmWeightDefaults,FactorDistanceSameTeamA:2};
   assert.throws(()=>validateProposal([match],input({weights,players:[p(1,{cr:4}),p(2,{cr:7}),p(3,{cr:4}),p(4,{cr:7})]})),/FactorDistanceSameTeamA/);
   assert.equal(validateProposal([match],input({weights,players:[p(1,{cr:4}),p(2,{cr:6}),p(3,{cr:4}),p(4,{cr:6})]})).length,1);
@@ -91,4 +92,16 @@ test('profile accepts optional birth year without erasing it for old clients', (
   for(const birthYear of ['',null]) assert.equal(profileValues({...base,birthYear}).birthYear,null);
   for(const birthYear of [1939,9999,1986.2,'xx',true]) assert.throws(()=>profileValues({...base,birthYear}),/Fødselsår/);
   assert.equal(Object.hasOwn(profileValues({...base,age:40}),'age'),false);
+});
+
+test('independent gender factors apply exactly once to their match category', () => {
+  const weights = {...algorithmWeightDefaults, FactorDoubleSameSex:7, FactorSingle:13, Factor3OfAKind:31};
+  for (const [genders, expected] of [['MMMM',93],['KKKK',93],['MMMK',69],['KKKM',69],['MKMK',100]]) {
+    const data = input({weights, players:[...genders].map((gender,i)=>p(i+1,{gender}))});
+    assert.equal(scoreMatch(match,data).score,expected);
+  }
+  for (const gender of ['M','K']) {
+    const data = input({weights,players:[p(1),p(2,{gender})]});
+    assert.equal(scoreMatch({...match,team1:[1],team2:[2]},data).score,87);
+  }
 });

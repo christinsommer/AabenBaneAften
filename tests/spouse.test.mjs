@@ -13,7 +13,7 @@ const data = (players) => ({players,slots:[{court:1,startTime:'18:00'},{court:2,
 test('together overrides only the paired CR limits and CR partner penalty', () => {
   const input = data([p(1,{cr:1,spouseNo:2,spouseMode:2}),p(2,{cr:5}),p(3,{cr:3}),p(4,{cr:3})]);
   assert.equal(validateProposal([match],input).length,1);
-  assert.equal(scoreMatch(match,input).score,90);
+  assert.equal(scoreMatch(match,input).score,95);
   assert.equal(scoreMatch(match,input).balanceSameTeamDifference,0);
   assert.equal(reviewPlan([match],input).valid,true);
   assert.equal(reviewPlan([match],input).exceptions.length,0);

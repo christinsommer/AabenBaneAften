@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, gte, lt, ne, sql } from 'drizzle-orm';
 import { getDb } from '../db';
 import { events, matches, players, signups } from '../db/schema';
+import {loadOptimizerDefaults} from './optimizer-defaults-server';
 import { COURTS, ensureEvent } from './schedule';
 import { registrationIsOpen } from './registration';
 import { copenhagenDate } from './calendar';
@@ -66,7 +67,7 @@ export async function loadOptimizerInput(eventId: number, weights: unknown, forS
       return {id: p.id, memberNo: p.memberNo, spouseNo: p.spouseNo, spouseMode: p.spouseMode, cr: p.cr!, age: ageFromBirthYear(p.birthYear, now), gender: p.gender, availability: JSON.parse(s.availability), requestedHours: s.requestedHours, signupOrder: s.signupOrder!, status: s.status as 'active' | 'waitlist'};
     }),
     slots: Object.entries(COURTS).flatMap(([startTime, courts]) => courts.map(court => ({startTime, court}))),
-    locked: existing.filter(m => m.locked).map(nativeMatch), history, weights: parseAlgorithmWeights(weights),
+    locked: existing.filter(m => m.locked).map(nativeMatch), history, weights: parseAlgorithmWeights({...await loadOptimizerDefaults(), ...(weights as Record<string, unknown> ?? {})}),
   };
   validateOptimizerInput(input);
   if (!forScoring) validateProposal(input.locked, input, {partial: true});

@@ -8,7 +8,7 @@ public record Slot(int Court, string StartTime);
 public record Match(int Court, string StartTime, int[] Team1, int[] Team2);
 public record HistoryMatch(int[] Team1, int[] Team2);
 public record Round(string Date, HistoryMatch[] Matches);
-public record Weights(int FactorMatchDifference = 40, int FactorSameTeamLastWeek = 20, int FactorSameTeam3Weeks = 10, int FactorOpponentLastWeek = 5, int FactorMix = 10, int FactorAge = 0, int FactorSameTeamDifference = 15, int FactorDistanceSameTeamA = 3);
+public record Weights(int FactorMatchDifference = 40, int FactorSameTeamLastWeek = 20, int FactorSameTeam3Weeks = 10, int FactorOpponentLastWeek = 5, int FactorDoubleSameSex = 5, int FactorSingle = 10, int Factor3OfAKind = 30, int FactorAge = 0, int FactorSameTeamDifference = 15, int FactorDistanceSameTeamA = 2);
 public record Input(Player[] Players, Slot[] Slots, Round[] History, Match[] Locked, Weights Weights);
 public record Stage(string Name, long Value, string Status);
 public record Result(Match[] Matches, string Status, Stage[] Stages, long Score, double Seconds);
@@ -40,8 +40,7 @@ public static class Scheduler
         if (players.Length > 200 || input.Slots.Length > 32 || input.History.Length > 3 || players.Select(p => p.Id).Distinct().Count() != players.Length)
             throw new ArgumentException("Ugyldigt antal spillere, banetider eller historikrunder.");
         var w = input.Weights;
-        if (w.FactorDistanceSameTeamA is not (2 or 3)) throw new ArgumentException("FactorDistanceSameTeamA skal være 2 eller 3.");
-        if (new[] {w.FactorMatchDifference, w.FactorSameTeamDifference, w.FactorSameTeamLastWeek, w.FactorSameTeam3Weeks, w.FactorOpponentLastWeek, w.FactorMix, w.FactorAge}.Any(v => Math.Abs((long)v) > 1_000_000))
+        if (new[] {w.FactorDistanceSameTeamA, w.FactorMatchDifference, w.FactorSameTeamDifference, w.FactorSameTeamLastWeek, w.FactorSameTeam3Weeks, w.FactorOpponentLastWeek, w.FactorDoubleSameSex, w.FactorSingle, w.Factor3OfAKind, w.FactorAge}.Any(v => Math.Abs((long)v) > 1_000_000))
             throw new ArgumentException("Ugyldige vægte.");
         foreach (var p in players)
             if (p.Cr is < 1 or > 9 || p.RequestedHours is < 1 or > 3 || p.SignupOrder < 1 || p.Gender is not ("M" or "K") || p.Status is not ("active" or "waitlist") || p.Availability is null || w.FactorAge != 0 && (p.Age is null or < 0 or > 120))
@@ -98,14 +97,14 @@ public static class Scheduler
             model.AddAbsEquality(balance, TeamSum(0, p => p.Cr) - TeamSum(1, p => p.Cr));
             var women = model.NewIntVar(0, 4, $"women{s}");
             model.Add(women == TeamSum(0, p => p.Gender == "K" ? 1 : 0) + TeamSum(1, p => p.Gender == "K" ? 1 : 0));
-            var mix = model.NewIntVar(0, 5, $"mix{s}");
+            var mix = model.NewIntVar(-1_000_000, 1_000_000, $"mix{s}");
             model.AddAllowedAssignments(new IntVar[] { used[s], doubles[s], women, mix }).AddTuples(new long[,] {
-                {0,0,0,0}, {1,0,0,5}, {1,0,1,5}, {1,0,2,5}, {1,1,0,1}, {1,1,1,2}, {1,1,2,0}, {1,1,3,2}, {1,1,4,1}
+                {0,0,0,0}, {1,0,0,w.FactorSingle}, {1,0,1,w.FactorSingle}, {1,0,2,w.FactorSingle}, {1,1,0,w.FactorDoubleSameSex}, {1,1,1,w.Factor3OfAKind}, {1,1,2,0}, {1,1,3,w.Factor3OfAKind}, {1,1,4,w.FactorDoubleSameSex}
             });
             var twoWomen = model.NewBoolVar($"twoWomen{s}");
             model.Add(women == 2).OnlyEnforceIf(twoWomen); model.Add(women != 2).OnlyEnforceIf(twoWomen.Not());
             model.Add(TeamSum(0, p => p.Gender == "K" ? 1 : 0) == 1).OnlyEnforceIf(new ILiteral[] { doubles[s], twoWomen });
-            score.AddTerm(used[s], 100).AddTerm(balance, -w.FactorMatchDifference).AddTerm(mix, -w.FactorMix);
+            score.AddTerm(used[s], 100).AddTerm(balance, -w.FactorMatchDifference).AddTerm(mix, -1);
             // Swapping teams cannot change the score. Avoid searching both labels,
             // except where a locked match explicitly fixes them.
             if (!input.Locked.Any(m => m.Court == slots[s].Court && m.StartTime == slots[s].StartTime))

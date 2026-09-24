@@ -13,7 +13,7 @@ public static class SelfTests
         var spouses = new[] {P(1,cr:1) with {SpouseNo=2,SpouseMode=2}, P(2,cr:5),P(3,cr:3),P(4,cr:3)};
         var together = Scheduler.Solve(Data(spouses,oneCourt),30);
         Check(together.Matches.Length==1 && together.Matches.SelectMany(m=>new[]{m.Team1,m.Team2}).Any(t=>t.Contains(1)&&t.Contains(2)), "Spouses must partner despite CR gap");
-        Check(together.Score==90, "Spouses' CR difference must not reduce score");
+        Check(together.Score==95, "Spouses' CR difference must not reduce score");
         var repeatSlots = new[] {new Slot(1,"18:00"),new Slot(1,"19:00")};
         var repeatedLocks = new[] {new Match(1,"18:00",[1,2],[3,4]),new Match(1,"19:00",[2,1],[4,3])};
         var repeatPlayers = Enumerable.Range(1,4).Select(i=>P(i,2)).ToArray();
@@ -68,17 +68,17 @@ public static class SelfTests
         Check(Enumerable.Range(1,6).All(id=>Count(shortage,id)>=1) && Enumerable.Range(1,6).Count(id=>Count(shortage,id)==2)==2, "Everyone's first hour precedes second hours");
         var activeSecond = Scheduler.Solve(Data(new[] {P(10,2),P(11,2),P(12,2),P(13,2),P(1,status:"waitlist"),P(2,status:"waitlist")}, [new Slot(1,"18:00"),new Slot(1,"19:00")]),30);
         Check(Enumerable.Range(10,4).All(id=>Count(activeSecond,id)==2) && Count(activeSecond,1)==0 && Count(activeSecond,2)==0, "Active second hours precede any waitlist hours");
-        var negativeScore = Scheduler.Solve(Data(new[] {P(1,cr:1),P(2,cr:1),P(3,cr:1),P(4,cr:4)},oneCourt),30);
+        var negativeScore = Scheduler.Solve(Data(new[] {P(1,cr:1),P(2,cr:1),P(3,cr:1),P(4,cr:4)},oneCourt,new Weights(FactorDistanceSameTeamA:3)),30);
         Check(Enumerable.Range(1,4).All(id=>Count(negativeScore,id)==1) && negativeScore.Score<0, "Negative match score must not sacrifice first-hour coverage");
         var mixedSingle = Scheduler.Solve(Data([
             P(1,2,["20:00","21:00"],gender:"K",cr:3), P(2,1,["21:00"],cr:3),
             P(3,1,["20:00"],gender:"K",cr:3), P(4,1,["20:00"],cr:3), P(5,1,["20:00"],cr:3)
-        ], [new Slot(1,"20:00"),new Slot(1,"21:00")], new Weights(FactorMix:50)),30);
+        ], [new Slot(1,"20:00"),new Slot(1,"21:00")], new Weights(FactorSingle:250)),30);
         Check(Enumerable.Range(1,5).All(id=>Count(mixedSingle,id)>=1) && Count(mixedSingle,1)==2,
             "Mixed single at 21:00 must fulfil first and second hours despite its negative score");
         Check(mixedSingle.Matches.Single(m=>m.StartTime=="21:00").Team1.Concat(mixedSingle.Matches.Single(m=>m.StartTime=="21:00").Team2).Order().SequenceEqual(new[]{1,2}),
             "Late mixed single must use the two available players");
-        Check(mixedSingle.Score == -50, "Mixed double 100 plus mixed single -150 at FactorMix=50");
+        Check(mixedSingle.Score == -50, "Mixed double 100 plus mixed single -150 at FactorSingle=250");
         var lateTimes = new[] {"20:30","21:30"};
         var lateCourts = new[] {new Slot(1,"20:30"),new Slot(2,"20:30")};
         var gap = Scheduler.Solve(Data(new[] {P(1, times:lateTimes,cr:1), P(2,times:lateTimes,cr:1), P(3,times:lateTimes,cr:5), P(4,times:lateTimes,cr:5)}, lateCourts), 30);
@@ -94,25 +94,28 @@ public static class SelfTests
         var history = new[] {new Round("2026-09-18", [new HistoryMatch([1,2], [3,4])])};
         var lockMatch = new Match(1, "18:00", [1,2], [3,4]);
         var historical = Scheduler.Solve(Data(Enumerable.Range(1,4).Select(i=>P(i)).ToArray(), oneCourt, history:history, locked:[lockMatch]), 30);
-        Check(historical.Score == 10, "Two repeated partners get both penalties, four repeated opponent pairs: 100-40-20-20-10");
+        Check(historical.Score == 15, "Two repeated partners get both penalties, four repeated opponent pairs: 100-40-20-20-5");
         var aged = Scheduler.Solve(Data(new[] {P(1, age:20), P(2, age:40), P(3, age:50), P(4, age:70)}, oneCourt, new Weights(FactorAge:1), locked:[lockMatch]), 30);
         var variedCr = new[] {P(1,cr:2), P(2,cr:5), P(3,cr:3), P(4,cr:4)};
-        var sameTeam = Scheduler.Solve(Data(variedCr, oneCourt, locked:[lockMatch]),30);
-        Check(sameTeam.Score == 30, "Both team differences: 100-10-15*(3+1)=30");
-        var noSameTeam = Scheduler.Solve(Data(variedCr, oneCourt, new Weights(FactorSameTeamDifference:0), locked:[lockMatch]),30);
-        Check(noSameTeam.Score == 90, "Zero factor disables same-team difference");
+        var sameTeam = Scheduler.Solve(Data(variedCr, oneCourt, new Weights(FactorDistanceSameTeamA:3), locked:[lockMatch]),30);
+        Check(sameTeam.Score == 35, "Both team differences: 100-5-15*(3+1)=35");
+        var noSameTeam = Scheduler.Solve(Data(variedCr, oneCourt, new Weights(FactorSameTeamDifference:0,FactorDistanceSameTeamA:3), locked:[lockMatch]),30);
+        Check(noSameTeam.Score == 95, "Zero factor disables same-team difference");
         var preferSimilar = Scheduler.Solve(Data(variedCr, oneCourt, new Weights(FactorMatchDifference:0)),30);
-        Check(preferSimilar.Score == 60, "Solver prefers similar partners: 100-10-15*(1+1)=60");
-        Check(aged.Score == -10, "Age: 20+20+abs(60-120)=100, score 100-10-100");
+        Check(preferSimilar.Score == 65, "Solver prefers similar partners: 100-5-15*(1+1)=65");
+        Check(aged.Score == -5, "Age: 20+20+abs(60-120)=100, score 100-5-100");
         var early = Scheduler.Solve(Data(new[] {P(1,times:lateTimes), P(2,times:lateTimes)}, [new Slot(1,"20:30"), new Slot(1,"21:30")]), 30);
         Check(early.Matches.Single().StartTime == "20:30", "Earliest of equal-score plans");
         Check(early.Status == "OPTIMAL", "Tiny model must prove all stages optimal");
-        var moreMatches = Scheduler.Solve(Data(Enumerable.Range(1,4).Select(i=>P(i,times:lateTimes)).ToArray(), lateCourts,new Weights(FactorMix:50)),30);
+        var moreMatches = Scheduler.Solve(Data(Enumerable.Range(1,4).Select(i=>P(i,times:lateTimes)).ToArray(), lateCourts,new Weights(FactorSingle:250)),30);
         Check(moreMatches.Matches.Length == 2 && moreMatches.Score == -300, "More matches precede score once hour wishes are equal");
         var noEarlySingle = Scheduler.Solve(Data([P(1,times:["20:00","20:30"]),P(2,times:["20:00","20:30"])],
             [new Slot(1,"20:00"),new Slot(2,"20:30")]),30);
         Check(noEarlySingle.Matches.Single().StartTime=="20:30", "Singles must never start before 20:30");
         var distancePlayers = new[] {P(1,cr:4),P(2,cr:4),P(3,cr:7),P(4,cr:7)};
+        Check(new Weights().FactorDistanceSameTeamA == 2, "Default partner distance is 2");
+        var integerDistance = Scheduler.Solve(Data(distancePlayers,oneCourt,new Weights(FactorDistanceSameTeamA:4)),30);
+        Check(integerDistance.Matches.Length == 1, "Partner distance accepts integers other than 2 and 3");
         var distance = Scheduler.Solve(Data(distancePlayers,oneCourt,new Weights(FactorDistanceSameTeamA:2)),30);
         Check(distance.Matches.Length==1 && distance.Matches.SelectMany(m=>new[]{m.Team1,m.Team2}).All(team=>
             Math.Abs(distancePlayers.Single(p=>p.Id==team[0]).Cr-distancePlayers.Single(p=>p.Id==team[1]).Cr)<=2), "CR4 cannot partner CR7 when distance is 2");

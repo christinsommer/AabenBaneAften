@@ -1,7 +1,7 @@
 import { and, asc, count, desc, eq, gt, ne, or, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getDb } from "../../../db";
-import { registrationDefaults, events, feedback, matches, matchRequests, pinResetTokens, players, sessions, signups, substitutions } from "../../../db/schema";
+import { optimizerDefaults, registrationDefaults, events, feedback, matches, matchRequests, pinResetTokens, players, sessions, signups, substitutions } from "../../../db/schema";
 import { createSession, currentPlayer, destroySession, hashPin, hashToken, verifyPin, verifyToken } from "../../../lib/auth";
 import { ensureEvent, TIMES } from "../../../lib/schedule";
 import { sendEmail } from "../../../lib/email";
@@ -20,6 +20,8 @@ import { buildSignupExportRows } from "../../../lib/export-signups";
 import { normalizeKampplanRows } from "../../../lib/kampplan-rows";
 import {parseAlgorithmWeights, scoreMatch} from '../../../lib/optimizer';
 import {loadOptimizerInput} from '../../../lib/optimizer-server';
+
+import {loadOptimizerDefaults} from '../../../lib/optimizer-defaults-server';
 
 export const dynamic = "force-dynamic";
 
@@ -62,7 +64,8 @@ async function state() {
   const event = storedEvent ? {...storedEvent, importedKampplan: user?.role === 'admin' || storedEvent.status === 'published' ? storedEvent.importedKampplan : ''} : null;
   const isOpen = event ? registrationIsOpen(event) : false;
   const importedMatches = event && (user?.role === 'admin' || event.status === 'published') ? parseImportedKampplan(event.importedKampplan) : [];
-  let optimizerWeights;
+  const defaultWeights = user?.role === 'admin' ? await loadOptimizerDefaults() : undefined;
+  let optimizerWeights = defaultWeights;
   let adminPlanScores: (number | null)[] | undefined;
   if (user?.role === 'admin' && importedMatches.length && event) {
     const raw = JSON.parse(event.importedKampplan);
@@ -93,7 +96,11 @@ async function state() {
   const defaults = user.role === 'admin' ? await loadRegistrationDefaults() : undefined;
   const calendarDates = await db.select({id:events.id,date:events.date,status:events.status,isTest:events.isTest,testActive:events.testActive}).from(events).where(eq(events.archived,false)).orderBy(asc(events.date));
   const allPlayers = user.role === "admin" ? await db.select({id:players.id,memberNo:players.memberNo,name:players.name,firstName:players.firstName,lastName:players.lastName,email:players.email,phone:players.phone,phoneCountryCode:players.phoneCountryCode,emailVisible:players.emailVisible,phoneVisible:players.phoneVisible,christinRanking:players.christinRanking,crReviewedAt:players.crReviewedAt,spouseNo:players.spouseNo,spouseMode:players.spouseMode,createdAt:players.createdAt,birthYear:players.birthYear,gender:players.gender,selfLevel:players.selfLevel,adminLevel:players.adminLevel,role:players.role,suspendedEventId:players.suspendedEventId}).from(players).orderBy(asc(players.name)) : [];
-  if (!event) return {authenticated:true,user:visibleMember(user),event:null,isOpen:false,times:TIMES,calendarDates,importedMatches: [],players:allPlayers,registrationDefaults:defaults};
+  if (!event) return {authenticated:true,user:visibleMember(user),event:null,isOpen:false,times:TIMES,calendarDates,registeredMembers:[],importedMatches: [],players:allPlayers,optimizerDefaults:defaultWeights,registrationDefaults:defaults};
+  const registeredMembers = await db.select({id:players.id,name:players.name}).from(signups)
+    .innerJoin(players,eq(players.id,signups.playerId))
+    .where(and(eq(signups.eventId,event.id),eq(signups.status,'active'),gt(signups.requestedHours,0)))
+    .orderBy(asc(players.name));
   const firstMatchAt = await eventFirstMatchAt(storedEvent!);
   const signup = (await db.select().from(signups).where(and(eq(signups.eventId,event.id),eq(signups.playerId,user.id))).limit(1))[0] ?? null;
   const eventMatches = user.role === "admin" || event.status === "published" ? await db.select().from(matches).where(eq(matches.eventId,event.id)).orderBy(asc(matches.startTime),asc(matches.court)) : [];
@@ -131,7 +138,7 @@ async function state() {
   }));
   const requestRows = await db.select({request:matchRequests,creatorName:players.name}).from(matchRequests).innerJoin(players,eq(players.id,matchRequests.creatorPlayerId)).where(eq(matchRequests.eventId,event.id));
   const requests = requestRows.filter(({request})=>request.creatorPlayerId===user.id||JSON.parse(request.invitedMemberNos).includes(user.memberNo)).map(({request,creatorName})=>({id:request.id,creatorName,status:request.status,isCreator:request.creatorPlayerId===user.id,isInvited:JSON.parse(request.invitedMemberNos).includes(user.memberNo),accepted:JSON.parse(request.acceptedPlayerIds).includes(user.id),acceptedCount:JSON.parse(request.acceptedPlayerIds).length}));
-  return { authenticated:true,user:visibleMember(user),event,isOpen,firstMatchAt,times:TIMES,calendarDates,importedMatches,optimizerWeights,adminPlanScores,signup:signup?{...signup,...signupFields(signup)}:noSignup(event.id,user.id),matches:event.status==="published"?eventMatches:[],adminMatches:user.role==="admin"?eventMatches:[],players:allPlayers,signups:memberSignups,signupHistory:signupHistory.map(row=>({...row,signup:{...row.signup,...signupFields(row.signup)}})),waitlist,names,planContacts,requests,registrationDefaults:defaults,substitutions:substitutionsForUser };
+  return { authenticated:true,user:visibleMember(user),event,isOpen,firstMatchAt,times:TIMES,calendarDates,registeredMembers,importedMatches,optimizerWeights,adminPlanScores,signup:signup?{...signup,...signupFields(signup)}:noSignup(event.id,user.id),matches:event.status==="published"?eventMatches:[],adminMatches:user.role==="admin"?eventMatches:[],players:allPlayers,signups:memberSignups,signupHistory:signupHistory.map(row=>({...row,signup:{...row.signup,...signupFields(row.signup)}})),waitlist,names,planContacts,requests,optimizerDefaults:defaultWeights,registrationDefaults:defaults,substitutions:substitutionsForUser };
 }
 
 export async function GET(){try{return Response.json(await state());}catch(error){return Response.json({error:error instanceof Error?error.message:"Appen kunne ikke indlæses"},{status:500});}}
@@ -250,6 +257,14 @@ export async function POST(request:Request){
         await db.update(players).set(profile).where(eq(players.id,user.id));
         return NextResponse.json(await state());
       }
+      if(action==='set_optimizer_defaults') {
+        if(user.role!=='admin')return Response.json({error:'Kun administratorer har adgang.'},{status:403});
+        let weights: string;
+        try { weights = JSON.stringify(parseAlgorithmWeights(body.weights)); }
+        catch(error) { return Response.json({error:error instanceof Error ? error.message : 'Kontrollér faktorerne.'},{status:400}); }
+        await db.insert(optimizerDefaults).values({id:1,weights}).onConflictDoUpdate({target:optimizerDefaults.id,set:{weights}});
+        return NextResponse.json(await state());
+      }
       if(action==='set_registration_defaults') {
         if(user.role!=='admin')return Response.json({error:'Kun administratorer har adgang.'},{status:403});
         let defaults;
@@ -339,6 +354,7 @@ export async function POST(request:Request){
         });
       }
       if(action==="remove_kampplan"){
+        if(body.eventId !== undefined && Number(body.eventId) !== event.id)return Response.json({error:"Spillerunden er ændret. Genindlæs siden."},{status:409});
         if(user.role!=="admin")return Response.json({error:"Kun administratorer kan fjerne kampplanen."},{status:403});
         await db.batch([
           db.delete(feedback).where(sql`${feedback.matchId} IN (SELECT id FROM matches WHERE event_id = ${event.id})`),

@@ -1,6 +1,6 @@
 'use client';
 
-import {useEffect, useState} from 'react';
+import {useState} from 'react';
 import {Info, Sparkles} from 'lucide-react';
 import {Button} from '../components/ui/button';
 import {Input} from '../components/ui/input';
@@ -8,7 +8,7 @@ import {Label} from '../components/ui/label';
 import {ImportedPlanTable} from './imported-plan';
 import {algorithmWeightDefaults, type AlgorithmWeights, type ProposedMatch} from '../lib/optimizer';
 import type {UnfulfilledWish} from '../lib/unfulfilled-wishes';
-import {optimizerHelp, restoreWeights, weightFields} from '../lib/optimizer-settings';
+import {optimizerHelp, weightFields} from '../lib/optimizer-settings';
 import {Popover, PopoverContent, PopoverTrigger} from '../components/ui/popover';
 
 type Proposal = {
@@ -16,16 +16,13 @@ type Proposal = {
   weights: AlgorithmWeights; historyDates: string[];
   allocation: {id: number; name: string; memberNo: string; signupOrder: number; status: string; requested: number; assigned: number}[];
 };
-export function OptimizerPanel({event, rows, wishes, initialWeights, isOpen, busy, refresh}: {
+export function OptimizerPanel({event, rows, wishes, initialWeights, isOpen, busy, refresh, clearPlan}: {
+  clearPlan: () => Promise<boolean>;
   wishes: UnfulfilledWish[];
   initialWeights?: AlgorithmWeights;
   event: {id: number; status: string; date: string}; rows: Record<string, unknown>[]; isOpen: boolean; busy: boolean; refresh: () => unknown;
 }) {
   const [weights, setWeights] = useState<Record<string, string>>(() => weightFields(initialWeights));
-  useEffect(() => {
-    if (initialWeights) return;
-    try { setWeights(weightFields(restoreWeights(localStorage.getItem('optimizer-weights')))); } catch { /* Storage can be disabled. */ }
-  }, [initialWeights]);
   const [proposal, setProposal] = useState<Proposal | null>(null);
   const [working, setWorking] = useState<'solve' | 'save' | null>(null);
   const [error, setError] = useState('');
@@ -50,13 +47,13 @@ export function OptimizerPanel({event, rows, wishes, initialWeights, isOpen, bus
         if (!response.ok) throw new Error(data.error || 'Forslaget kunne ikke behandles.');
         return data;
       }
+      if (action === 'solve' && !await clearPlan()) throw new Error('Kampplanen kunne ikke fjernes.');
       const result = action === 'solve' ? await request({action: 'solve',
         weights: Object.fromEntries(Object.entries(weights).map(([k,v]) => [k, v === '' ? '' : Number(v)])),
       }) : proposal!;
       setProposal(result);
       setWeights(weightFields(result.weights));
-      try { localStorage.setItem('optimizer-weights', JSON.stringify(result.weights)); } catch { /* Keep the in-memory values. */ }
-      if (!result.matches.length) throw new Error('Der blev ikke fundet nogen kampe. Kampplanen er ikke ændret.');
+      if (!result.matches.length) throw new Error('Der blev ikke fundet nogen kampe. Den tidligere kampplan er fjernet.');
       setWorking('save');
       await request({action: 'save', weights: result.weights, matches: result.matches, fingerprint: result.fingerprint});
       await refresh();
@@ -67,7 +64,7 @@ export function OptimizerPanel({event, rows, wishes, initialWeights, isOpen, bus
   const disabled = busy || working !== null;
   return <section className="space-y-4 rounded-xl border border-slate-200 bg-white p-4" aria-label="Optimering af kampplan">
     <div className="flex flex-wrap gap-3">
-    <Button type="button" disabled={disabled || exporting || isOpen || event.status !== 'draft'} onClick={() => void run('solve')} className="bg-[#13375e]">
+    <Button type="button" disabled={disabled || exporting || isOpen} onClick={() => void run('solve')} className="bg-[#13375e]">
       <Sparkles className="mr-2 h-4 w-4" />{working === 'solve' ? 'Beregner kampforslag…' : 'Algoritme foreslå kampe'}
     </Button>
     <Button type="button" variant="outline" disabled={disabled || exporting || !rows.length} onClick={() => void exportPlan()}>
@@ -84,23 +81,20 @@ export function OptimizerPanel({event, rows, wishes, initialWeights, isOpen, bus
             <p className="mb-1 break-words font-semibold">{name}</p><p>{optimizerHelp[name as keyof AlgorithmWeights]}</p>
           </PopoverContent></Popover>
         </div>
-        {name === 'FactorDistanceSameTeamA' ? <select id={`algorithm-${name}`} name={name} disabled={disabled} value={weights[name]}
-          className="h-9 w-full rounded-md border bg-white px-2 text-base" onChange={e => {setWeights(current => ({...current, [name]: e.target.value})); setProposal(null); setSaved(false);}}>
-          <option value="2">2</option><option value="3">3</option>
-        </select> : <Input id={`algorithm-${name}`} name={name} type="number" step={1} min={-1000000} max={1000000} disabled={disabled} className="h-9 px-2 text-base"
-          placeholder={String(fallback)} value={weights[name]} onChange={e => {
+        {<Input id={`algorithm-${name}`} name={name} type="number" step={1} min={-1000000} max={1000000} disabled={disabled} className="h-9 px-2 text-base"
+          placeholder={String(initialWeights?.[name as keyof AlgorithmWeights] ?? fallback)} value={weights[name]} onChange={e => {
             const v = e.target.value;
             if (v === '' || /^-?\d+$/.test(v) && Number.isSafeInteger(Number(v))) {
               setWeights(current => ({...current, [name]: v})); setProposal(null); setSaved(false);
             }
-          }} onBlur={() => setWeights(current => ({...current, [name]: current[name] === '' ? String(fallback) : current[name]}))} />}
+          }} onBlur={() => setWeights(current => ({...current, [name]: current[name] === '' ? String(initialWeights?.[name as keyof AlgorithmWeights] ?? fallback) : current[name]}))} />}
       </div>)}
     </div>
     <p className="text-sm text-slate-600">Vægtene skal være heltal. Tomme felter bruger standardværdien. FactorAge kræver fødselsår på alle tilmeldte medlemmer.</p>
     <p className="text-sm text-slate-600">FactorSameTeamDifference vægter CR-forskellen mellem medspillerne på begge hold. Standardværdien er 15; 0 slår dette fradrag fra. Singlekampe får intet fradrag for denne faktor.</p>
     <p className="text-sm text-slate-600">Første spilletime prioriteres før anden og tredje time for tilmeldte spillere. Derefter prioriteres flere kampe, kampscore og til sidst tidlige tider. Single er tilladt fra kl. 20:30, også på tværs af køn.</p>
     {isOpen && <p className="text-sm text-slate-600">Luk tilmeldingen, før du laver et kampforslag.</p>}
-    {event.status !== 'draft' && <p className="text-sm text-slate-600">Der kan kun laves forslag til en kampplan, som er en kladde.</p>}
+
     {working && <p role="status" className="text-sm">{working === 'solve' ? 'Fordeler timer og optimerer kampe. Beregningen har op til 10 minutter; med opstart kan det tage op til 12 minutter.' : 'Kontrollerer og gemmer kampplanen…'}</p>}
     {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
     {saved && <p role="status" className="text-sm font-semibold text-[#13375e]">Kampplanen er gemt og vises nedenfor sammen med “Baner, der ikke bruges”. Du kan nu offentliggøre kampplanen.</p>}

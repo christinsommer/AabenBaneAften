@@ -171,6 +171,7 @@ test("Cloudflare Worker renders and authenticates against isolated D1", { timeou
     assert.equal(changedSignup.status,'waitlist');
     assert.equal(changedSignup.signupOrder,saved.signup.signupOrder);
     assert.equal(changedSignup.nHours,saved.signup.nHours);
+    assert.deepEqual((await (await worker.fetch('/api/app',{headers:{cookie:playerCookie}})).json()).registeredMembers,[]);
     assert.equal((await post({action:'set_signup_status',signupId:saved.signup.id,status:'active'},cookie)).status,200);
     const editedSignup = await (await post({...example,nHours:3,signupOrder:-100},playerCookie)).json();
     assert.equal(editedSignup.signup.signupOrder,saved.signup.signupOrder);
@@ -182,9 +183,14 @@ test("Cloudflare Worker renders and authenticates against isolated D1", { timeou
     assert.equal(roster.signups.find(row=>row.player.memberNo==='13993').signup.nHours,0);
     assert.equal(roster.signups.find(row=>row.player.memberNo==='test-player').signup.nHours,2);
     assert.equal(roster.signups[0].signup.signupOrder,saved.signup.signupOrder);
+    const publicRoster = await (await worker.fetch('/api/app',{headers:{cookie:playerCookie}})).json();
+    assert.deepEqual(publicRoster.registeredMembers,[{id:updated.user.id,name:'Admin Edited Member'}]);
+    assert.deepEqual(roster.registeredMembers,publicRoster.registeredMembers);
+    assert.deepEqual(publicRoster.players,[]);
     const cancelled=await (await post({action:'cancel_signup'},playerCookie)).json();
     assert.equal(cancelled.signup.nHours,0);
     assert.equal(cancelled.signup.status,'cancelled');
+    assert.deepEqual(cancelled.registeredMembers,[]);
     assert.deepEqual(cancelled.signup.szPossible,[]);
     assert.equal(cancelled.signup.availability,'[]');
     const cancelledRoster=await (await worker.fetch('/api/app',{headers:{cookie}})).json();
@@ -204,6 +210,7 @@ test("Cloudflare Worker renders and authenticates against isolated D1", { timeou
     const optedOut=await (await worker.fetch('/api/app',{headers:{cookie:playerCookie}})).json();
     assert.equal(optedOut.signup.status,'active');
     assert.equal(optedOut.signup.nHours,0);
+    assert.deepEqual(optedOut.registeredMembers,[]);
     assert.deepEqual(optedOut.matches,[]);
     assert.equal((await post(signupBody,playerCookie)).status,200);
     assert.equal((await post({action:"set_registration",mode:"closed"},cookie)).status,200);
@@ -245,11 +252,22 @@ test("Cloudflare Worker renders and authenticates against isolated D1", { timeou
     assert.deepEqual(privateDraft.importedMatches,[]);
     assert.equal(privateDraft.event.importedKampplan,'');
     assert.equal((await post({action:'remove_kampplan'},playerCookie)).status,403);
+    assert.equal((await post({action:'set_optimizer_defaults',weights:{FactorSingle:22}},playerCookie)).status,403);
+    assert.equal((await post({action:'set_optimizer_defaults',weights:{FactorSingle:1.5}},cookie)).status,400);
+    const savedDefaults = await post({action:'set_optimizer_defaults',weights:{FactorSingle:22,FactorDoubleSameSex:8,Factor3OfAKind:44}},cookie);
+    assert.equal(savedDefaults.status,200);
+    assert.equal((await savedDefaults.json()).optimizerDefaults.FactorSingle,22);
+    const reloadedDefaults = await (await worker.fetch('/api/app',{headers:{cookie}})).json();
+    assert.equal(reloadedDefaults.optimizerDefaults.FactorDoubleSameSex,8);
+    assert.equal(reloadedDefaults.optimizerDefaults.Factor3OfAKind,44);
+    assert.equal((await post({action:'remove_kampplan',eventId:-1},cookie)).status,409);
+
     assert.equal((await post({action:'publish'},cookie)).status,200);
     assert.deepEqual((await (await worker.fetch('/api/app')).json()).importedMatches,imported);
     const clearedResponse = await post({action:'remove_kampplan'},cookie);
     assert.equal(clearedResponse.status,200);
     const cleared = await clearedResponse.json();
+    assert.equal(cleared.optimizerWeights.FactorSingle,22);
     assert.deepEqual(cleared.importedMatches,[]);
     assert.deepEqual(cleared.adminMatches,[]);
     assert.equal(cleared.event.status,'draft');

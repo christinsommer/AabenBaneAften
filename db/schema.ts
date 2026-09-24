@@ -1,6 +1,11 @@
 import { sql } from "drizzle-orm";
 import { check, index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
+export const optimizerDefaults = sqliteTable('optimizer_defaults', {
+  id: integer('id').primaryKey(),
+  weights: text('weights').notNull(),
+});
+
 export const registrationDefaults = sqliteTable('registration_defaults', {
   id: integer('id').primaryKey(),
   openDays: integer('open_days').notNull().default(2),

@@ -1,4 +1,5 @@
 "use client";
+import { OptimizerDefaultsForm } from './optimizer-defaults-form';
 import { RegistrationDefaultsForm } from './registration-defaults-form';
 import { EmailPlanButton } from './email-plan-button';
 import { planLink } from '../lib/plan-link';
@@ -988,6 +989,7 @@ function SignupPanel({ data, act, busy }: any) {
       setConfirmBusy(false);
     }
   }
+  const registeredMembers: {id:number;name:string}[] = [...(data.registeredMembers ?? [])].sort((a,b) => a.name.localeCompare(b.name,'da'));
   const current = data.signup?.status === "not_registered" ? null : data.signup;
   const [selected, setSelected] = useState<string[]>(
     current?.szPossible ?? [],
@@ -1217,6 +1219,13 @@ function SignupPanel({ data, act, busy }: any) {
               {current.status !== 'cancelled' && 'Dine senest gemte ønsker vises ovenfor.'}
             </p>
           )}
+          <section className="mt-6 border-t border-slate-200 pt-4" aria-label="Tilmeldte medlemmer">
+            <h3 className="text-base font-semibold">Tilmeldte til denne spillerunde ({registeredMembers.length})</h3>
+            <p className="mt-1 text-sm text-slate-600">Se, hvem der har tilmeldt sig. Listen opdateres automatisk.</p>
+            {registeredMembers.length ? <ul className="mt-3 grid gap-2 sm:grid-cols-2">
+              {registeredMembers.map(member => <li key={member.id} className="rounded-lg bg-slate-50 px-3 py-2 text-sm [overflow-wrap:anywhere]">{member.name}</li>)}
+            </ul> : <p className="mt-3 text-sm text-slate-600">Ingen medlemmer er tilmeldt endnu.</p>}
+          </section>
         </CardContent>
       </Card>
     </div>
@@ -1554,7 +1563,7 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
       <PlayerLists data={data} view={listView} setView={setListView} act={act} busy={busy} />
       </TabsContent>
       <TabsContent value="matches" forceMount className="space-y-6 data-[state=inactive]:hidden">
-      <OptimizerPanel key={`${data.event.id}:${data.event.importedKampplan}`} event={data.event} rows={importedRows} wishes={wishes} initialWeights={data.optimizerWeights} isOpen={data.isOpen} busy={busy || planEditPending} refresh={refresh} />
+      <OptimizerPanel key={`${data.event.id}:${JSON.stringify(data.optimizerDefaults)}`} clearPlan={() => act({action: "remove_kampplan", eventId: data.event.id})} event={data.event} rows={importedRows} wishes={wishes} initialWeights={data.optimizerWeights} isOpen={data.isOpen} busy={busy || planEditPending} refresh={refresh} />
       {!!openSubstitutions.length && (
         <Card className="border-amber-300 bg-amber-50">
           <CardHeader>
@@ -1582,11 +1591,18 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
         </Card>
       )}
       <div className="space-y-2 rounded-xl border border-slate-200 bg-white p-4">
-        {kampplanPrompt ? <Button asChild className="bg-[#13375e]">
-          <a href={`https://chatgpt.com/?q=${encodeURIComponent(kampplanPrompt)}`} target="_blank" rel="noopener noreferrer">
+        {kampplanPrompt ? <Button disabled={busy || planEditPending} className="bg-[#13375e]" onClick={async () => {
+          const tab = window.open('about:blank', '_blank');
+          if (tab) tab.opener = null;
+          try {
+            if (await act({action:'remove_kampplan', eventId:data.event.id})) {
+              const url = 'https://chatgpt.com/?q=' + encodeURIComponent(kampplanPrompt);
+              if (tab) tab.location.href = url; else window.location.href = url;
+            } else tab?.close();
+          } catch { tab?.close(); }
+        }}>
             <Sparkles className="mr-2 h-4 w-4" />
             Foreslå kampe
-          </a>
         </Button> : <Button disabled>{promptError ? 'Foreslå kampe' : 'Henter prompt…'}</Button>}
         {promptError && <p role="alert" className="text-sm text-red-700">{promptError}</p>}
         <p className="text-sm text-slate-600">
@@ -1732,6 +1748,7 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
       <TabsContent value="settings" className="space-y-6">
       <AdminManagers data={data} act={act} busy={busy} />
       <RegistrationDefaultsForm key={JSON.stringify(data.registrationDefaults)} defaults={data.registrationDefaults} act={act} busy={busy} />
+      <OptimizerDefaultsForm key={JSON.stringify(data.optimizerDefaults)} defaults={data.optimizerDefaults} act={act} busy={busy} />
       <Card className="border-[#dce9e1]">
         <CardHeader>
           <CardTitle>Test e-mail</CardTitle>
@@ -2091,14 +2108,19 @@ function CrReviewControl({player,act,busy}: {player:MemberProfile & {id:number;n
 }
 
 function MembersPanel({data,act,busy}:any) {
+  const [search, setSearch] = useState('');
+  const query = search.trim().toLocaleLowerCase('da-DK');
   const allMembersEmail = bccMailtoHref(data.players.map((player: {email?:string}) => player.email));
-  const sortedMembers = [...(data.players ?? [])].sort((a, b) => Number(Boolean(a.crReviewedAt)) - Number(Boolean(b.crReviewedAt)) || a.name.localeCompare(b.name, 'da'));
+  const sortedMembers = [...(data.players ?? [])].filter(player => `${player.firstName} ${player.lastName}`.toLocaleLowerCase('da-DK').includes(query)).sort((a, b) => Number(Boolean(a.crReviewedAt)) - Number(Boolean(b.crReviewedAt)) || a.name.localeCompare(b.name, 'da'));
   return (
       <Card className="border-[#dce9e1]">
         <CardHeader><div className="flex flex-wrap items-center justify-between gap-3"><CardTitle>Medlemmer og CR<CrReviewCount players={data.players}/></CardTitle>
           {allMembersEmail ? <Button asChild variant="outline"><a href={allMembersEmail}><Mail className="mr-2 size-4" aria-hidden="true"/>E-mail alle medlemmer</a></Button> : <Button variant="outline" disabled>E-mail alle medlemmer</Button>}
         </div><CardDescription>Medlemmer med CR til gennemgang står øverst. Godkend den automatiske CR, eller ret værdien og vælg “Gem og godkend CR”. Medlemmet kan tilmelde sig imens. CR er kun synlig for administratorer.</CardDescription></CardHeader>
         <CardContent className="space-y-2 px-3 sm:px-6">
+          <Label htmlFor="member-search">Fornavn Efternavn</Label>
+          <Input id="member-search" type="search" placeholder="Søg efter navn…" value={search} onChange={event => setSearch(event.target.value)} />
+          {!sortedMembers.length && <p role="status" className="text-sm text-slate-600">Ingen medlemmer matcher søgningen.</p>}
           {sortedMembers.map((player: MemberProfile & {id:number;name:string;christinRanking:number|null}) => <div key={player.id} className="min-w-0 space-y-1.5 rounded-lg border px-2.5 py-2">
             <div className="flex items-start justify-between gap-2"><div className="min-w-0"><p className="text-sm font-semibold leading-5 [overflow-wrap:anywhere]">{player.firstName} {player.lastName}</p><p className="text-xs leading-4 text-slate-600">#{player.memberNo} · Egen ranking: {player.selfLevel}</p></div>
             {!player.crReviewedAt && <Badge className="shrink-0 bg-amber-100 px-1.5 text-[10px] text-amber-900">CR til gennemgang</Badge>}</div>

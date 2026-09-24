@@ -43,15 +43,15 @@ test('per-match scores appear only when the admin explicitly enables them', asyn
   assert.doesNotMatch(render({rows:[row],calendarDate:'2026-09-18'}),/>Score</);
 });
 
-test('optimizer has a compact two-column grid, restricted distance select and help for all factors', async () => {
+test('optimizer has a compact two-column grid, integer distance input and help for all factors', async () => {
   const {OptimizerPanel}=await vite.ssrLoadModule('/app/optimizer-panel.tsx');
   const {algorithmWeightDefaults}=await vite.ssrLoadModule('/lib/optimizer.ts');
   const html=renderToStaticMarkup(React.createElement(OptimizerPanel,{event:{id:1,date:'2026-09-18',status:'draft'},rows:[],wishes:[],busy:false,isOpen:false,refresh:()=>{},
-    initialWeights:{...algorithmWeightDefaults,FactorMix:50,FactorDistanceSameTeamA:2}}));
+    initialWeights:{...algorithmWeightDefaults,FactorSingle:50,FactorDistanceSameTeamA:2}}));
   assert.match(html,/grid-cols-2/);
-  assert.match(html,/<select[^>]+name="FactorDistanceSameTeamA"/);
-  assert.match(html,/<option value="2" selected="">2<\/option>/);
-  assert.match(html,/name="FactorMix"[^>]*value="50"/);
+  assert.match(html,/<input[^>]+name="FactorDistanceSameTeamA"[^>]*value="2"/);
+  assert.doesNotMatch(html,/<select[^>]+name="FactorDistanceSameTeamA"/);
+  assert.match(html,/name="FactorSingle"[^>]*value="50"/);
   for(const name of Object.keys(algorithmWeightDefaults)) assert.ok(html.includes(`aria-label="Info om ${name}"`));
 });
 

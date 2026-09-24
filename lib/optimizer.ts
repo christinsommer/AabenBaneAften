@@ -1,6 +1,6 @@
 export const algorithmWeightDefaults = {
-  FactorMatchDifference: 40, FactorSameTeamDifference: 15, FactorDistanceSameTeamA: 3, FactorSameTeamLastWeek: 20, FactorSameTeam3Weeks: 10,
-  FactorOpponentLastWeek: 5, FactorMix: 10, FactorAge: 0,
+  FactorMatchDifference: 40, FactorSameTeamDifference: 15, FactorDistanceSameTeamA: 2, FactorSameTeamLastWeek: 20, FactorSameTeam3Weeks: 10,
+  FactorOpponentLastWeek: 5, FactorDoubleSameSex: 5, FactorSingle: 10, Factor3OfAKind: 30, FactorAge: 0,
 };
 export type AlgorithmWeights = typeof algorithmWeightDefaults;
 export type OptimizerPlayer = {
@@ -44,8 +44,6 @@ export function parseAlgorithmWeights(raw: unknown): AlgorithmWeights {
   return Object.fromEntries(Object.entries(algorithmWeightDefaults).map(([key, fallback]) => {
     const value = (raw as Record<string, unknown>)[key];
     const number = value === '' || value === undefined ? fallback : value;
-    if (key === 'FactorDistanceSameTeamA' && number !== 2 && number !== 3)
-      throw new Error('FactorDistanceSameTeamA skal være 2 eller 3.');
     if (typeof number !== 'number' || !Number.isSafeInteger(number) || Math.abs(number) > 1_000_000)
       throw new Error(`${key} skal være et heltal mellem -1000000 og 1000000.`);
     return [key, number];
@@ -90,7 +88,7 @@ export function scoreMatch(match: ProposedMatch, input: OptimizerInput) {
     ? (spouseTogether(a[0],a[1]) ? 0 : Math.abs(a[0].cr - a[1].cr)) + (spouseTogether(b[0],b[1]) ? 0 : Math.abs(b[0].cr - b[1].cr)) : 0);
   const score = 100 - w.FactorMatchDifference * balanceDifference - w.FactorSameTeamLastWeek * sameTeamLastWeek
     - w.FactorSameTeam3Weeks * sameTeam3Weeks - w.FactorOpponentLastWeek * opponentLastWeek
-    - w.FactorMix * mix - w.FactorAge * balanceAge - balanceSameTeamDifference;
+    - (!double ? w.FactorSingle : women === 2 ? 0 : women === 0 || women === 4 ? w.FactorDoubleSameSex : w.Factor3OfAKind) - w.FactorAge * balanceAge - balanceSameTeamDifference;
   return { score, balanceDifference, balanceSameTeamDifference, balanceAge, mix, sameTeamLastWeek, sameTeam3Weeks, opponentLastWeek };
 }
 
