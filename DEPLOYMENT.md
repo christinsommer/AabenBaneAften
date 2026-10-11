@@ -1,9 +1,50 @@
 # Lokal udvikling og udgivelse
 
+Admin → Indstillinger → CPU og tid for optimering gemmer antal solvertråde
+(1–32, standard 4) og tidsgrænse (1–900 sekunder, standard 600).
+Værdierne indlæses fra databasen ved hvert kampforslag og sendes til CP-SAT.
+Ændringen kræver opdatering af både hjemmeside og beregningstjeneste.
+
+Standard for tilmelding anvendes nu også, når en eksisterende kalenderdato bliver
+den næste runde, så gamle åbningstider kl. 12:00 erstattes af den gemte standard
+(normalt 2 dage før kl. 06:00 dansk tid). Kun kommende automatiske kladderunder,
+hvis tilmelding endnu ikke er startet, opdateres. Test- og offentliggjorte runder
+samt manuel åbning/lukning bevares. Ny eksplicit redigering af rundens tidsplan
+markeres med `registration_schedule_custom` og tilsidesætter standarden.
+Migrationen med dette felt skal anvendes før hjemmesideudgivelse.
+
+Admin → Tilmeldinger → Spillerlister har en blyant til højre for Status.
+Dialogen retter ønskede timer og mulige starttider for en eksisterende tilmelding
+i den aktuelle runde, også efter tilmeldingslukning og offentliggørelse. Den anvender de
+konfigurerede spilletider og den normale validering. Status, oprettelsestidspunkt
+og eksisterende kønummer bevares. En eksisterende kampplan ændres først ved en ny
+beregning. Historiske runder kan ikke
+redigeres her, og samtidige ændringer af tilmeldingen afvises frem for at overskrives.
+
+Admin → Indstillinger indeholder nu “Hele timer rækkefølge” (standard 4, 3, 2, 1)
+og “Halve timer rækkefølge” (standard 5, 6, 7). Listerne bestemmer både tilladte
+baner og deres prioritet; andre positive banenumre og kortere lister er tilladt.
+Nederst angives “Hele timer tider” og “Halve timer tider” som kommaseparerede
+starttider (hh:00/hh:30). De styrer medlemstilmelding, algoritme, manuel baneredigering
+og ledige baner. En tom gruppe deaktiveres. Der må højst være 32 banetider i alt.
+Ændringer gælder straks; tidligere spilleønsker og planer ændres ikke automatisk.
+Nye algoritmeforslag placeres efter rækkefølgen ved hvert
+starttidspunkt; låste kampe beholder deres bane. Eksisterende planer flyttes ikke.
+Indstillingerne gemmes sammen med algoritmestandarderne uden databasemigration.
+
+`FactorOpponentThisWeek` giver fradrag for hvert ekstra møde mellem samme to
+modstandere i én kampplan (både single og double). Første møde er gratis; hvert
+efterfølgende møde koster faktoren én gang pr. modstanderpar. Standard er 5,
+0 slår fradraget fra. Faktoren kan ændres sammen med de andre faktorer og gemmes
+under Admin → Indstillinger. Ældre gemte standarder får automatisk værdien 5.
+Fradraget vises på den senere kamps score, også ved manuel redigering.
+Ingen databasemigration kræves. Både beregningstjenesten og hjemmesiden skal
+udgives; containerkontrollen kræver nu `scoringVersion = configurable-courts-v7`.
+
 Migration `0013_wise_echo.sql` tilføjer gemte standarder for tilmelding under Admin →
 Indstillinger. Uden gemte ændringer åbnes 2 dage før kl. 06:00 og lukkes 1 dag før kl. 12:00.
-Standarderne bruges ved oprettelse af nye spilledage; eksisterende spilledage beholder
-deres tidsplan. Alle tidspunkter fortolkes som dansk tid med minutpræcision.
+Standarderne bruges ved oprettelse og ved valg af næste automatiske spillerunde,
+indtil tilmeldingen starter. Alle tidspunkter fortolkes som dansk tid med minutpræcision.
 
 Hvert makkerpar må kun optræde én gang i samme kampplan. Kun par med Spouse No.
 og “Spille sammen med” (type 2) er undtaget. Reglen gælder også manuel gemning og

@@ -8,8 +8,9 @@ public record Slot(int Court, string StartTime);
 public record Match(int Court, string StartTime, int[] Team1, int[] Team2);
 public record HistoryMatch(int[] Team1, int[] Team2);
 public record Round(string Date, HistoryMatch[] Matches);
-public record Weights(int FactorMatchDifference = 40, int FactorSameTeamLastWeek = 20, int FactorSameTeam3Weeks = 10, int FactorOpponentLastWeek = 5, int FactorDoubleSameSex = 5, int FactorSingle = 10, int Factor3OfAKind = 30, int FactorAge = 0, int FactorSameTeamDifference = 15, int FactorDistanceSameTeamA = 2);
-public record Input(Player[] Players, Slot[] Slots, Round[] History, Match[] Locked, Weights Weights);
+public record Weights(int FactorMatchDifference = 40, int FactorSameTeamLastWeek = 20, int FactorSameTeam3Weeks = 10, int FactorOpponentLastWeek = 5, int FactorDoubleSameSex = 5, int FactorSingle = 10, int Factor3OfAKind = 30, int FactorAge = 0, int FactorSameTeamDifference = 15, int FactorDistanceSameTeamA = 2, int FactorOpponentThisWeek = 5);
+public record OptimizerResources(int Cpu = 4, int Seconds = 600);
+public record Input(Player[] Players, Slot[] Slots, Round[] History, Match[] Locked, Weights Weights, OptimizerResources? OptimizerResources = null);
 public record Stage(string Name, long Value, string Status);
 public record Result(Match[] Matches, string Status, Stage[] Stages, long Score, double Seconds);
 
@@ -32,7 +33,15 @@ public static class Scheduler
         model.Model.SolutionHint.Values.AddRange(solution);
     }
 
-    public static Result Solve(Input input, double seconds = 600, CancellationToken cancellation = default)
+    public static Result Solve(Input input, double? seconds = null, CancellationToken cancellation = default)
+    {
+        var resources = input.OptimizerResources ?? new OptimizerResources();
+        if (resources.Cpu is < 1 or > 32 || resources.Seconds is < 1 or > 900)
+            throw new ArgumentException("CPU skal være 1–32 og tid 1–900 sekunder.");
+        return SolveWithResources(input, seconds ?? resources.Seconds, resources.Cpu, cancellation);
+    }
+
+    static Result SolveWithResources(Input input, double seconds, int cpu, CancellationToken cancellation)
     {
         if (input.Players is null || input.Slots is null || input.History is null || input.Locked is null || input.Weights is null)
             throw new ArgumentException("Ufuldstændige beregningsdata.");
@@ -40,7 +49,7 @@ public static class Scheduler
         if (players.Length > 200 || input.Slots.Length > 32 || input.History.Length > 3 || players.Select(p => p.Id).Distinct().Count() != players.Length)
             throw new ArgumentException("Ugyldigt antal spillere, banetider eller historikrunder.");
         var w = input.Weights;
-        if (new[] {w.FactorDistanceSameTeamA, w.FactorMatchDifference, w.FactorSameTeamDifference, w.FactorSameTeamLastWeek, w.FactorSameTeam3Weeks, w.FactorOpponentLastWeek, w.FactorDoubleSameSex, w.FactorSingle, w.Factor3OfAKind, w.FactorAge}.Any(v => Math.Abs((long)v) > 1_000_000))
+        if (new[] {w.FactorOpponentThisWeek, w.FactorDistanceSameTeamA, w.FactorMatchDifference, w.FactorSameTeamDifference, w.FactorSameTeamLastWeek, w.FactorSameTeam3Weeks, w.FactorOpponentLastWeek, w.FactorDoubleSameSex, w.FactorSingle, w.Factor3OfAKind, w.FactorAge}.Any(v => Math.Abs((long)v) > 1_000_000))
             throw new ArgumentException("Ugyldige vægte.");
         foreach (var p in players)
             if (p.Cr is < 1 or > 9 || p.RequestedHours is < 1 or > 3 || p.SignupOrder < 1 || p.Gender is not ("M" or "K") || p.Status is not ("active" or "waitlist") || p.Availability is null || w.FactorAge != 0 && (p.Age is null or < 0 or > 120))
@@ -54,7 +63,7 @@ public static class Scheduler
             if (players.Count(q => PointsTo(p,q)) > 1) throw new ArgumentException("Partnerens medlemsnummer er ikke entydigt.");
         }
         var model = new CpModel();
-        var slots = input.Slots.OrderBy(s => s.StartTime).ThenBy(s => s.Court).ToArray();
+        var slots = input.Slots.OrderBy(s => s.StartTime).ToArray();
         var byId = players.Select((p, i) => (p.Id, i)).ToDictionary(x => x.Id, x => x.i);
         var x = new BoolVar[players.Length, slots.Length, 2];
         var present = new BoolVar[players.Length, slots.Length];
@@ -154,6 +163,20 @@ public static class Scheduler
             }
             model.Add(LinearExpr.Sum(partnerships) <= 1);
         }
+        // Penalize each unordered opponent pair's meetings beyond the first.
+        if (w.FactorOpponentThisWeek != 0)
+        for (int p = 0; p < players.Length; p++) for (int q = p + 1; q < players.Length; q++) {
+            if (Together(players[p],players[q]) || Forbidden(players[p],players[q])) continue;
+            var meetings = new List<BoolVar>();
+            for (int s = 0; s < slots.Length; s++) {
+                if (!players[p].Availability.Contains(slots[s].StartTime) || !players[q].Availability.Contains(slots[s].StartTime)) continue;
+                for (int t = 0; t < 2; t++) meetings.Add(Both(x[p,s,t],x[q,s,1-t],$"weeklyOpponents{p}:{q}:{s}:{t}"));
+            }
+            if (meetings.Count == 0) continue;
+            var repeats = model.NewIntVar(0, 2, $"opponentRepeats{p}:{q}");
+            model.AddMaxEquality(repeats, new LinearExpr[] {LinearExpr.Constant(0), LinearExpr.Sum(meetings) - 1});
+            score.AddTerm(repeats, -w.FactorOpponentThisWeek);
+        }
         var hours = new IntVar[players.Length];
         var reached = new BoolVar[players.Length, 3];
         for (int p = 0; p < players.Length; p++)
@@ -223,6 +246,8 @@ public static class Scheduler
             objectives.Add(("early:all", early));
         }
         else foreach (var time in startTimes) objectives.Add(($"early:{time}", AtTime(time)));
+        // Input order within each start time is the administrator's court priority.
+        objectives.Add(("courts", LinearExpr.WeightedSum(used, Enumerable.Range(0, slots.Length).Select(s => slots.Length - s))));
         var validation = model.Validate();
         if (validation.Length > 0) throw new ArgumentException($"Ugyldig CP-SAT-model: {validation}");
         var stages = new List<Stage>();
@@ -248,7 +273,7 @@ public static class Scheduler
                 cancellation.ThrowIfCancellationRequested();
                 double budget = (stageEnd - timer.Elapsed.TotalSeconds) / (attempts - attempt);
                 if (budget < 0.1) break;
-                var candidate = new CpSolver { StringParameters = $"max_time_in_seconds:{budget.ToString(System.Globalization.CultureInfo.InvariantCulture)} num_search_workers:4 random_seed:{Random.Shared.Next(1, 1_000_000)} randomize_search:true" };
+                var candidate = new CpSolver { StringParameters = $"max_time_in_seconds:{budget.ToString(System.Globalization.CultureInfo.InvariantCulture)} num_search_workers:{cpu} random_seed:{Random.Shared.Next(1, 1_000_000)} randomize_search:true" };
                 using var registration = cancellation.Register(candidate.StopSearch);
                 var candidateStatus = candidate.Solve(model);
                 if (candidateStatus is CpSolverStatus.Optimal or CpSolverStatus.Feasible)

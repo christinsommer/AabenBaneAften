@@ -55,7 +55,7 @@ export function reviewPlan(plan: ProposedMatch[], input: OptimizerInput) {
     if (complete && ids.length === 4 && players.filter(p => p!.gender === 'K').length === 2 &&
       people.get(m.team1[0])!.gender === people.get(m.team1[1])!.gender)
       add(index, ids, 'Mixed double skal have én mand og én kvinde på hvert hold.');
-    return complete ? scoreMatch(m, input).score : null;
+    return complete ? scoreMatch(m, input, plan).score : null;
   });
   for (const [id, uses] of appearances) {
     if (uses.length > people.get(id)!.requestedHours) for (const use of uses) add(use.index, [id], 'Spilleren får flere timer end ønsket.');

@@ -48,8 +48,8 @@ test('real CP-SAT service and D1: permissions, closed registration, history, val
       name:'optimizer-test-context',setup(builder) {
         builder.onResolve({filter:/\/lib\/auth$/},()=>({path:'auth',namespace:'test'}));
         builder.onResolve({filter:/^@opennextjs\/cloudflare$/},()=>({path:'context',namespace:'test'}));
-        builder.onResolve({filter:/\/calendar(?:\.ts)?$/},()=>({path:'calendar',namespace:'test'}));
-        builder.onLoad({filter:/.*/,namespace:'test'},args=>({contents:args.path==='auth'?'export const currentPlayer=async()=>globalThis.__optimizerTest.user;':args.path==='calendar'?"export const copenhagenDate=()=> '2026-10-16';":'export const getCloudflareContext=()=>({env:globalThis.__optimizerTest.env});'}));
+        builder.onResolve({filter:/\/calendar$/},()=>({path:'calendar',namespace:'test'}));
+        builder.onLoad({filter:/.*/,namespace:'test'},args=>({resolveDir:process.cwd(),contents:args.path==='auth'?'export const currentPlayer=async()=>globalThis.__optimizerTest.user;':args.path==='calendar'?`export {calendarEvent} from ${JSON.stringify(resolve('lib/calendar.ts'))}; export const copenhagenDate=()=> '2026-10-16';`:'export const getCloudflareContext=()=>({env:globalThis.__optimizerTest.env});'}));
       }
     }]});
     const {POST}=await import(pathToFileURL(outfile).href);
@@ -75,11 +75,14 @@ test('real CP-SAT service and D1: permissions, closed registration, history, val
     await db.prepare('UPDATE players SET christin_ranking=NULL WHERE id=1').run();
     assert.match((await (await post()).json()).error,/CR/);
     await db.prepare('UPDATE players SET christin_ranking=5 WHERE id=1').run();
+    await db.prepare(`INSERT INTO optimizer_defaults(id,weights) VALUES(1,'{"optimizerResources":{"cpu":2,"seconds":30}}') ON CONFLICT(id) DO UPDATE SET weights=json_patch(weights,excluded.weights)`).run();
     const response=await post();
     const proposal=await response.json();
     assert.equal(response.status,200,JSON.stringify(proposal));
+    assert.equal(proposal.matches[0].court,4,'default order assigns the first whole-hour match to court 4');
     assert.deepEqual(proposal.historyDates,['2026-10-09','2026-10-02','2026-09-25']);
     assert.equal(sent.players[0].age,40);
+    assert.deepEqual(sent.optimizerResources,{cpu:2,seconds:30});
     assert.equal(sent.players[0].name,undefined);
     assert.equal(sent.players[0].email,undefined);
     unavailable=true;
@@ -151,6 +154,11 @@ test('real CP-SAT service and D1: permissions, closed registration, history, val
     await db.prepare("UPDATE events SET status='draft' WHERE id IN (3,4,5,100)").run();
     const onlyBoundary=await (await post()).json();
     assert.deepEqual(onlyBoundary.historyDates,['2026-09-18'],'cutoff inclusive, previous September 11 excluded');
+    await db.prepare('INSERT INTO optimizer_defaults(id,weights) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET weights=excluded.weights')
+      .bind(JSON.stringify({courtOrder:{whole:[2,4,1,3],half:[7,6,5]}})).run();
+    assert.equal((await post('save',{matches:onlyBoundary.matches,fingerprint:onlyBoundary.fingerprint})).status,409,'changing court order invalidates an older proposal');
+    const reordered=await (await post()).json();
+    assert.equal(reordered.matches[0].court,2,'stored court order is used for the next proposal');
     const imported = [{A:'18:00',B:'19:00',C:'1',D:'Player 1 Test',E:'Player 2 Test',F:'Player 3 Test',G:'Player 4 Test'}];
     await db.prepare('UPDATE events SET imported_kampplan=? WHERE id=2').bind(JSON.stringify(imported)).run();
     assert.equal((await post()).status,200,'resolve full names in legacy Excel history');

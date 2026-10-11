@@ -62,6 +62,7 @@ export const events = sqliteTable("events", {
   date: text("date").notNull(),
   registrationOpensAt: text("registration_opens_at").notNull(),
   registrationClosesAt: text("registration_closes_at").notNull(),
+  registrationScheduleCustom: integer('registration_schedule_custom', {mode:'boolean'}).notNull().default(false),
   status: text("status", { enum: ["draft", "published", "cancelled"] }).notNull().default("draft"),
   publishedAt: text("published_at"),
   registrationOverride: text("registration_override", { enum: ["auto", "open", "closed"] }).notNull().default("auto"),

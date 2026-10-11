@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   try {
     const db = getCloudflareContext().env.DB;
-    await db.prepare("SELECT imported_kampplan FROM events LIMIT 0").all();
+    await db.prepare("SELECT imported_kampplan, registration_schedule_custom FROM events LIMIT 0").all();
     await db.prepare("SELECT open_days, open_time, close_days, close_time FROM registration_defaults LIMIT 0").all();
     await db.prepare("SELECT birth_year, cr_reviewed_at, email_visible, phone_visible, spouse_no, spouse_mode FROM players LIMIT 0").all();
     await db.prepare("SELECT token_hash FROM pin_reset_tokens LIMIT 0").all();

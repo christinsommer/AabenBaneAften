@@ -42,7 +42,7 @@ export function OptimizerPanel({event, rows, wishes, initialWeights, isOpen, bus
     try {
       async function request(body: Record<string, unknown>) {
         const response = await fetch('/api/optimizer', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
-          signal: AbortSignal.timeout(720_000), body: JSON.stringify({...body, eventId: event.id})});
+          signal: AbortSignal.timeout(1_020_000), body: JSON.stringify({...body, eventId: event.id})});
         const data = await response.json() as Proposal & {error?: string};
         if (!response.ok) throw new Error(data.error || 'Forslaget kunne ikke behandles.');
         return data;

@@ -9,6 +9,21 @@ const p = (id, extra = {}) => ({id, memberNo: String(id), cr:5, gender:'M', age:
 const match = {court:1, startTime:'18:00', team1:[1,2], team2:[3,4]};
 const input = extra => ({players:[p(1),p(2),p(3),p(4)], weights:algorithmWeightDefaults, history:[], locked:[], slots:[{court:1,startTime:'18:00'},{court:5,startTime:'18:30'},{court:1,startTime:'19:00'}],...extra});
 
+test('weekly opponent penalty counts each extra meeting once, independent of teams and row order', () => {
+  const plan = [match, {...match,startTime:'19:00',team1:[3,4],team2:[2,1]}, {...match,startTime:'20:00'}];
+  for (const factor of [0,5,7,-5]) {
+    const data=input({weights:{...algorithmWeightDefaults,FactorOpponentThisWeek:factor}});
+    assert.deepEqual(plan.map(m=>scoreMatch(m,data,plan.toReversed()).opponentThisWeek),[0,4,4]);
+    assert.deepEqual(plan.map(m=>scoreMatch(m,data,plan).score),[95,95-4*factor,95-4*factor]);
+  }
+  const rotated = [match,{...match,startTime:'19:00',team1:[1,3],team2:[2,4]}];
+  assert.equal(scoreMatch(rotated[1],input(),rotated).opponentThisWeek,2);
+  const singles=['20:30','21:30','22:30'].map(startTime=>({court:1,startTime,team1:[1],team2:[2]}));
+  assert.deepEqual(singles.map(m=>scoreMatch(m,input(),singles).score),[90,85,85]);
+  const historic=input({history:[{date:'2026-09-18',matches:[match]}]});
+  assert.equal(scoreMatch(plan[1],historic,plan).score,scoreMatch(plan[1],historic).score-20);
+});
+
 test('rest is limited to 30 minutes between consecutive matches, including manual edits', () => {
   const times = ['18:00', '19:30', '21:00'];
   const data = input({players: [1,2,3,4].map(id => p(id, {availability: times})), slots: times.map(startTime => ({court:1,startTime}))});
@@ -49,7 +64,7 @@ test('validator enforces CR boundaries, all banned combinations, singles and loc
 test('score counts every repeated relation once, including overlapping partner penalties', () => {
   const historical = input({history:[{date:'2026-10-09',matches:[match,match]},{date:'2026-10-02',matches:[match]}]});
   assert.equal(historyRelations(historical.history).partners.size,2);
-  assert.deepEqual(scoreMatch(match,historical),{score:15,balanceDifference:0,balanceSameTeamDifference:0,balanceAge:0,mix:1,sameTeamLastWeek:2,sameTeam3Weeks:2,opponentLastWeek:4});
+  assert.deepEqual(scoreMatch(match,historical),{score:15,balanceDifference:0,balanceSameTeamDifference:0,balanceAge:0,mix:1,sameTeamLastWeek:2,sameTeam3Weeks:2,opponentLastWeek:4,opponentThisWeek:0});
   const aged = input({players:[p(1,{age:20}),p(2,{age:40}),p(3,{age:50}),p(4,{age:70})],weights:{...algorithmWeightDefaults,FactorAge:1}});
   assert.equal(scoreMatch(match,aged).balanceAge,100);
   assert.equal(scoreMatch(match,aged).score,-5);

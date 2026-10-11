@@ -8,6 +8,16 @@ const match={court:1,startTime:'18:00',team1:[1,2],team2:[3,4]};
 const input=(extra={})=>({players:[p(1),p(2),p(3),p(4),p(5),p(6),p(7),p(8)],weights:algorithmWeightDefaults,history:[],locked:[],
   slots:[{court:1,startTime:'18:00'},{court:5,startTime:'18:30'},{court:1,startTime:'19:00'},{court:2,startTime:'20:00'},{court:5,startTime:'20:30'},{court:1,startTime:'21:00'}],...extra});
 
+test('manual review recalculates repeated opponents after a team change',()=>{
+  const second={...match,startTime:'19:00',team1:[1,3],team2:[2,4]};
+  const data=input();
+  const review=reviewPlan([second,match],data);
+  assert.equal(review.valid,true);
+  assert.deepEqual(review.scores,[85,95]);
+  const fresh={...second,team1:[1,5],team2:[6,7]};
+  assert.deepEqual(reviewPlan([match,fresh],data).scores,[95,95]);
+});
+
 test('only manual edits may exceed partner distance; other rules still reject the plan',()=>{
   const data=input({players:[p(1,{cr:4}),p(2,{cr:7}),p(3,{cr:4}),p(4,{cr:7})],weights:{...algorithmWeightDefaults,FactorDistanceSameTeamA:2}});
   assert.throws(()=>validateProposal([match],data),/FactorDistanceSameTeamA/);

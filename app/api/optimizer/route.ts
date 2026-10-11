@@ -7,6 +7,7 @@ import { loadOptimizerInput, optimizerRevisionSql } from '../../../lib/optimizer
 import { proposalRows, scoreMatch, validateProposal } from '../../../lib/optimizer';
 import {normalizeKampplanRows} from '../../../lib/kampplan-rows';
 import {reviewPlan} from '../../../lib/plan-review';
+import {applyCourtOrder} from '../../../lib/court-order';
 
 export async function POST(request: Request) {
   try {
@@ -40,7 +41,7 @@ export async function POST(request: Request) {
       const plan = validateProposal(body.matches, input, {manualEdit: body.action === 'save_edit'});
       const exceptions = body.action === 'save_edit' ? reviewPlan(plan, input).exceptions : [];
       if (!plan.length) return Response.json({error: 'Et tomt forslag kan ikke gemmes.'}, {status: 400});
-      const rows = proposalRows(plan, names).map((row, index) => ({...row, _optimizerScore: scoreMatch(plan[index], input).score,
+      const rows = proposalRows(plan, names).map((row, index) => ({...row, _optimizerScore: scoreMatch(plan[index], input, plan).score,
         _manualDistanceNames: exceptions.filter(issue => issue.matchIndex === index).flatMap(issue => issue.playerIds.map(id => names.get(id))),
         ...(index === 0 ? {_optimizerRevision: crypto.randomUUID(), _optimizerWeights: input.weights} : {}),
       }));
@@ -71,7 +72,7 @@ export async function POST(request: Request) {
     let response: Response;
     try { response = await fetch(url, {
       method: 'POST', headers: {'Content-Type': 'application/json', Authorization: `Bearer ${env.OPTIMIZER_API_KEY}`},
-      body: JSON.stringify(input), signal: AbortSignal.any([request.signal, AbortSignal.timeout(660_000)]),
+      body: JSON.stringify(input), signal: AbortSignal.any([request.signal, AbortSignal.timeout(960_000)]),
     }); } catch (error) {
       const timeout = error instanceof Error && ['TimeoutError', 'AbortError'].includes(error.name);
       return Response.json({error: timeout
@@ -86,8 +87,9 @@ export async function POST(request: Request) {
     }
     const result = await response.json() as {matches: unknown; status: string; score: number; stages: unknown[]};
     if (!['OPTIMAL', 'FEASIBLE'].includes(result.status)) throw new Error('Beregningstjenesten returnerede ingen gyldig løsning.');
-    const plan = validateProposal(result.matches, input);
-    const scores = plan.map(m => scoreMatch(m, input));
+    const validated = validateProposal(result.matches, input);
+    const plan = validateProposal(applyCourtOrder(validated, input, loaded.courtOrder), input);
+    const scores = plan.map(m => scoreMatch(m, input, plan));
     const score = scores.reduce((sum, s) => sum + s.score, 0);
     if (result.score !== score) throw new Error('Kontrol af kampscore fejlede. Forslaget blev afvist.');
     const reloaded = await loadOptimizerInput(body.eventId, input.weights);

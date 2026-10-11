@@ -3,7 +3,9 @@ export function mailtoHref(email: string) {
   return `mailto:${encodeURIComponent(email.trim()).replace(/%40/gi, '@')}`;
 }
 
-export function bccMailtoHref(emails: readonly (string | null | undefined)[]) {
+export function bccMailtoHref(emails: readonly (string | null | undefined)[], message?: {subject: string; text: string}) {
   const addresses = [...new Set(emails.map(email => email?.trim().toLowerCase()).filter((email): email is string => !!email))];
-  return addresses.length ? `mailto:?bcc=${encodeURIComponent(addresses.join(','))}` : null;
+  if (!addresses.length) return null;
+  const content = message ? `&subject=${encodeURIComponent(message.subject)}&body=${encodeURIComponent(message.text.replace(/\r?\n/g, '\r\n'))}` : '';
+  return `mailto:?bcc=${encodeURIComponent(addresses.join(','))}${content}`;
 }

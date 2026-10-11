@@ -1,5 +1,10 @@
 "use client";
 import { OptimizerDefaultsForm } from './optimizer-defaults-form';
+import { CourtOrderForm } from './court-order-form';
+import { OptimizerResourcesForm } from './optimizer-resources-form';
+import { PlayTimesForm } from './play-times-form';
+import { EditSignupButton } from './edit-signup-button';
+import { playTimeLabel } from '../lib/play-schedule';
 import { RegistrationDefaultsForm } from './registration-defaults-form';
 import { EmailPlanButton } from './email-plan-button';
 import { planLink } from '../lib/plan-link';
@@ -73,15 +78,7 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-const timeLabel: Record<string, string> = {
-  "18:00": "18:00–19:00",
-  "18:30": "18:30–19:30",
-  "19:00": "19:00–20:00",
-  "19:30": "19:30–20:30",
-  "20:00": "20:00–21:00",
-  "20:30": "20:30–21:30",
-  "21:00": "21:00–22:00",
-};
+
 const niceDate = (v: string) =>
   new Intl.DateTimeFormat("da-DK", {
     weekday: "long",
@@ -153,7 +150,7 @@ export default function OpenBaneApp() {
       setBusy(false);
     }
   }
-  async function act(payload: Record<string, unknown>) {
+  async function act(payload: Record<string, unknown>, onError?: (message:string)=>void) {
     setBusy(true);
     setError("");
     try {
@@ -173,7 +170,9 @@ export default function OpenBaneApp() {
       if (j.warning) setError(j.warning);
       return true;
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Noget gik galt");
+      const message=e instanceof Error ? e.message : "Noget gik galt";
+      setError(message);
+      onError?.(message);
       return false;
     } finally {
       setBusy(false);
@@ -532,7 +531,7 @@ function WaitlistDialog({ items, matches, userMatches, userLevel }: any) {
                   className="rounded-2xl border border-[#a9c9b6] bg-[#f0f3f8] p-4"
                 >
                   <h3 className="font-bold text-[#13375e]">
-                    Mulige afløsere til kl. {timeLabel[match.startTime]} · bane{" "}
+                    Mulige afløsere til kl. {playTimeLabel(match.startTime)} · bane{" "}
                     {match.court}
                   </h3>
                   {!candidates.length ? (
@@ -573,7 +572,7 @@ function WaitlistDialog({ items, matches, userMatches, userLevel }: any) {
 
 function WaitlistPlayer({ player, compact = false }: any) {
   const availability = JSON.parse(player.availability).map(
-    (time: string) => timeLabel[time],
+    (time: string) => playTimeLabel(time),
   );
   return (
               <div
@@ -655,7 +654,7 @@ function Dashboard({ data, act, busy, error, openProfile, refresh, refreshing }:
             {userMatches
               .map(
                 (match: any) =>
-                  `kl. ${timeLabel[match.startTime]} på bane ${match.court}`,
+                  `kl. ${playTimeLabel(match.startTime)} på bane ${match.court}`,
               )
               .join(" og ")}
             .
@@ -672,7 +671,7 @@ function Dashboard({ data, act, busy, error, openProfile, refresh, refreshing }:
                   {niceDate(data.event.date)}
                 </h1>
                 <p className="mt-2 text-white/75">
-                  Bane 1–4 fra kl. 18:00 · Bane 5–7 fra kl. 18:30
+                  Starttider og baner fremgår af dine spilleønsker nedenfor.
                 </p>
                 <div className="flex flex-wrap gap-3">
                   <RulesDialog light />
@@ -748,7 +747,7 @@ function Dashboard({ data, act, busy, error, openProfile, refresh, refreshing }:
             )}
           </TabsList>
           <TabsContent value="signup">
-            <SignupPanel data={data} act={act} busy={busy} />
+            <SignupPanel key={`${data.event.id}:${JSON.stringify(data.times)}`} data={data} act={act} busy={busy} />
           </TabsContent>
           <TabsContent value="plan">
             <PlanPanel data={data} userMatches={userMatches} act={act} busy={busy} />
@@ -992,7 +991,7 @@ function SignupPanel({ data, act, busy }: any) {
   const registeredMembers: {id:number;name:string}[] = [...(data.registeredMembers ?? [])].sort((a,b) => a.name.localeCompare(b.name,'da'));
   const current = data.signup?.status === "not_registered" ? null : data.signup;
   const [selected, setSelected] = useState<string[]>(
-    current?.szPossible ?? [],
+    (current?.szPossible ?? []).filter((time:string)=>data.times.includes(time)),
   );
   const [hours, setHours] = useState(current?.nHours > 0 ? current.nHours : 1);
   const [invites, setInvites] = useState(["", "", ""]);
@@ -1128,15 +1127,15 @@ function SignupPanel({ data, act, busy }: any) {
             {[
               {
                 title: "Start på hel time",
-                subtitle: "Bane 1–4",
+                subtitle: `Bane ${(data.courtOrder?.whole ?? []).join(', ')}`,
                 times: data.times.filter((time: string) => !time.endsWith(":30")),
               },
               {
                 title: "Start på halv time",
-                subtitle: "Bane 5–7",
+                subtitle: `Bane ${(data.courtOrder?.half ?? []).join(', ')}`,
                 times: data.times.filter((time: string) => time.endsWith(":30")),
               },
-            ].map((group) => (
+            ].filter(group=>group.times.length>0).map((group) => (
               <section key={group.title}>
                 <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-2">
                   <h3 className="text-sm font-semibold text-slate-950">{group.title}</h3>
@@ -1161,14 +1160,14 @@ function SignupPanel({ data, act, busy }: any) {
                           );
                         }}
                       />
-                      <strong className="text-sm">{timeLabel[t]}</strong>
+                      <strong className="text-sm">{playTimeLabel(t)}</strong>
                     </label>
                   ))}
                 </div>
               </section>
             ))}
           </div>
-          <p className="mt-4 text-sm text-slate-600">Når du gemmer, vælges mellemliggende tider automatisk, hvis du har valgt to timer i træk. Fx tilføjes 18:30–19:30 ved valg af 18:00–19:00 og 19:00–20:00.</p>
+          <p className="mt-4 text-sm text-slate-600">Når du gemmer, vælges tilgængelige mellemliggende tider automatisk, hvis du har valgt to timer i træk.</p>
           <div className="mt-4 flex flex-wrap gap-2">
             <AlertDialog open={confirmOpen} onOpenChange={open => { if (!confirmPending.current) { setSelectionError(open ? signupSelectionError(selected, hours) : null); setConfirmOpen(open); setConfirmError(''); } }}>
             <AlertDialogTrigger asChild><Button
@@ -1448,7 +1447,7 @@ function MatchCard({ match, name, highlight, calendarDate, calendarPlayers, cont
       <div className="flex items-center justify-between">
         <Badge variant="outline">Bane {match.court}</Badge>
         <span className="font-bold text-[#13375e]">
-          Kl. {timeLabel[match.startTime]}
+          Kl. {playTimeLabel(match.startTime)}
         </span>
         {calendarDate && <MatchCalendarButton match={{ date: calendarDate, startTime: match.startTime, court: match.court, players: ids.map((id: number) => calendarPlayers?.find((player: { id: number }) => player.id === id) ?? name(id)) }} />}
       </div>
@@ -1514,7 +1513,7 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
   const draftMatches = data.adminMatches ?? [];
   const importedRows = Array.isArray(data.importedMatches) ? data.importedMatches : [];
   const hasImportedPlan = importedRows.length > 0;
-  const unusedCourts = unusedImportedCourts(importedRows, data.times);
+  const unusedCourts = unusedImportedCourts(importedRows, data.times, data.slots);
   const wishes = unfulfilledWishes(importedRows, data.signups ?? []);
   const openSubstitutions = (data.substitutions ?? []).filter(
     (item: any) => item.status !== "replaced",
@@ -1579,7 +1578,7 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
                 <div key={item.id} className="rounded-xl border border-amber-200 bg-white p-4">
                   <p className="font-bold">{item.outgoingName}</p>
                   <p className="text-sm text-slate-700">
-                    {match ? `Kl. ${timeLabel[match.startTime]} · bane ${match.court}` : "Kampen kunne ikke findes"}
+                    {match ? `Kl. ${playTimeLabel(match.startTime)} · bane ${match.court}` : "Kampen kunne ikke findes"}
                   </p>
                   <Badge className={`mt-2 ${item.status === "unresolved" ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-900"}`}>
                     {item.status === "unresolved" ? "Kan ikke finde afløser" : "Søger afløser"}
@@ -1668,7 +1667,7 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
         >
           Fjern kampplan
         </Button>
-        <EmailPlanButton key={data.event.id} eventId={data.event.id} disabled={busy || planEditPending || data.event.status !== 'published' || (!draftMatches.length && !data.importedMatches?.length)} />
+        <EmailPlanButton key={data.event.id} eventId={data.event.id} date={data.event.date} signups={data.signups} disabled={busy || planEditPending || data.event.status !== 'published' || (!draftMatches.length && !data.importedMatches?.length)} />
       </div>
       {isImporting && (
         <p className="rounded-xl border border-[#dce9e1] bg-[#f0f3f8] p-3 text-sm font-medium text-[#13375e]">
@@ -1704,7 +1703,7 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
                   className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
                 >
                   <p className="font-bold text-[#13375e]">
-                    {timeLabel[slot.time]}
+                    {playTimeLabel(slot.time)}
                   </p>
                   <p className="mt-1 text-sm text-slate-700">
                     {slot.courts
@@ -1749,6 +1748,8 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
       <AdminManagers data={data} act={act} busy={busy} />
       <RegistrationDefaultsForm key={JSON.stringify(data.registrationDefaults)} defaults={data.registrationDefaults} act={act} busy={busy} />
       <OptimizerDefaultsForm key={JSON.stringify(data.optimizerDefaults)} defaults={data.optimizerDefaults} act={act} busy={busy} />
+      <CourtOrderForm key={JSON.stringify(data.courtOrder)} defaults={data.courtOrder} act={act} busy={busy} />
+      <OptimizerResourcesForm key={JSON.stringify(data.optimizerResources)} defaults={data.optimizerResources} act={act} busy={busy} />
       <Card className="border-[#dce9e1]">
         <CardHeader>
           <CardTitle>Test e-mail</CardTitle>
@@ -1778,6 +1779,7 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
           )}
         </CardContent>
       </Card>
+      <PlayTimesForm key={JSON.stringify(data.playTimes)} defaults={data.playTimes} act={act} busy={busy} />
       </TabsContent>
     </Tabs>
   );
@@ -1928,9 +1930,9 @@ function PlayerLists({ data, view, setView, act, busy }: any) {
         <table className="w-full text-left text-xs">
           <thead><tr className="border-b text-slate-500">{["Status","Navn","CR","Timer","Antal mulige tider","Ønskede tider","Tilmeldingsrækkefølge"].map(label=><th key={label} className="px-2 py-0.5 font-medium">{label}</th>)}</tr></thead>
           <tbody>{rows.map(({signup,player,event}:any)=><tr key={`${event.id}-${player.id}`} className="border-b last:border-0">
-            <td className="px-2 py-0.5"><select aria-label={`Status for ${player.name}`} title={!signup.id ? "Medlemmet skal først angive timer og mulige tider." : undefined} value={signup.status} disabled={busy || !signup.id} style={{ fontSize: "inherit" }} className="h-6 rounded border bg-white px-1 py-0 text-xs leading-tight" onChange={e=>act({action:"set_signup_status",signupId:signup.id,status:e.target.value})}>
+            <td className="px-2 py-0.5"><div className="flex items-center gap-1"><select aria-label={`Status for ${player.name}`} title={!signup.id ? "Medlemmet skal først angive timer og mulige tider." : undefined} value={signup.status} disabled={busy || !signup.id} style={{ fontSize: "inherit" }} className="h-6 rounded border bg-white px-1 py-0 text-xs leading-tight" onChange={e=>act({action:"set_signup_status",signupId:signup.id,status:e.target.value})}>
               {Object.entries(statuses).filter(([value])=>value!=="not_registered").map(([value,label])=><option key={value} value={value}>{label}</option>)}
-            </select></td>
+            </select><EditSignupButton signup={signup} eventId={event.id} name={player.name} times={data.times} busy={busy} disabled={view!=='current'||!signup.id} act={act}/></div></td>
             <td className="whitespace-nowrap px-2 py-0.5 font-semibold">{player.name}</td>
             <td className="whitespace-nowrap px-2 py-0.5">{player.christinRanking == null ? "–" : `${player.christinRanking} ${CR_LABELS[player.christinRanking]}`}</td>
             <td className="px-2 py-0.5">{signup.nHours}</td>
@@ -1969,14 +1971,14 @@ function EditMatch({ match, data, act, done }: any) {
       <div className="grid grid-cols-2 gap-3">
         <div>
           <Label>Tidspunkt</Label>
-          <Select value={time} onValueChange={setTime}>
+          <Select value={time} onValueChange={value=>{setTime(value);setCourt('');}}>
             <SelectTrigger className="mt-1">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
               {data.times.map((t: string) => (
                 <SelectItem key={t} value={t}>
-                  {timeLabel[t]}
+                  {playTimeLabel(t)}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -1984,15 +1986,10 @@ function EditMatch({ match, data, act, done }: any) {
         </div>
         <div>
           <Label htmlFor={`court-${match.id}`}>Bane</Label>
-          <Input
-            id={`court-${match.id}`}
-            className="mt-1"
-            type="number"
-            min="1"
-            max="7"
-            value={court}
-            onChange={(e) => setCourt(e.target.value)}
-          />
+          <select id={`court-${match.id}`} className="mt-1 h-10 w-full rounded-md border px-3" value={court} onChange={e=>setCourt(e.target.value)}>
+            <option value="">Vælg bane</option>
+            {(data.slots ?? []).filter((s:{startTime:string})=>s.startTime===time).map((s:{court:number})=><option key={s.court} value={String(s.court)}>Bane {s.court}</option>)}
+          </select>
         </div>
       </div>
       <p className="mb-1 mt-4 text-sm font-semibold">Spillere</p>

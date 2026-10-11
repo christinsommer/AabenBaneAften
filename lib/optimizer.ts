@@ -1,6 +1,6 @@
 export const algorithmWeightDefaults = {
   FactorMatchDifference: 40, FactorSameTeamDifference: 15, FactorDistanceSameTeamA: 2, FactorSameTeamLastWeek: 20, FactorSameTeam3Weeks: 10,
-  FactorOpponentLastWeek: 5, FactorDoubleSameSex: 5, FactorSingle: 10, Factor3OfAKind: 30, FactorAge: 0,
+  FactorOpponentLastWeek: 5, FactorOpponentThisWeek: 5, FactorDoubleSameSex: 5, FactorSingle: 10, Factor3OfAKind: 30, FactorAge: 0,
 };
 export type AlgorithmWeights = typeof algorithmWeightDefaults;
 export type OptimizerPlayer = {
@@ -11,6 +11,7 @@ export type OptimizerPlayer = {
 export type ProposedMatch = { court: number; startTime: string; team1: number[]; team2: number[] };
 export type HistoryRound = { date: string; matches: { team1: number[]; team2: number[] }[] };
 export type OptimizerInput = {
+  optimizerResources?: {cpu:number;seconds:number};
   players: OptimizerPlayer[]; slots: { court: number; startTime: string }[];
   history: HistoryRound[]; locked: ProposedMatch[]; weights: AlgorithmWeights;
 };
@@ -65,7 +66,7 @@ export function historyRelations(history: HistoryRound[]) {
   return { partners, lastPartners, lastOpponents };
 }
 
-export function scoreMatch(match: ProposedMatch, input: OptimizerInput) {
+export function scoreMatch(match: ProposedMatch, input: OptimizerInput, plan: readonly ProposedMatch[] = []) {
   const byId = new Map(input.players.map(p => [p.id, p]));
   const a = match.team1.map(id => byId.get(id)!), b = match.team2.map(id => byId.get(id)!);
   const sum = (team: OptimizerPlayer[], key: 'cr' | 'age') => team.reduce((total, p) => total + (p[key] ?? 0), 0);
@@ -83,13 +84,22 @@ export function scoreMatch(match: ProposedMatch, input: OptimizerInput) {
     sameTeam3Weeks += Number(relations.partners.has(key));
   }
   for (const p of a) for (const q of b) opponentLastWeek += Number(relations.lastOpponents.has(pairKey(p.id, q.id)));
+  // Charge each unordered opponent pair once per meeting after its first.
+  // Chronological attribution keeps per-match scores independent of row order.
+  const earlierOpponents = new Set<string>();
+  for (const previous of plan) if (minutes(previous.startTime) < minutes(match.startTime) ||
+    minutes(previous.startTime) === minutes(match.startTime) && previous.court < match.court) {
+    for (const p of previous.team1) for (const q of previous.team2) earlierOpponents.add(pairKey(p, q));
+  }
+  let opponentThisWeek = 0;
+  for (const p of a) for (const q of b) opponentThisWeek += Number(earlierOpponents.has(pairKey(p.id, q.id)));
   const w = input.weights;
   const balanceSameTeamDifference = w.FactorSameTeamDifference * (double
     ? (spouseTogether(a[0],a[1]) ? 0 : Math.abs(a[0].cr - a[1].cr)) + (spouseTogether(b[0],b[1]) ? 0 : Math.abs(b[0].cr - b[1].cr)) : 0);
   const score = 100 - w.FactorMatchDifference * balanceDifference - w.FactorSameTeamLastWeek * sameTeamLastWeek
-    - w.FactorSameTeam3Weeks * sameTeam3Weeks - w.FactorOpponentLastWeek * opponentLastWeek
+    - w.FactorSameTeam3Weeks * sameTeam3Weeks - w.FactorOpponentLastWeek * opponentLastWeek - w.FactorOpponentThisWeek * opponentThisWeek
     - (!double ? w.FactorSingle : women === 2 ? 0 : women === 0 || women === 4 ? w.FactorDoubleSameSex : w.Factor3OfAKind) - w.FactorAge * balanceAge - balanceSameTeamDifference;
-  return { score, balanceDifference, balanceSameTeamDifference, balanceAge, mix, sameTeamLastWeek, sameTeam3Weeks, opponentLastWeek };
+  return { score, balanceDifference, balanceSameTeamDifference, balanceAge, mix, sameTeamLastWeek, sameTeam3Weeks, opponentLastWeek, opponentThisWeek };
 }
 
 export function validateOptimizerInput(input: OptimizerInput) {
@@ -106,7 +116,7 @@ export function validateOptimizerInput(input: OptimizerInput) {
     if (!['M', 'K'].includes(p.gender)) throw new Error(`Medlem ${p.memberNo} mangler køn.`);
     if (!Number.isInteger(p.requestedHours) || p.requestedHours < 1 || p.requestedHours > 3) throw new Error('Ugyldigt timeønske.');
     if (!Number.isSafeInteger(p.signupOrder) || p.signupOrder < 1 || !['active', 'waitlist'].includes(p.status)) throw new Error('Ugyldig tilmeldingsrækkefølge eller status.');
-    if (!Array.isArray(p.availability) || p.availability.some(t => !input.slots.some(s => s.startTime === t))) throw new Error('Ugyldige tilmeldingstider.');
+    if (!Array.isArray(p.availability) || p.availability.some(t => !input.slots.some(s => s.startTime === t))) throw new Error(`Medlem ${p.memberNo} har spilleønsker uden for de aktuelle spilletider. Opdatér tilmeldingen.`);
     if (input.weights.FactorAge !== 0 && (!Number.isInteger(p.age) || p.age! < 0 || p.age! > 120))
       throw new Error('Alder kan ikke beregnes for alle spillere. Angiv fødselsår eller brug FactorAge = 0.');
   }

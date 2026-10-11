@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { getDb } from "../../../db";
 import { optimizerDefaults, registrationDefaults, events, feedback, matches, matchRequests, pinResetTokens, players, sessions, signups, substitutions } from "../../../db/schema";
 import { createSession, currentPlayer, destroySession, hashPin, hashToken, verifyPin, verifyToken } from "../../../lib/auth";
-import { ensureEvent, TIMES } from "../../../lib/schedule";
+import { ensureEvent } from "../../../lib/schedule";
 import { sendEmail } from "../../../lib/email";
 import { sendWelcomeEmail } from "../../../lib/welcome-email";
 import { firstMatchInstant, waitlistIsOpen, registrationIsOpen, registrationSchedule } from "../../../lib/registration";
@@ -21,7 +21,10 @@ import { normalizeKampplanRows } from "../../../lib/kampplan-rows";
 import {parseAlgorithmWeights, scoreMatch} from '../../../lib/optimizer';
 import {loadOptimizerInput} from '../../../lib/optimizer-server';
 
-import {loadOptimizerDefaults} from '../../../lib/optimizer-defaults-server';
+import {loadOptimizerDefaults, loadPlaySchedule, loadOptimizerResources} from '../../../lib/optimizer-defaults-server';
+import {parseOptimizerResources} from '../../../lib/optimizer-resources';
+import {parseCourtOrder} from '../../../lib/court-order';
+import {parsePlayTimes,buildPlaySchedule} from '../../../lib/play-schedule';
 
 export const dynamic = "force-dynamic";
 
@@ -51,7 +54,7 @@ async function eventFirstMatchAt(event: typeof events.$inferSelect) {
   const stored = await getDb().select({startTime:matches.startTime}).from(matches).where(eq(matches.eventId,event.id));
   const imported = parseImportedKampplan(event.importedKampplan);
   const starts = imported.length ? imported.map(row => String(row.A)) : stored.map(row => row.startTime);
-  return firstMatchInstant(event.date, starts.length ? starts : TIMES);
+  return firstMatchInstant(event.date, starts.length ? starts : (await loadPlaySchedule()).times);
 }
 
 async function loadRegistrationDefaults() {
@@ -65,12 +68,13 @@ async function state() {
   const isOpen = event ? registrationIsOpen(event) : false;
   const importedMatches = event && (user?.role === 'admin' || event.status === 'published') ? parseImportedKampplan(event.importedKampplan) : [];
   const defaultWeights = user?.role === 'admin' ? await loadOptimizerDefaults() : undefined;
+  const {courtOrder,playTimes,timeGroups,times,slots} = await loadPlaySchedule();
   let optimizerWeights = defaultWeights;
   let adminPlanScores: (number | null)[] | undefined;
   if (user?.role === 'admin' && importedMatches.length && event) {
     const raw = JSON.parse(event.importedKampplan);
     try { if (raw[0]?._optimizerWeights) optimizerWeights = parseAlgorithmWeights(raw[0]._optimizerWeights); } catch { /* Older plan metadata. */ }
-    if (raw.length === importedMatches.length && raw.every((row: Record<string, unknown>) => Number.isSafeInteger(row._optimizerScore))) {
+    if (raw[0]?._optimizerWeights?.FactorOpponentThisWeek !== undefined && raw.length === importedMatches.length && raw.every((row: Record<string, unknown>) => Number.isSafeInteger(row._optimizerScore))) {
       adminPlanScores = raw.map((row: {_optimizerScore: number}) => row._optimizerScore);
     } else {
       adminPlanScores = importedMatches.map(() => null);
@@ -82,9 +86,14 @@ async function state() {
           if (ids.length !== 1 || !input.players.some(p => p.id === ids[0])) throw new Error('Ukendt spiller');
           return ids[0];
         };
-        adminPlanScores = importedMatches.map(row => {
-          try { return scoreMatch({court: Number(row.C.replace(/\D/g, '')), startTime: row.A,
-            team1: [row.D, row.E].filter(Boolean).map(resolveName), team2: [row.F, row.G].filter(Boolean).map(resolveName)}, input).score; }
+        const resolvedPlan = importedMatches.map(row => {
+          try { return {court: Number(row.C.replace(/\D/g, '')), startTime: row.A.replace('.', ':'),
+            team1: [row.D, row.E].filter(Boolean).map(resolveName), team2: [row.F, row.G].filter(Boolean).map(resolveName)}; }
+          catch { return null; }
+        });
+        const completePlan = resolvedPlan.filter(row => row !== null);
+        adminPlanScores = resolvedPlan.map(row => {
+          try { return row ? scoreMatch(row, input, completePlan).score : null; }
           catch { return null; }
         });
       } catch { /* Missing CR/history: show an unavailable score rather than a made-up number. */ }
@@ -92,11 +101,12 @@ async function state() {
   }
   // Per-match scores and factors belong only in the administrator's view.
   if (event && user?.role !== 'admin' && event.importedKampplan) event.importedKampplan = JSON.stringify(importedMatches);
-  if (!user) return { authenticated: false, event, isOpen, times: TIMES, importedMatches };
+  if (!user) return { authenticated: false, event, isOpen, times,timeGroups,slots,playTimes,courtOrder, importedMatches };
   const defaults = user.role === 'admin' ? await loadRegistrationDefaults() : undefined;
+  const optimizerResources = user.role === 'admin' ? await loadOptimizerResources() : undefined;
   const calendarDates = await db.select({id:events.id,date:events.date,status:events.status,isTest:events.isTest,testActive:events.testActive}).from(events).where(eq(events.archived,false)).orderBy(asc(events.date));
   const allPlayers = user.role === "admin" ? await db.select({id:players.id,memberNo:players.memberNo,name:players.name,firstName:players.firstName,lastName:players.lastName,email:players.email,phone:players.phone,phoneCountryCode:players.phoneCountryCode,emailVisible:players.emailVisible,phoneVisible:players.phoneVisible,christinRanking:players.christinRanking,crReviewedAt:players.crReviewedAt,spouseNo:players.spouseNo,spouseMode:players.spouseMode,createdAt:players.createdAt,birthYear:players.birthYear,gender:players.gender,selfLevel:players.selfLevel,adminLevel:players.adminLevel,role:players.role,suspendedEventId:players.suspendedEventId}).from(players).orderBy(asc(players.name)) : [];
-  if (!event) return {authenticated:true,user:visibleMember(user),event:null,isOpen:false,times:TIMES,calendarDates,registeredMembers:[],importedMatches: [],players:allPlayers,optimizerDefaults:defaultWeights,registrationDefaults:defaults};
+  if (!event) return {authenticated:true,user:visibleMember(user),event:null,isOpen:false,times,timeGroups,slots,playTimes,courtOrder,calendarDates,registeredMembers:[],importedMatches: [],players:allPlayers,optimizerDefaults:defaultWeights,optimizerResources,registrationDefaults:defaults};
   const registeredMembers = await db.select({id:players.id,name:players.name}).from(signups)
     .innerJoin(players,eq(players.id,signups.playerId))
     .where(and(eq(signups.eventId,event.id),eq(signups.status,'active'),gt(signups.requestedHours,0)))
@@ -138,7 +148,7 @@ async function state() {
   }));
   const requestRows = await db.select({request:matchRequests,creatorName:players.name}).from(matchRequests).innerJoin(players,eq(players.id,matchRequests.creatorPlayerId)).where(eq(matchRequests.eventId,event.id));
   const requests = requestRows.filter(({request})=>request.creatorPlayerId===user.id||JSON.parse(request.invitedMemberNos).includes(user.memberNo)).map(({request,creatorName})=>({id:request.id,creatorName,status:request.status,isCreator:request.creatorPlayerId===user.id,isInvited:JSON.parse(request.invitedMemberNos).includes(user.memberNo),accepted:JSON.parse(request.acceptedPlayerIds).includes(user.id),acceptedCount:JSON.parse(request.acceptedPlayerIds).length}));
-  return { authenticated:true,user:visibleMember(user),event,isOpen,firstMatchAt,times:TIMES,calendarDates,registeredMembers,importedMatches,optimizerWeights,adminPlanScores,signup:signup?{...signup,...signupFields(signup)}:noSignup(event.id,user.id),matches:event.status==="published"?eventMatches:[],adminMatches:user.role==="admin"?eventMatches:[],players:allPlayers,signups:memberSignups,signupHistory:signupHistory.map(row=>({...row,signup:{...row.signup,...signupFields(row.signup)}})),waitlist,names,planContacts,requests,optimizerDefaults:defaultWeights,registrationDefaults:defaults,substitutions:substitutionsForUser };
+  return { authenticated:true,user:visibleMember(user),event,isOpen,firstMatchAt,times,timeGroups,slots,playTimes,courtOrder,calendarDates,registeredMembers,importedMatches,optimizerWeights,adminPlanScores,signup:signup?{...signup,...signupFields(signup)}:noSignup(event.id,user.id),matches:event.status==="published"?eventMatches:[],adminMatches:user.role==="admin"?eventMatches:[],players:allPlayers,signups:memberSignups,signupHistory:signupHistory.map(row=>({...row,signup:{...row.signup,...signupFields(row.signup)}})),waitlist,names,planContacts,requests,optimizerDefaults:defaultWeights,optimizerResources,registrationDefaults:defaults,substitutions:substitutionsForUser };
 }
 
 export async function GET(){try{return Response.json(await state());}catch(error){return Response.json({error:error instanceof Error?error.message:"Appen kunne ikke indlæses"},{status:500});}}
@@ -199,6 +209,27 @@ export async function POST(request:Request){
     }else if(action==="logout"){await destroySession();return Response.json({ok:true});}
     else{
       const user=await currentPlayer(); if(!user)return Response.json({error:"Log ind igen."},{status:401});
+      if(action==='admin_update_signup') {
+        if(user.role!=='admin')return Response.json({error:'Kun administratorer kan rette andres tilmeldinger.'},{status:403});
+        if(!Number.isSafeInteger(body.eventId)||!Number.isSafeInteger(body.signupId)||body.signupId<1)return Response.json({error:'Ugyldig tilmelding.'},{status:400});
+        const event=await ensureEvent();
+        if(!event||event.id!==body.eventId)return Response.json({error:'Spillerunden er ændret. Genindlæs siden.'},{status:409});
+        const [signup]=await db.select().from(signups).where(and(eq(signups.id,body.signupId),eq(signups.eventId,event.id))).limit(1);
+        if(!signup)return Response.json({error:'Tilmeldingen findes ikke i denne runde.'},{status:404});
+        const expected=body.expected;
+        if(!expected||expected.requestedHours!==signup.requestedHours||expected.availability!==signup.availability||expected.status!==signup.status)
+          return Response.json({error:'Tilmeldingen er ændret, siden vinduet blev åbnet. Genindlæs siden og åbn den igen.'},{status:409});
+        let input;
+        try {
+          input=signupInput(body,(await loadPlaySchedule()).times);
+          if(input.nHours<1)throw new Error('Vælg 1–3 timer. Brug Status i listen til afbud.');
+        } catch(error){return Response.json({error:error instanceof Error?error.message:'Kontrollér spilleønskerne.'},{status:400});}
+        const updated=await db.update(signups).set({requestedHours:input.nHours,availability:JSON.stringify(input.szPossible)})
+          .where(and(eq(signups.id,signup.id),eq(signups.eventId,event.id),eq(signups.requestedHours,signup.requestedHours),eq(signups.availability,signup.availability),eq(signups.status,signup.status),
+            sql`EXISTS (SELECT 1 FROM events WHERE id=${event.id} AND status=${event.status})`)).returning({id:signups.id});
+        if(!updated.length)return Response.json({error:'Tilmeldingen eller runden blev ændret. Genindlæs siden og prøv igen.'},{status:409});
+        return NextResponse.json(await state());
+      }
       if(action==="set_signup_status"){
         if(user.role!=="admin")return Response.json({error:"Kun administratorer kan ændre tilmeldingsstatus."},{status:403});
         if(!["active","waitlist","cancelled"].includes(body.status))return Response.json({error:"Vælg en gyldig status."},{status:400});
@@ -257,12 +288,34 @@ export async function POST(request:Request){
         await db.update(players).set(profile).where(eq(players.id,user.id));
         return NextResponse.json(await state());
       }
+      if(action==='set_optimizer_resources') {
+        if(user.role!=='admin')return Response.json({error:'Kun administratorer har adgang.'},{status:403});
+        let weights:string;
+        try {weights=JSON.stringify({optimizerResources:parseOptimizerResources(body.optimizerResources)});}
+        catch(error){return Response.json({error:error instanceof Error?error.message:'Kontrollér CPU og tid.'},{status:400});}
+        await db.insert(optimizerDefaults).values({id:1,weights}).onConflictDoUpdate({target:optimizerDefaults.id,set:{weights:sql`json_patch(${optimizerDefaults.weights}, ${weights})`}});
+        return NextResponse.json(await state());
+      }
       if(action==='set_optimizer_defaults') {
         if(user.role!=='admin')return Response.json({error:'Kun administratorer har adgang.'},{status:403});
         let weights: string;
         try { weights = JSON.stringify(parseAlgorithmWeights(body.weights)); }
         catch(error) { return Response.json({error:error instanceof Error ? error.message : 'Kontrollér faktorerne.'},{status:400}); }
-        await db.insert(optimizerDefaults).values({id:1,weights}).onConflictDoUpdate({target:optimizerDefaults.id,set:{weights}});
+        await db.insert(optimizerDefaults).values({id:1,weights}).onConflictDoUpdate({target:optimizerDefaults.id,set:{weights:sql`json_patch(${optimizerDefaults.weights}, ${weights})`}});
+        return NextResponse.json(await state());
+      }
+      if(action==='set_court_order' || action==='set_play_times') {
+        if(user.role!=='admin')return Response.json({error:'Kun administratorer har adgang.'},{status:403});
+        let weights: string;
+        try {
+          const current=await loadPlaySchedule();
+          const courtOrder=action==='set_court_order'?parseCourtOrder(body.courtOrder):current.courtOrder;
+          const playTimes=action==='set_play_times'?parsePlayTimes(body.playTimes):current.playTimes;
+          buildPlaySchedule(courtOrder,playTimes);
+          weights=JSON.stringify(action==='set_court_order'?{courtOrder}:{playTimes});
+        }
+        catch(error){return Response.json({error:error instanceof Error?error.message:'Kontrollér banerækkefølgen.'},{status:400});}
+        await db.insert(optimizerDefaults).values({id:1,weights}).onConflictDoUpdate({target:optimizerDefaults.id,set:{weights:sql`json_patch(${optimizerDefaults.weights}, ${weights})`}});
         return NextResponse.json(await state());
       }
       if(action==='set_registration_defaults') {
@@ -383,7 +436,7 @@ export async function POST(request:Request){
         if(Number(body.eventId) !== event.id) return Response.json({error:"Spillerunden er ændret. Genindlæs siden."},{status:409});
         let schedule;
         try { schedule = registrationSchedule(body); } catch(error) { return Response.json({error:error instanceof Error ? error.message : "Kontrollér tidsplanen."},{status:400}); }
-        await db.update(events).set(schedule).where(eq(events.id,event.id));
+        await db.update(events).set({...schedule,registrationScheduleCustom:true}).where(eq(events.id,event.id));
         return NextResponse.json(await state());
       }
       const registrationOpen=registrationIsOpen(event);
@@ -392,7 +445,7 @@ export async function POST(request:Request){
         if (Number(body.eventId) !== event.id) return Response.json({error:'Spillerunden er ændret. Genindlæs siden.'},{status:409});
         if (!waitlistIsOpen(event, await eventFirstMatchAt(event))) return Response.json({error:'Ventelisten er kun åben efter tilmeldingsfristen, når tilmeldingen er lukket, og før første kamp.'},{status:400});
         let input;
-        try { input = signupInput(body,TIMES); if (input.nHours < 1) throw new Error('Vælg mindst 1 time.'); }
+        try { input = signupInput(body,(await loadPlaySchedule()).times); if (input.nHours < 1) throw new Error('Vælg mindst 1 time.'); }
         catch(error) { return Response.json({error:error instanceof Error ? error.message : 'Kontrollér dine ønsker.'},{status:400}); }
         await db.insert(signups).values({eventId:event.id,playerId:user.id,availability:JSON.stringify(input.szPossible),requestedHours:input.nHours,status:'waitlist'})
           .onConflictDoUpdate({target:[signups.eventId,signups.playerId],set:{availability:JSON.stringify(input.szPossible),requestedHours:input.nHours,status:'waitlist'}});
@@ -406,7 +459,7 @@ export async function POST(request:Request){
         return Response.json(member?{found:true,name:member.name}:{found:false,error:"Medlemsnummeret findes ikke i appen endnu. Spilleren skal først oprette en profil."});
       }else if(action==="signup"){
         let input;
-        try {input=signupInput(body,TIMES);} catch(error) {return Response.json({error:error instanceof Error?error.message:"Kontrollér dine tidsønsker."},{status:400});}
+        try {input=signupInput(body,(await loadPlaySchedule()).times);} catch(error) {return Response.json({error:error instanceof Error?error.message:"Kontrollér dine tidsønsker."},{status:400});}
         const availability=input.szPossible,requestedHours=input.nHours;
         await db.insert(signups).values({eventId:event.id,playerId:user.id,availability:JSON.stringify(availability),requestedHours,status:"active"}).onConflictDoUpdate({target:[signups.eventId,signups.playerId],set:{availability:JSON.stringify(availability),requestedHours,status:"active"}});
       }else if(action==="cancel_signup")await db.insert(signups).values({eventId:event.id,playerId:user.id,status:"cancelled",requestedHours:0,availability:'[]'}).onConflictDoUpdate({target:[signups.eventId,signups.playerId],set:{status:"cancelled",requestedHours:0,availability:'[]'}});
@@ -486,7 +539,11 @@ export async function POST(request:Request){
           if(!makeAdmin&&target.role==="admin"&&adminCount<=1)return Response.json({error:"Den sidste administrator kan ikke fjernes."},{status:400});
           await db.update(players).set({role:makeAdmin?"admin":"player"}).where(eq(players.id,playerId));
         }
-        else if(action==="update_match")await db.update(matches).set({court:Number(body.court),startTime:String(body.startTime),playerIds:JSON.stringify(body.playerIds.map(Number)),locked:Boolean(body.locked)}).where(and(eq(matches.id,Number(body.id)),eq(matches.eventId,event.id)));
+        else if(action==="update_match") {
+          const {slots}=await loadPlaySchedule();
+          if(!slots.some(s=>s.court===Number(body.court)&&s.startTime===String(body.startTime)))return Response.json({error:'Banen er ikke til rådighed på dette tidspunkt.'},{status:400});
+          await db.update(matches).set({court:Number(body.court),startTime:String(body.startTime),playerIds:JSON.stringify(body.playerIds.map(Number)),locked:Boolean(body.locked)}).where(and(eq(matches.id,Number(body.id)),eq(matches.eventId,event.id)));
+        }
         else if(action==="mark_absent")await db.update(players).set({suspendedEventId:event.id}).where(eq(players.id,Number(body.playerId)));
       }
     }

@@ -3,7 +3,7 @@ const minutes = (value: unknown) => {
   return match ? Number(match[1]) * 60 + Number(match[2]) : NaN;
 };
 
-export function unusedImportedCourts(rows: Record<string, unknown>[], times: string[]) {
+export function unusedImportedCourts(rows: Record<string, unknown>[], times: string[], slots?: {court:number;startTime:string}[]) {
   if (!rows.length) return [];
   const matches = rows.map(row => ({
     court: Number(String(row.C ?? '').replace(/^Bane\s*/i, '').trim()),
@@ -11,7 +11,7 @@ export function unusedImportedCourts(rows: Record<string, unknown>[], times: str
   }));
   return times.map(time => {
     const start = minutes(time);
-    return { time, courts: (time.endsWith(':30') ? [5,6,7] : [1,2,3,4]).filter(court =>
+    return { time, courts: (slots ? slots.filter(s=>s.startTime===time).map(s=>s.court) : time.endsWith(':30') ? [5,6,7] : [1,2,3,4]).filter(court =>
       !matches.some(match => match.court === court && match.start < start + 60 && match.end > start)) };
   }).filter(slot => slot.courts.length > 0);
 }

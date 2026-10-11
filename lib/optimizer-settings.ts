@@ -7,6 +7,7 @@ export const optimizerHelp: Record<keyof AlgorithmWeights, string> = {
   FactorSameTeamLastWeek: 'Fradrag for hvert makkerpar, der også spillede sammen i seneste afholdte runde.',
   FactorSameTeam3Weeks: 'Fradrag for hvert makkerpar, der spillede sammen i en af de seneste tre afholdte runder. Kan lægges oven i fradraget for seneste runde.',
   FactorOpponentLastWeek: 'Fradrag for hvert par modstandere, der også mødtes i seneste afholdte runde.',
+  FactorOpponentThisWeek: 'Fradrag for hvert ekstra møde mellem de samme to modstandere i denne kampplan. Første møde er uden fradrag. Standardværdien er 5; 0 slår fradraget fra. Gælder både single og double.',
   FactorDoubleSameSex: 'Fradrag for en double med fire spillere af samme køn.',
   FactorSingle: 'Fradrag for en single, uanset spillernes køn.',
   Factor3OfAKind: 'Fradrag for en double med tre spillere af samme køn.',

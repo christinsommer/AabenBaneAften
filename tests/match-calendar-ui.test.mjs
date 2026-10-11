@@ -52,7 +52,44 @@ test('optimizer has a compact two-column grid, integer distance input and help f
   assert.match(html,/<input[^>]+name="FactorDistanceSameTeamA"[^>]*value="2"/);
   assert.doesNotMatch(html,/<select[^>]+name="FactorDistanceSameTeamA"/);
   assert.match(html,/name="FactorSingle"[^>]*value="50"/);
+  assert.match(html,/name="FactorOpponentThisWeek"[^>]*value="5"/);
   for(const name of Object.keys(algorithmWeightDefaults)) assert.ok(html.includes(`aria-label="Info om ${name}"`));
+});
+
+test('admin settings render the configurable weekly opponent default', async () => {
+  const {OptimizerDefaultsForm}=await vite.ssrLoadModule('/app/optimizer-defaults-form.tsx');
+  const {algorithmWeightDefaults}=await vite.ssrLoadModule('/lib/optimizer.ts');
+  const html=renderToStaticMarkup(React.createElement(OptimizerDefaultsForm,{defaults:{...algorithmWeightDefaults,FactorOpponentThisWeek:17},act:async()=>true,busy:false}));
+  assert.match(html,/FactorOpponentThisWeek<\/span><input[^>]*value="17"/);
+});
+
+test('admin court settings show both named orders and their defaults', async () => {
+  const {CourtOrderForm}=await vite.ssrLoadModule('/app/court-order-form.tsx');
+  const html=renderToStaticMarkup(React.createElement(CourtOrderForm,{act:async()=>true,busy:false}));
+  assert.match(html,/Hele timer rækkefølge/);
+  assert.match(html,/Halve timer rækkefølge/);
+  assert.match(html,/value="4, 3, 2, 1"/);
+  assert.match(html,/value="5, 6, 7"/);
+});
+
+test('admin start-time settings render both configurable summer time groups', async () => {
+  const {PlayTimesForm}=await vite.ssrLoadModule('/app/play-times-form.tsx');
+  const html=renderToStaticMarkup(React.createElement(PlayTimesForm,{defaults:{whole:['17:00','18:00'],half:['17:30','18:30']},act:async()=>true,busy:false}));
+  assert.match(html,/Hele timer tider/);
+  assert.match(html,/Halve timer tider/);
+  assert.match(html,/value="17:00, 18:00"/);
+  assert.match(html,/value="17:30, 18:30"/);
+});
+
+test('signup edit trigger is labelled for its member and disabled for historical rounds', async () => {
+  const {EditSignupButton}=await vite.ssrLoadModule('/app/edit-signup-button.tsx');
+  const props={signup:{id:1,requestedHours:1,availability:'["18:00","19:00"]',status:'active'},eventId:1,name:'Anne Jensen',times:['18:00','19:00'],busy:false,disabled:false,act:async()=>true};
+  const html=renderToStaticMarkup(React.createElement(EditSignupButton,props));
+  assert.match(html,/aria-label="Rediger tilmelding for Anne Jensen"/);
+  assert.match(html,/aria-haspopup="dialog"/);
+  assert.doesNotMatch(html,/disabled=""/);
+  assert.doesNotMatch(html,/>Rediger</);
+  assert.match(renderToStaticMarkup(React.createElement(EditSignupButton,{...props,disabled:true})),/disabled=""/);
 });
 
 test('click downloads a calendar file containing the selected match', async (t) => {

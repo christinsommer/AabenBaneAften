@@ -10,7 +10,7 @@ export function RegistrationDefaultsForm({defaults,act,busy}: {defaults:Registra
   const [error,setError]=useState('');
   const [saved,setSaved]=useState(false);
   return <Card className="border-[#dce9e1]">
-    <CardHeader><CardTitle>Standard for tilmelding</CardTitle><CardDescription>Bruges til nye spilledage. Tidspunkterne er dansk tid.</CardDescription></CardHeader>
+    <CardHeader><CardTitle>Standard for tilmelding</CardTitle><CardDescription>Bruges også til den næste spillerunde, selvom datoen allerede findes i kalenderen. Gælder automatiske tidsplaner, indtil tilmeldingen åbner. Tidspunkterne er dansk tid.</CardDescription></CardHeader>
     <CardContent><form className="space-y-4" onSubmit={async event=>{
       event.preventDefault();setSaved(false);setError('');
       try {const parsed=parseRegistrationDefaults(values);if(await act({action:'set_registration_defaults',...parsed}))setSaved(true);}

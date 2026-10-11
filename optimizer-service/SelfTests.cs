@@ -10,6 +10,20 @@ public static class SelfTests
     public static void Run()
     {
         var oneCourt = new[] { new Slot(1, "18:00") };
+        var resourceInput = Data(Enumerable.Range(1,4).Select(i=>P(i)).ToArray(),oneCourt) with {OptimizerResources=new(1,10)};
+        Check(Scheduler.Solve(resourceInput).Matches.Length==1,"Configured CPU and time can solve a round");
+        Check(Scheduler.Solve(resourceInput with {OptimizerResources=new(1,900)}).Matches.Length==1,"900 second limit is accepted");
+        foreach(var resources in new[] {new OptimizerResources(0,600),new OptimizerResources(33,600),new OptimizerResources(4,0),new OptimizerResources(4,901)}) {
+            var rejected=false;
+            try {Scheduler.Solve(resourceInput with {OptimizerResources=resources});} catch(ArgumentException) {rejected=true;}
+            Check(rejected,"Invalid CPU or time must be rejected");
+        }
+        var summerPlayers=Enumerable.Range(1,4).Select(i=>P(i,times:["17:30","18:00"])).ToArray();
+        var summer=Scheduler.Solve(Data(summerPlayers,[new Slot(12,"17:30"),new Slot(8,"17:30")]),30);
+        Check(summer.Matches.Length==1 && summer.Matches[0].Court==12,"Summer court numbers and administrator priority are respected");
+        var shared=Scheduler.Solve(Data(Enumerable.Range(1,8).Select(i=>P(i,times:["17:30","18:00"])).ToArray(),
+            [new Slot(12,"17:30"),new Slot(12,"18:00")]),30);
+        Check(shared.Matches.Length==1,"A court shared across whole and half-hour starts cannot be double-booked");
         var spouses = new[] {P(1,cr:1) with {SpouseNo=2,SpouseMode=2}, P(2,cr:5),P(3,cr:3),P(4,cr:3)};
         var together = Scheduler.Solve(Data(spouses,oneCourt),30);
         Check(together.Matches.Length==1 && together.Matches.SelectMany(m=>new[]{m.Team1,m.Team2}).Any(t=>t.Contains(1)&&t.Contains(2)), "Spouses must partner despite CR gap");
@@ -24,6 +38,22 @@ public static class SelfTests
         repeatPlayers[0]=repeatPlayers[0] with {SpouseNo=2,SpouseMode=2};
         repeatPlayers[2]=repeatPlayers[2] with {SpouseNo=4,SpouseMode=2};
         Check(Scheduler.Solve(Data(repeatPlayers,repeatSlots,locked:repeatedLocks),30).Matches.Length==2,"Spouse teams may repeat");
+        Check(new Weights().FactorOpponentThisWeek == 5, "Default weekly opponent penalty is 5");
+        var threeSlots = new[] {new Slot(1,"18:00"),new Slot(1,"19:00"),new Slot(1,"20:00")};
+        var threeLocks = repeatedLocks.Append(new Match(1,"20:00",[3,4],[1,2])).ToArray();
+        var threePlayers = repeatPlayers.Select(p => p with {RequestedHours=3}).ToArray();
+        foreach (var factor in new[] {0,5,7,-5}) {
+            var repeated = Scheduler.Solve(Data(threePlayers,threeSlots,new Weights(FactorOpponentThisWeek:factor),locked:threeLocks),30);
+            Check(repeated.Score == 285 - 8 * factor, "Four opponent pairs repeated twice; teams and spouse exceptions do not change penalty");
+        }
+        var singleTimes = new[] {"20:30","21:30","22:30"};
+        var singlePlayers = new[] {P(1,3,singleTimes),P(2,3,singleTimes)};
+        var singleLocks = singleTimes.Select(t=>new Match(1,t,[1],[2])).ToArray();
+        Check(Scheduler.Solve(Data(singlePlayers,singleTimes.Select(t=>new Slot(1,t)).ToArray(),locked:singleLocks),30).Score==260,
+            "Single opponents repeated three times incur two penalties");
+        var diverse = Scheduler.Solve(Data(Enumerable.Range(1,8).Select(i=>P(i,2)).ToArray(),
+            [new Slot(1,"18:00"),new Slot(2,"18:00"),new Slot(1,"19:00"),new Slot(2,"19:00")]),30);
+        Check(diverse.Matches.Length==4 && diverse.Score==380,"Optimizer chooses different opponents when all hours can be preserved");
         var simultaneous = Enumerable.Range(1,8).Select(i=>P(i)).ToArray();
         simultaneous[0]=simultaneous[0] with {SpouseNo=2,SpouseMode=1};
         var separate = Scheduler.Solve(Data(simultaneous,[new Slot(1,"18:00"),new Slot(2,"18:00")],
