@@ -6,9 +6,9 @@ import {Button} from '../components/ui/button';
 import {Input} from '../components/ui/input';
 import {Label} from '../components/ui/label';
 import {ImportedPlanTable} from './imported-plan';
-import {algorithmWeightDefaults, type AlgorithmWeights, type ProposedMatch} from '../lib/optimizer';
+import type {AlgorithmWeights, ProposedMatch} from '../lib/optimizer';
 import type {UnfulfilledWish} from '../lib/unfulfilled-wishes';
-import {optimizerHelp, weightFields} from '../lib/optimizer-settings';
+const weightFields=(value?:AlgorithmWeights)=>Object.fromEntries(Object.entries(value??{}).map(([k,v])=>[k,String(v)]));
 import {Popover, PopoverContent, PopoverTrigger} from '../components/ui/popover';
 
 type Proposal = {
@@ -16,7 +16,8 @@ type Proposal = {
   weights: AlgorithmWeights; historyDates: string[];
   allocation: {id: number; name: string; memberNo: string; signupOrder: number; status: string; requested: number; assigned: number}[];
 };
-export function OptimizerPanel({event, rows, wishes, initialWeights, isOpen, busy, refresh, clearPlan}: {
+export function OptimizerPanel({event, rows, wishes, initialWeights, isOpen, busy, refresh, clearPlan, canConfigure=false,descriptions={}}: {
+  descriptions?:Record<string,string>; canConfigure?: boolean;
   clearPlan: () => Promise<boolean>;
   wishes: UnfulfilledWish[];
   initialWeights?: AlgorithmWeights;
@@ -49,7 +50,7 @@ export function OptimizerPanel({event, rows, wishes, initialWeights, isOpen, bus
       }
       if (action === 'solve' && !await clearPlan()) throw new Error('Kampplanen kunne ikke fjernes.');
       const result = action === 'solve' ? await request({action: 'solve',
-        weights: Object.fromEntries(Object.entries(weights).map(([k,v]) => [k, v === '' ? '' : Number(v)])),
+        weights: canConfigure?Object.fromEntries(Object.entries(weights).map(([k,v]) => [k, v === '' ? '' : Number(v)])):undefined,
       }) : proposal!;
       setProposal(result);
       setWeights(weightFields(result.weights));
@@ -71,14 +72,14 @@ export function OptimizerPanel({event, rows, wishes, initialWeights, isOpen, bus
       {exporting ? 'Eksporterer…' : 'Eksporter kampplan'}
     </Button>
     </div>
-    <div className="grid grid-cols-2 gap-x-3 gap-y-2 lg:grid-cols-4">
-      {Object.entries(algorithmWeightDefaults).map(([name, fallback]) => <div key={name} className="min-w-0 space-y-1">
+    {canConfigure&&<><div className="grid grid-cols-2 gap-x-3 gap-y-2 lg:grid-cols-4">
+      {Object.entries(initialWeights??{}).map(([name, fallback]) => <div key={name} className="min-w-0 space-y-1">
         <div className="flex min-h-9 items-center gap-1">
           <Label className="min-w-0 flex-1 text-[11px] leading-tight [overflow-wrap:anywhere]" htmlFor={`algorithm-${name}`}>{name}</Label>
           <Popover><PopoverTrigger asChild><button type="button" aria-label={`Info om ${name}`} className="flex size-8 shrink-0 items-center justify-center rounded-full text-[#13375e] hover:bg-slate-100 focus-visible:outline-2">
             <Info className="size-4" aria-hidden="true" />
           </button></PopoverTrigger><PopoverContent className="max-w-[calc(100vw-2rem)] text-sm" side="top">
-            <p className="mb-1 break-words font-semibold">{name}</p><p>{optimizerHelp[name as keyof AlgorithmWeights]}</p>
+            <p className="mb-1 break-words font-semibold">{name}</p><p>{descriptions[name]}</p>
           </PopoverContent></Popover>
         </div>
         {<Input id={`algorithm-${name}`} name={name} type="number" step={1} min={-1000000} max={1000000} disabled={disabled} className="h-9 px-2 text-base"
@@ -91,7 +92,7 @@ export function OptimizerPanel({event, rows, wishes, initialWeights, isOpen, bus
       </div>)}
     </div>
     <p className="text-sm text-slate-600">Vægtene skal være heltal. Tomme felter bruger standardværdien. FactorAge kræver fødselsår på alle tilmeldte medlemmer.</p>
-    <p className="text-sm text-slate-600">FactorSameTeamDifference vægter CR-forskellen mellem medspillerne på begge hold. Standardværdien er 15; 0 slår dette fradrag fra. Singlekampe får intet fradrag for denne faktor.</p>
+    </>}
     <p className="text-sm text-slate-600">Første spilletime prioriteres før anden og tredje time for tilmeldte spillere. Derefter prioriteres flere kampe, kampscore og til sidst tidlige tider. Single er tilladt fra kl. 20:30, også på tværs af køn.</p>
     {isOpen && <p className="text-sm text-slate-600">Luk tilmeldingen, før du laver et kampforslag.</p>}
 

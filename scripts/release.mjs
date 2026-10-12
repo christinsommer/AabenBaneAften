@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync, openSync, closeSync, unlinkSync, readdirSync, statSync } from 'node:fs';
+import { mkdirSync, writeFileSync, openSync, closeSync, unlinkSync, readdirSync, statSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import Database from 'better-sqlite3';
+import {verifyExport,compareExports} from './privacy-backup-lib.mjs';
 
 const check = process.argv.includes('--check');
 if (process.argv.slice(2).some(arg => arg !== '--check')) throw new Error('Usage: node scripts/release.mjs [--check]');
@@ -55,14 +55,11 @@ try {
     mkdirSync(directory);
     await run(wrangler, ['d1', 'export', 'DB', '--remote', `--output=${directory}/database.sql`], `${directory}/backup.log`);
     if (statSync(`${directory}/database.sql`).size < 100) throw new Error('Backup is empty; deployment stopped');
-    const restored = new Database(':memory:');
-    try {
-      restored.exec(readFileSync(`${directory}/database.sql`, 'utf8'));
-      restored.prepare('SELECT id FROM players LIMIT 0').all();
-      restored.prepare('SELECT id FROM events LIMIT 0').all();
-      if (restored.pragma('quick_check', { simple: true }) !== 'ok') throw new Error('Backup integrity check failed');
-    } finally { restored.close(); }
+    const backupReport = verifyExport(directory+'/database.sql', directory+'/restored-rehearsal.sqlite');
+    console.log('Backup restored and migration rehearsed; counts:', JSON.stringify(backupReport.counts));
     await run(wrangler, ['d1', 'migrations', 'apply', 'DB', '--remote']);
+    await run(wrangler, ['d1', 'export', 'DB', '--remote', '--output='+directory+'/after-migration.sql'], directory+'/after-export.log');
+    compareExports(directory+'/database.sql',directory+'/after-migration.sql');
     await run(adapter, ['deploy']);
     let verified = false;
     for (let attempt = 0; attempt < 20; attempt++) {

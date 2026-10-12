@@ -49,3 +49,12 @@ restart-dev.*.log
 /optimizer-service/obj/
 /optimizer-service/.dotnet/
 /optimizer-service/.nuget/
+
+# Private privacy backups and exports
+/backups/
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+*.eml
+/.privacy-test-*/

@@ -42,7 +42,7 @@ test('real CP-SAT service and D1: permissions, closed registration, history, val
       await db.prepare("INSERT INTO events(id,date,registration_opens_at,registration_closes_at,status) VALUES(?,?,?,?,'published')").bind(id,date,date,date).run();
       await db.prepare("INSERT INTO matches(event_id,court,start_time,player_ids) VALUES(?,1,'18:00','[1,2,3,4]')").bind(id).run();
     }
-    globalThis.__optimizerTest={user:{id:1,role:'admin'},env:{DB:db,OPTIMIZER_URL:'https://optimizer.test',OPTIMIZER_API_KEY:key}};
+    globalThis.__optimizerTest={user:{id:1,role:'admin'},env:{DB:db,SUPERADMIN_PLAYER_ID:'1',OPTIMIZER_URL:'https://optimizer.test',OPTIMIZER_API_KEY:key}};
     const outfile=join(directory,'route.mjs');
     await build({entryPoints:['app/api/optimizer/route.ts'],outfile,bundle:true,platform:'node',format:'esm',packages:'external',plugins:[{
       name:'optimizer-test-context',setup(builder) {
@@ -174,6 +174,14 @@ test('real CP-SAT service and D1: permissions, closed registration, history, val
     assert.equal(storedManual[0]._manualDistanceNames.length,2);
     assert.ok(storedManual[0]._manualDistanceNames.includes('Player 1 Test'));
     assert.equal((await (await post('edit_context',{weights})).json()).exceptions.length,1,'exception survives reload');
+    globalThis.__optimizerTest.env.SUPERADMIN_PLAYER_ID='2';
+    assert.equal((await post()).status,403,'local admin cannot override optimizer factors');
+    const localContext=await post('edit_context',{weights:{}});
+    assert.equal(localContext.status,200);
+    const localPlan=await localContext.json();
+    assert.equal(localPlan.weights,undefined,'configured factors never leave server for local admin');
+    assert.equal((await post('save_edit',{weights:{},matches:localPlan.matches,fingerprint:localPlan.fingerprint})).status,200,'local admin can edit and save using original server-side factors');
+    globalThis.__optimizerTest.env.SUPERADMIN_PLAYER_ID='1';
     imported[0].D='Unknown member';
     await db.prepare('UPDATE events SET imported_kampplan=? WHERE id=2').bind(JSON.stringify(imported)).run();
     assert.match((await (await post()).json()).error,/entydigt/);

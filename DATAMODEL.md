@@ -134,3 +134,6 @@ En aktiv testrunde skal afsluttes, før den kan fjernes.
 Forsiden viser den aktive testrunde eller den næste ikke-arkiverede, ikke-aflyste
 dato fra og med dags dato i Danmark. Når listen er udløbet, vises en tom kalender,
 og administratoren kan tilføje flere spilledage. Profilen er stadig tilgængelig.
+
+## Privatliv og nyhedsmails
+Migration 0016 er en additiv custom SQL-migration. Tabeller, relationer, tekniske restposter og begrænsninger er beskrevet i [GDPR_SLUTRAPPORT.md](./GDPR_SLUTRAPPORT.md). Privatlivstabeller vedligeholdes via nye custom SQL-migrationer; brug ikke drizzle-kit push.

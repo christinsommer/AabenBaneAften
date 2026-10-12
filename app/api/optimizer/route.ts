@@ -1,3 +1,4 @@
+import {isSuperAdmin} from '../../../lib/superadmin';
 import { getCloudflareContext } from '@opennextjs/cloudflare';
 import { and, eq, sql } from 'drizzle-orm';
 import { currentPlayer } from '../../../lib/auth';
@@ -16,7 +17,13 @@ export async function POST(request: Request) {
     if (user.role !== 'admin') return Response.json({error: 'Kun administratorer kan foreslå kampe.'}, {status: 403});
     const body = await request.json() as {action: string; eventId: number; weights: unknown; fingerprint?: string; matches?: unknown} | null;
     if (!body || !['solve', 'save', 'save_edit', 'edit_context', 'review_edit'].includes(body.action) || !Number.isSafeInteger(body.eventId)) return Response.json({error: 'Ugyldig anmodning.'}, {status: 400});
-    const loaded = await loadOptimizerInput(body.eventId, body.weights);
+    if(!isSuperAdmin(user)&&body.weights&&Object.keys(body.weights as object).length)return Response.json({error:'Kun SuperAdmin kan ændre optimeringsfaktorer.'},{status:403});
+    let requestedWeights=isSuperAdmin(user)?body.weights:undefined;
+    if(!isSuperAdmin(user)&&['edit_context','review_edit','save_edit'].includes(body.action)) {
+      const [stored]=await getDb().select({plan:events.importedKampplan}).from(events).where(eq(events.id,body.eventId)).limit(1);
+      try{requestedWeights=JSON.parse(stored?.plan||'[]')[0]?._optimizerWeights;}catch{/* Legacy plan: use current server defaults. */}
+    }
+    const loaded = await loadOptimizerInput(body.eventId, requestedWeights);
     const {input, names} = loaded;
     if (body.action === 'edit_context') {
       const normalize = (value: string) => value.normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('da-DK');
@@ -30,7 +37,7 @@ export async function POST(request: Request) {
       const plan = rows.map(row => ({court: Number(row.C.replace(/\D/g, '')), startTime: row.A.replace('.', ':'),
         team1: [row.D, row.E].filter(Boolean).map(resolve), team2: [row.F, row.G].filter(Boolean).map(resolve)}));
       return Response.json({matches: plan, players: input.players.map(p => ({id:p.id, name:names.get(p.id)})), locked: input.locked,
-        weights: input.weights, fingerprint: loaded.fingerprint, ...reviewPlan(plan, input)});
+        weights: isSuperAdmin(user)?input.weights:undefined, fingerprint: loaded.fingerprint, ...reviewPlan(plan, input)});
     }
     if (body.action === 'review_edit') {
       if (body.fingerprint !== loaded.fingerprint) return Response.json({error: 'Tilmeldinger, medlemmer eller kampplan er ændret. Annuller redigeringen og indlæs den nyeste plan.'}, {status:409});
@@ -95,7 +102,7 @@ export async function POST(request: Request) {
     const reloaded = await loadOptimizerInput(body.eventId, input.weights);
     if (reloaded.fingerprint !== loaded.fingerprint) return Response.json({error: 'Data blev ændret under beregningen. Lav et nyt forslag.'}, {status: 409});
     return Response.json({matches: plan, rows: proposalRows(plan, names), scores, score, status: result.status,
-      stages: result.stages, fingerprint: loaded.fingerprint, weights: input.weights, historyDates: input.history.map(r => r.date),
+      stages: isSuperAdmin(user)?result.stages:undefined, fingerprint: loaded.fingerprint, weights: isSuperAdmin(user)?input.weights:undefined, historyDates: input.history.map(r => r.date),
       allocation: input.players.map(p => ({id: p.id, name: names.get(p.id), memberNo: p.memberNo, status: p.status, signupOrder: p.signupOrder,
         requested: p.requestedHours, assigned: plan.filter(m => [...m.team1, ...m.team2].includes(p.id)).length})),
     });

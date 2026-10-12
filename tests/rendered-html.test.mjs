@@ -38,7 +38,7 @@ test("Cloudflare Worker renders and authenticates against isolated D1", { timeou
 
     worker = await unstable_dev(".open-next/worker.js", {
       config: "wrangler.jsonc", local: true, port: 0, persist: true, persistTo: directory,
-      vars: { RESEND_API_KEY: "" },
+      vars: { RESEND_API_KEY: "", SUPERADMIN_PLAYER_ID: "1" },
       logLevel: "error", experimental: { disableExperimentalWarning: true, watch: false },
     });
     const page = await worker.fetch("/");
@@ -84,7 +84,7 @@ test("Cloudflare Worker renders and authenticates against isolated D1", { timeou
     assert.equal((await post({action:'remove_date',eventId:state.event.id},cookie)).status,409);
     assert.equal(state.user.role, "admin");
     assert.equal(state.user.christinRanking,null);
-    assert.equal((await post({action:'delete_member',playerId:state.user.id,confirmMemberNo:'13993'},cookie)).status,400);
+    assert.equal((await post({action:'delete_member',playerId:state.user.id,confirmMemberNo:'13993'},cookie)).status,409);
     assert.equal(state.user.memberNo, "13993");
     assert.equal(state.user.pinHash, undefined);
     assert.equal(state.players.length, 1);
@@ -97,7 +97,7 @@ test("Cloudflare Worker renders and authenticates against isolated D1", { timeou
     assert.equal(state.isOpen,true);
     const current = await worker.fetch("/api/app", { headers: { cookie } });
     assert.equal((await current.json()).user.role, "admin");
-    const registration = await post({ action: "register", memberNo: "test-player", pin: "123456", firstName: "D1", lastName: "Player", email: "player@example.com", gender: "M", level: "B", christinRanking:9, role:"admin" });
+    const registration = await post({ action: "register", privacyRead:true,privacyVersion:"2026-10-12-v1", memberNo: "test-player", pin: "123456", firstName: "D1", lastName: "Player", email: "player@example.com", gender: "M", level: "B", christinRanking:9, role:"admin" });
     assert.equal(registration.status, 200);
     const registered=await registration.json();
     assert.equal(registered.user.role,"player");
@@ -274,10 +274,10 @@ test("Cloudflare Worker renders and authenticates against isolated D1", { timeou
     assert.equal(cleared.event.publishedAt,null);
     assert.ok(cleared.signupHistory.length > 0);
     for(const level of ['B+','A-','ukendt','a ukendt','']) {
-      assert.equal((await post({action:'register',memberNo:'invalid-ranking-'+level,pin:'123456',firstName:'Ranking',lastName:'Test',email:'ranking@example.com',gender:'K',level})).status,400);
+      assert.equal((await post({action:'register',privacyRead:true,privacyVersion:"2026-10-11-v1",memberNo:'invalid-ranking-'+level,pin:'123456',firstName:'Ranking',lastName:'Test',email:'ranking@example.com',gender:'K',level})).status,400);
     }
     for(const [level,cr] of Object.entries({A:2,AB:4,B:5,BC:7,C:8,Begynder:9})) {
-      const newMember=await post({action:'register',memberNo:'ranking-'+level,pin:'123456',firstName:'Ranking',lastName:'Test',email:'ranking@example.com',gender:'K',level,christinRanking:1});
+      const newMember=await post({action:'register',privacyRead:true,privacyVersion:"2026-10-11-v1",memberNo:'ranking-'+level,pin:'123456',firstName:'Ranking',lastName:'Test',email:'ranking@example.com',gender:'K',level,christinRanking:1});
       assert.equal(newMember.status,200);
       const newState=await newMember.json();
       assert.equal(newState.user.selfLevel,level);
@@ -285,29 +285,18 @@ test("Cloudflare Worker renders and authenticates against isolated D1", { timeou
       const adminRankingState=await (await worker.fetch('/api/app',{headers:{cookie}})).json();
       assert.equal(adminRankingState.players.find(p=>p.id===newState.user.id).christinRanking,cr);
     }
-    assert.equal((await post({action:'delete_member',playerId:updated.user.id,confirmMemberNo:'wrong'},cookie)).status,400);
-    const deletion=await post({action:'delete_member',playerId:updated.user.id,confirmMemberNo:'test-player'},cookie);
-    assert.equal(deletion.status,200);
-    const afterDelete=await deletion.json();
-    assert.equal(afterDelete.players.some(p=>p.id===updated.user.id),false);
-    assert.equal(afterDelete.signupHistory.some(row=>row.player.id===updated.user.id),false);
-    assert.equal((await (await worker.fetch('/api/app',{headers:{cookie:playerCookie}})).json()).authenticated,false);
-    assert.equal((await post({action:'login',memberNo:'test-player',pin:'123456'})).status,401);
-    assert.equal((await post({action:'delete_member',playerId:updated.user.id,confirmMemberNo:'test-player'},cookie)).status,404);
+    // The legacy destructive route is closed; historical relations and login are preserved.
+    assert.equal((await post({action:'delete_member',playerId:updated.user.id,confirmMemberNo:'test-player'},cookie)).status,409);
+    assert.equal((await (await worker.fetch('/api/app',{headers:{cookie:playerCookie}})).json()).authenticated,true);
     const logout = await post({ action: "logout" }, cookie);
     assert.equal(logout.status, 200);
     const loggedOut = await worker.fetch("/api/app", { headers: { cookie } });
     assert.equal((await loggedOut.json()).authenticated, false);
     await worker.stop(); worker=undefined;
     proxy=await getPlatformProxy({configPath:'wrangler.jsonc',persist:{path:join(directory,'v3')}});
-    assert.equal((await proxy.env.DB.prepare('SELECT count(*) AS n FROM sessions WHERE player_id=?').bind(updated.user.id).first()).n,0);
-    assert.equal((await proxy.env.DB.prepare('SELECT count(*) AS n FROM signups WHERE player_id=?').bind(updated.user.id).first()).n,0);
-    assert.equal((await proxy.env.DB.prepare('SELECT count(*) AS n FROM match_requests').first()).n,0);
-    assert.equal((await proxy.env.DB.prepare('SELECT count(*) AS n FROM feedback').first()).n,0);
+    assert.ok((await proxy.env.DB.prepare('SELECT count(*) AS n FROM sessions WHERE player_id=?').bind(updated.user.id).first()).n>0);
+    assert.ok((await proxy.env.DB.prepare('SELECT count(*) AS n FROM signups WHERE player_id=?').bind(updated.user.id).first()).n>0);
     assert.equal((await proxy.env.DB.prepare('SELECT count(*) AS n FROM matches').first()).n,1);
-    const replacement=await proxy.env.DB.prepare('SELECT replacement_player_id,status FROM substitutions LIMIT 1').first();
-    assert.equal(replacement.replacement_player_id,null);
-    assert.equal(replacement.status,'unresolved');
   } finally {
     await worker?.stop();
     await proxy?.dispose();

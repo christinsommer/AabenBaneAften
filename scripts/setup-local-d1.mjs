@@ -1,3 +1,6 @@
+import {spawnSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
+import {createHash} from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import Database from 'better-sqlite3';
@@ -16,11 +19,26 @@ try {
   if (existing && !initialized) throw new Error('Unknown local schema: refusing to overwrite existing data');
   const applied = initialized ? (await db.prepare('SELECT name FROM d1_migrations').all()).results.map(row => row.name) : [];
   const statements = [];
+  const manifest=JSON.parse(readFileSync('drizzle/checksums.json','utf8'));
+  const hash=value=>createHash('sha256').update(value).digest('hex');
+  async function fingerprint() {
+    const result={};
+    const tables=(await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT GLOB '_cf_*' AND name NOT IN ('d1_migrations','_cf_KV','privacy_migration_checksums') ORDER BY name").all()).results;
+    for(const {name} of tables){const rows=(await db.prepare(`SELECT * FROM "${name.replaceAll('"','""')}"`).all()).results.map(row=>JSON.stringify(row)).sort();result[name]={count:rows.length,hash:hash(rows.join('\n'))};}
+    return result;
+  }
+  const before=existing?await fingerprint():{};
   if (!initialized) statements.push(db.prepare('CREATE TABLE d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)'));
   for (const file of readdirSync('drizzle').filter(name => name.endsWith('.sql')).sort()) {
+    if(manifest[file]!==hash(readFileSync(`drizzle/${file}`, 'utf8').replaceAll('\r\n','\n')))throw new Error('Migration integrity mismatch: '+file);
     if (applied.includes(file)) continue;
     for (const sql of migrationStatements(readFileSync(`drizzle/${file}`, 'utf8'))) statements.push(db.prepare(sql));
     statements.push(db.prepare('INSERT INTO d1_migrations (name) VALUES (?)').bind(file));
+  }
+  if (existing && statements.length) {
+    const backup = spawnSync(process.execPath, [fileURLToPath(new URL('./backup-privacy.mjs', import.meta.url)), '--local'], {encoding:'utf8',windowsHide:true});
+    if(backup.status!==0)throw new Error('Local migration stopped: backup/rehearsal failed. '+backup.stderr);
+    console.log('Existing local D1 backup and restore rehearsal verified.');
   }
   let snapshot;
   if (!initialized && existsSync('.data/app.db')) {
@@ -42,10 +60,12 @@ try {
       }
       console.log(`Preserving ${table}: ${rows.length} rows`);
     }
+    statements.push(db.prepare("UPDATE profile_privacy SET last_active_at='2026-09-25T00:00:00.000Z',activity_known=0,activity_type='legacy-default'"));
     snapshot.close();
   }
   // A single D1 batch commits schema and imported rows together or rolls everything back.
   if (statements.length) await db.batch(statements);
+  if(existing&&statements.length){const after=await fingerprint();for(const [table,value]of Object.entries(before))if(JSON.stringify(value)!==JSON.stringify(after[table]))throw new Error('Migration changed existing data: '+table);console.log('Existing table counts and fingerprints preserved.');}
   const { members } = await db.prepare('SELECT COUNT(*) AS members FROM players').first();
   if (members === 0) {
     console.warn('WARNING: Local database contains no members. Existing logins will fail here. Restore a local backup or create a local profile.');

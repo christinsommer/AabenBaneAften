@@ -25,7 +25,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="da">
-      <body className="antialiased">{children}</body>
+      <body className="antialiased">{children}<footer className="mx-auto flex max-w-5xl flex-wrap gap-5 p-6 text-sm"><a href="/privacy">Privatlivsinformation</a><a href="/cookies">Cookieinformation</a></footer></body>
     </html>
   );
 }

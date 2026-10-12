@@ -1,4 +1,6 @@
 "use client";
+import {RegistrationPrivacy,PrivacyGate,NewsletterPreferences} from './privacy-ui';
+import PrivacyAdmin,{PrivacyBadge} from './privacy-admin';
 import { OptimizerDefaultsForm } from './optimizer-defaults-form';
 import { CourtOrderForm } from './court-order-form';
 import { OptimizerResourcesForm } from './optimizer-resources-form';
@@ -333,6 +335,7 @@ function AuthScreen({ mode, setMode, act, busy, error, event, resetToken }: any)
               <h2 className="text-2xl font-bold">Glemt pinkode</h2>
               <p className="mt-1 text-slate-500">Skriv dit medlemsnummer, så vi sender et link til den e-mail, der er knyttet til din profil.</p>
               <form onSubmit={handleForgotSubmit} className="mt-7 grid gap-4">
+                {mode === "register" && <RegistrationPrivacy/>}
                 <Field name="memberNo" label="HIK-medlemsnummer" autoComplete="username" />
                 {error && (
                   <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>
@@ -612,7 +615,7 @@ function Dashboard({ data, act, busy, error, openProfile, refresh, refreshing }:
   const showReminder =
     userMatches.length > 0 && now >= reminderStart && now <= reminderEnd;
   return (
-    <main className="min-h-screen bg-[#f4f6fa]">
+    <main className="min-h-screen bg-[#f4f6fa]"><PrivacyGate id={data.user.id}/>{data.user.role==='admin'&&<PrivacyBadge/>}
       <header className="sticky top-0 z-20 border-b border-[#dce9e1] bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3 sm:px-6">
           <div className="flex items-center gap-3">
@@ -745,7 +748,9 @@ function Dashboard({ data, act, busy, error, openProfile, refresh, refreshing }:
                 <CrReviewCount players={data.players} />
               </TabsTrigger>
             )}
+            {data.user.isSuperAdmin&&<TabsTrigger value="superadmin">SuperAdmin</TabsTrigger>}
           </TabsList>
+          {data.user.isSuperAdmin&&<TabsContent value="superadmin"><SuperAdminPanel data={data} act={act} busy={busy}/></TabsContent>}
           <TabsContent value="signup">
             <SignupPanel key={`${data.event.id}:${JSON.stringify(data.times)}`} data={data} act={act} busy={busy} />
           </TabsContent>
@@ -816,16 +821,16 @@ function CalendarList({dates,currentId,act,busy=false}: {dates:CalendarDate[];cu
 }
 
 function EmptyCalendarDashboard({data,act,busy,error,openProfile}: {
-  data:{user:MemberProfile & {id:number;role:string};calendarDates:CalendarDate[];players?:MemberProfile[]};
+  data:{user:MemberProfile & {id:number;role:string;isSuperAdmin?:boolean};calendarDates:CalendarDate[];players?:MemberProfile[]};
   act:AppAction;busy:boolean;error:string;openProfile:boolean;
 }) {
-  return <main className="min-h-screen bg-[#f4f6fa] px-4 py-8">
+  return <main className="min-h-screen bg-[#f4f6fa] px-4 py-8"><PrivacyGate id={data.user.id}/>{data.user.role==='admin'&&<PrivacyBadge/>}
     <div className="mx-auto max-w-5xl space-y-5">
       <div className="flex items-center justify-between"><h1 className="text-2xl font-bold">Åben Bane</h1><Button variant="outline" onClick={()=>act({action:"logout"})}><LogOut className="mr-2 h-4 w-4"/>Log ud</Button></div>
       <p className="rounded-xl bg-white p-4">Der er ingen kommende spilledage på listen. {data.user.role==="admin"?"Tilføj en dato nedenfor for at åbne en ny runde.":"Administratoren skal tilføje flere datoer. Du kan stadig ændre din profil."}</p>
       {error&&<p role="alert" className="rounded-xl bg-red-50 p-4 text-red-700">{error}</p>}
       <Tabs defaultValue={openProfile?"profile":"dates"}>
-        <TabsList><TabsTrigger value="dates"><CalendarDays className="mr-2 h-4 w-4"/>Spilledage</TabsTrigger><TabsTrigger value="profile"><Settings className="mr-2 h-4 w-4"/>Profil</TabsTrigger>{data.user.role==="admin" && <TabsTrigger value="members">Admin · Medlemmer<CrReviewCount players={data.players}/></TabsTrigger>}</TabsList>
+        <TabsList><TabsTrigger value="dates"><CalendarDays className="mr-2 h-4 w-4"/>Spilledage</TabsTrigger><TabsTrigger value="profile"><Settings className="mr-2 h-4 w-4"/>Profil</TabsTrigger>{data.user.role==="admin" && <TabsTrigger value="members">Admin · Medlemmer<CrReviewCount players={data.players}/></TabsTrigger>}{data.user.role==='admin'&&<><TabsTrigger value="privacy">Privatliv & inaktive profiler</TabsTrigger><TabsTrigger value="newsletter">Nyhedsmails</TabsTrigger></>}{data.user.isSuperAdmin&&<TabsTrigger value="superadmin">SuperAdmin</TabsTrigger>}</TabsList>{data.user.isSuperAdmin&&<TabsContent value="superadmin"><SuperAdminPanel data={data} act={act} busy={busy}/></TabsContent>}{data.user.role==='admin'&&<><TabsContent value="privacy"><PrivacyAdmin/></TabsContent><TabsContent value="newsletter"><PrivacyAdmin mode="newsletter"/></TabsContent></>}
         <TabsContent value="dates"><CalendarList dates={data.calendarDates} act={data.user.role==="admin"?act:undefined} busy={busy}/></TabsContent>
         <TabsContent value="profile"><ProfilePanel user={data.user} act={act} busy={busy}/></TabsContent>
         {data.user.role==="admin" && <TabsContent value="members"><MembersPanel data={data} act={act} busy={busy}/></TabsContent>}
@@ -877,6 +882,7 @@ function ProfilePanel({ user, act, busy, adminMode=false, members=[] }: {
         <CardDescription>Kontrollér og opdatér dine oplysninger.</CardDescription>
       </CardHeader>
       <CardContent>
+        {!adminMode&&<NewsletterPreferences key={user.email}/>}
         <form onSubmit={submit} onChange={() => setSaved(false)} className="grid gap-4">
           <div className="grid gap-4 sm:grid-cols-2">
             <Field name="firstName" label="Fornavn" defaultValue={user.firstName} autoComplete="given-name" maxLength={100} />
@@ -940,25 +946,6 @@ function EditMemberDialog({player,act,busy,members}:{player:MemberProfile & {id:
     return success;
   }
   return <Dialog open={open} onOpenChange={setOpen}><DialogTrigger asChild><Button variant="outline" className="size-10 p-0 sm:w-auto sm:px-3" aria-label={`Ret ${player.firstName} ${player.lastName}`} title="Ret medlem" disabled={busy}><Pencil className="size-4 sm:mr-1"/><span className="sr-only sm:not-sr-only">Ret medlem</span></Button></DialogTrigger><DialogContent className="max-h-[90dvh] overflow-y-auto"><DialogHeader><DialogTitle>Ret {player.firstName} {player.lastName}</DialogTitle><DialogDescription>Medlemsnummeret kan ikke ændres. CR redigeres særskilt og er kun synlig for administratorer.</DialogDescription></DialogHeader><ProfilePanel user={player} act={save} busy={busy} adminMode members={members}/>{error&&<p role="alert" className="text-sm text-red-700">{error}</p>}</DialogContent></Dialog>;
-}
-
-function DeleteMemberDialog({player,currentUserId,act,busy}:{player:MemberProfile & {id:number};currentUserId:number;act:AppAction;busy:boolean}) {
-  const [open,setOpen]=useState(false);
-  const [confirmed,setConfirmed]=useState(false);
-  const [error,setError]=useState('');
-  async function remove() {
-    setError('');
-    if(await act({action:'delete_member',playerId:player.id,confirmMemberNo:player.memberNo}))setOpen(false);
-    else setError('Medlemmet blev ikke slettet. Genindlæs listen og prøv igen.');
-  }
-  return <Dialog open={open} onOpenChange={value=>{setOpen(value);setConfirmed(false);setError('');}}>
-    <DialogTrigger asChild><Button variant="outline" className="size-10 p-0 text-red-700 hover:bg-red-50 hover:text-red-800 sm:w-auto sm:px-3" aria-label={`Slet ${player.firstName} ${player.lastName}`} disabled={busy||player.id===currentUserId} title={player.id===currentUserId?'Du kan ikke slette din egen konto':undefined}><Trash2 className="size-4 sm:mr-1"/><span className="sr-only sm:not-sr-only">Slet medlem</span></Button></DialogTrigger>
-    <DialogContent><DialogHeader><DialogTitle>Slet {player.firstName} {player.lastName}?</DialogTitle><DialogDescription>Medlemsnummer {player.memberNo}. Medlemsoplysninger, adgang, tilmeldinger og tilknyttede kampinvitationer slettes. Det kan ikke fortrydes. Kampene bevares med teksten “Slettet medlem”; eventuelle kampplaner skal rettes bagefter.</DialogDescription></DialogHeader>
-      <label className="flex items-center gap-3 text-sm"><Checkbox checked={confirmed} onCheckedChange={value=>setConfirmed(value===true)}/>Jeg vil slette medlem #{player.memberNo}.</label>
-      {error&&<p role="alert" className="text-sm text-red-700">{error}</p>}
-      <DialogFooter><DialogClose asChild><Button variant="outline" disabled={busy}>Annuller</Button></DialogClose><Button variant="destructive" disabled={busy||!confirmed} onClick={remove}>{busy?'Sletter…':'Slet medlem permanent'}</Button></DialogFooter>
-    </DialogContent>
-  </Dialog>;
 }
 
 function SignupPanel({ data, act, busy }: any) {
@@ -1506,7 +1493,6 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
   }, []);
   const [editing, setEditing] = useState<number | null>(null);
   const [listView, setListView] = useState<"current" | "history">("current");
-  const [testEmailResult, setTestEmailResult] = useState("");
   const [uploadError, setUploadError] = useState("");
   const [isImporting, setIsImporting] = useState(false);
   const [planEditPending, setPlanEditPending] = useState(false);
@@ -1521,12 +1507,13 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
   return (
     <Tabs defaultValue="signups" className="space-y-6">
       <TabsList aria-label="Admin" className="flex h-auto w-full flex-wrap justify-start gap-1 bg-[#e7f0e9] p-1 group-data-[orientation=horizontal]/tabs:h-auto [&>button]:h-auto">
+        <TabsTrigger value="privacy">Privatliv & inaktive profiler</TabsTrigger><TabsTrigger value="newsletter">Nyhedsmails</TabsTrigger>
         <TabsTrigger value="signups" className="min-h-9 px-2.5">Tilmeldinger</TabsTrigger>
         <TabsTrigger value="matches" className="min-h-9 px-2.5">Kampplan Admin</TabsTrigger>
         <TabsTrigger value="members" className="min-h-9 px-2.5">Medlemmer<CrReviewCount players={data.players}/></TabsTrigger>
         <TabsTrigger value="dates" className="min-h-9 px-2.5">Spilledage</TabsTrigger>
         <TabsTrigger value="settings" className="min-h-9 px-2.5">Indstillinger</TabsTrigger>
-      </TabsList>
+      </TabsList><TabsContent value="privacy"><PrivacyAdmin/></TabsContent><TabsContent value="newsletter"><PrivacyAdmin mode="newsletter"/></TabsContent>
       <TabsContent value="dates" className="space-y-6">
       <CalendarList dates={data.calendarDates ?? []} currentId={data.event.id} act={act} busy={busy} />
       </TabsContent>
@@ -1562,7 +1549,7 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
       <PlayerLists data={data} view={listView} setView={setListView} act={act} busy={busy} />
       </TabsContent>
       <TabsContent value="matches" forceMount className="space-y-6 data-[state=inactive]:hidden">
-      <OptimizerPanel key={`${data.event.id}:${JSON.stringify(data.optimizerDefaults)}`} clearPlan={() => act({action: "remove_kampplan", eventId: data.event.id})} event={data.event} rows={importedRows} wishes={wishes} initialWeights={data.optimizerWeights} isOpen={data.isOpen} busy={busy || planEditPending} refresh={refresh} />
+      <OptimizerPanel descriptions={data.optimizerDescriptions} canConfigure={data.user.isSuperAdmin===true} key={`${data.event.id}:${JSON.stringify(data.optimizerDefaults)}`} clearPlan={() => act({action: "remove_kampplan", eventId: data.event.id})} event={data.event} rows={importedRows} wishes={wishes} initialWeights={data.optimizerWeights} isOpen={data.isOpen} busy={busy || planEditPending} refresh={refresh} />
       {!!openSubstitutions.length && (
         <Card className="border-amber-300 bg-amber-50">
           <CardHeader>
@@ -1747,38 +1734,7 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
       <TabsContent value="settings" className="space-y-6">
       <AdminManagers data={data} act={act} busy={busy} />
       <RegistrationDefaultsForm key={JSON.stringify(data.registrationDefaults)} defaults={data.registrationDefaults} act={act} busy={busy} />
-      <OptimizerDefaultsForm key={JSON.stringify(data.optimizerDefaults)} defaults={data.optimizerDefaults} act={act} busy={busy} />
       <CourtOrderForm key={JSON.stringify(data.courtOrder)} defaults={data.courtOrder} act={act} busy={busy} />
-      <OptimizerResourcesForm key={JSON.stringify(data.optimizerResources)} defaults={data.optimizerResources} act={act} busy={busy} />
-      <Card className="border-[#dce9e1]">
-        <CardHeader>
-          <CardTitle>Test e-mail</CardTitle>
-          <CardDescription>
-            Kontrollér e-mailfunktionen, før kampplanen sendes til spillerne.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <p className="text-sm text-slate-700">Modtager: {data.user.email || "Ingen e-mailadresse angivet"}</p>
-          <Button
-            disabled={busy}
-            variant="outline"
-            onClick={async () => {
-              setTestEmailResult("");
-              if (await act({ action: "send_test_email" })) {
-                setTestEmailResult(`Testmailen er sendt til ${data.user.email}.`);
-              }
-            }}
-          >
-            <Mail className="mr-2 h-4 w-4" />
-            Send testmail
-          </Button>
-          {testEmailResult && (
-            <p className="rounded-xl bg-[#f0f3f8] p-3 text-sm font-semibold text-[#13375e]">
-              {testEmailResult}
-            </p>
-          )}
-        </CardContent>
-      </Card>
       <PlayTimesForm key={JSON.stringify(data.playTimes)} defaults={data.playTimes} act={act} busy={busy} />
       </TabsContent>
     </Tabs>
@@ -1786,7 +1742,7 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
 }
 
 function AdminManagers({ data, act, busy }: any) {
-  const admins = data.players.filter((p: any) => p.role === "admin");
+  const admins = data.players.filter((p: any) => p.role === "admin" && !p.isSuperAdmin);
   const candidates = data.players.filter((p: any) => p.role !== "admin");
   const [selected, setSelected] = useState("");
   async function addAdmin() {
@@ -2125,7 +2081,7 @@ function MembersPanel({data,act,busy}:any) {
             <CrReviewControl key={`${player.id}:${player.christinRanking}:${player.crReviewedAt}`} player={player} act={act} busy={busy}/>
             <div className="flex shrink-0 gap-1">
             <EditMemberDialog player={player} act={act} busy={busy} members={data.players}/>
-            <DeleteMemberDialog player={player} currentUserId={data.user.id} act={act} busy={busy}/>
+            <span className="text-xs text-slate-500">Sletning håndteres under Privatliv & inaktive profiler</span>
             </div></div>
             <details className="text-xs text-slate-600"><summary className="cursor-pointer py-1 leading-5">Kontakt og oplysninger</summary>
               <div className="space-y-1 pb-1 pt-1 [overflow-wrap:anywhere]"><p>{player.email || 'Ingen e-mailadresse'}</p>
@@ -2137,4 +2093,42 @@ function MembersPanel({data,act,busy}:any) {
         </CardContent>
       </Card>
   );
+}
+
+function SuperAdminPanel({data,act,busy}:any){
+ const [testEmailResult,setTestEmailResult]=useState('');
+ if(!data.user.isSuperAdmin)return null;
+ return <section className="space-y-6" aria-label="SuperAdmin"><h2 className="text-2xl font-bold">SuperAdmin</h2>
+      <OptimizerDefaultsForm descriptions={data.optimizerDescriptions} key={JSON.stringify(data.optimizerDefaults)} defaults={data.optimizerDefaults} act={act} busy={busy} />
+      <OptimizerResourcesForm key={JSON.stringify(data.optimizerResources)} defaults={data.optimizerResources} act={act} busy={busy} />
+      <Card className="border-[#dce9e1]">
+        <CardHeader>
+          <CardTitle>Test e-mail</CardTitle>
+          <CardDescription>
+            Kontrollér e-mailfunktionen, før kampplanen sendes til spillerne.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-sm text-slate-700">Modtager: {data.user.email || "Ingen e-mailadresse angivet"}</p>
+          <Button
+            disabled={busy}
+            variant="outline"
+            onClick={async () => {
+              setTestEmailResult("");
+              if (await act({ action: "send_test_email" })) {
+                setTestEmailResult(`Testmailen er sendt til ${data.user.email}.`);
+              }
+            }}
+          >
+            <Mail className="mr-2 h-4 w-4" />
+            Send testmail
+          </Button>
+          {testEmailResult && (
+            <p className="rounded-xl bg-[#f0f3f8] p-3 text-sm font-semibold text-[#13375e]">
+              {testEmailResult}
+            </p>
+          )}
+        </CardContent>
+      </Card>
+</section>;
 }
