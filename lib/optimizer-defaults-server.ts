@@ -22,6 +22,12 @@ export async function loadOptimizerDefaults() {
   return parseAlgorithmWeights(stored ? JSON.parse(stored.weights) : {});
 }
 
+export async function loadEventOptimizerWeights(eventId:number) {
+  const [stored] = await getDb().select().from(optimizerDefaults).where(eq(optimizerDefaults.id, 1)).limit(1);
+  const settings = stored ? JSON.parse(stored.weights) : {};
+  return parseAlgorithmWeights(settings.eventOptimizerWeights?.[String(eventId)] ?? settings);
+}
+
 export async function loadOptimizerResources() {
   const [stored]=await getDb().select().from(optimizerDefaults).where(eq(optimizerDefaults.id,1)).limit(1);
   return parseOptimizerResources((stored?JSON.parse(stored.weights).optimizerResources:undefined)??defaultOptimizerResources);

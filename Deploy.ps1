@@ -2,6 +2,7 @@
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
     [switch]$CheckOnly,
+    [ValidatePattern('^[0-9]+$')][string]$SuperAdminMemberNo,
     [ValidateRange(1, 60)][int]$ContainerWaitMinutes = 15
 )
 
@@ -111,23 +112,10 @@ try {
         Invoke-Checked 'node.exe' @('scripts/release.mjs', '--check')
         Write-Host 'Local checks passed. Production was not changed.' -ForegroundColor Green
     } else {
-        # Catch solver regressions before changing the live container.
-        Invoke-Checked 'node.exe' @('scripts/optimizer-service.mjs', 'test')
-        Invoke-Checked 'node.exe' @('scripts/optimizer-cloudflare.mjs', 'deploy')
-        $deadline = [DateTime]::UtcNow.AddMinutes($ContainerWaitMinutes)
-        do {
-            & node.exe scripts/optimizer-cloudflare.mjs check
-            if ($LASTEXITCODE -eq 0) { break }
-            if ([DateTime]::UtcNow -ge $deadline) { throw 'The new optimizer did not pass verification in time. Website deployment was not started.' }
-            Write-Host 'Waiting 30 seconds for the new Cloudflare container version...'
-            Start-Sleep -Seconds 30
-        } while ($true)
-
-        # Reuses the existing secret and verifies the optimizer before connecting it.
-        Invoke-Checked 'node.exe' @('scripts/optimizer-cloudflare.mjs', 'connect')
-        # Build, full tests, verified D1 backup, migrations, deploy and release health check.
-        Invoke-Checked 'node.exe' @('scripts/release.mjs')
-        Invoke-Checked 'node.exe' @('scripts/optimizer-cloudflare.mjs', 'check')
+        # One release lock covers checks, configuration, container and website.
+        $releaseArguments = @('scripts/release.mjs', '--with-optimizer', "--container-wait-minutes=$ContainerWaitMinutes")
+        if ($SuperAdminMemberNo) { $releaseArguments += "--superadmin-member=$SuperAdminMemberNo" }
+        Invoke-Checked 'node.exe' $releaseArguments
         Write-Host 'Deployment completed and verified: https://aabenbaneaften.dk' -ForegroundColor Green
         Write-Host 'Database backup and receipt: .data/releases/'
     }

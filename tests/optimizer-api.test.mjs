@@ -176,6 +176,12 @@ test('real CP-SAT service and D1: permissions, closed registration, history, val
     assert.equal((await (await post('edit_context',{weights})).json()).exceptions.length,1,'exception survives reload');
     globalThis.__optimizerTest.env.SUPERADMIN_PLAYER_ID='2';
     assert.equal((await post()).status,403,'local admin cannot override optimizer factors');
+    await db.prepare('UPDATE optimizer_defaults SET weights=json_set(weights, ?, json(?)) WHERE id=1')
+      .bind('$.eventOptimizerWeights."100"', JSON.stringify({...algorithmWeightDefaults,FactorSingle:777})).run();
+    const localSolve=await post('solve',{weights:undefined});
+    assert.equal(localSolve.status,200,'local admin can use factors configured for this round');
+    assert.equal(sent.weights.FactorSingle,777,'local solve uses the saved round factors');
+    assert.equal((await localSolve.json()).weights,undefined,'round factors never leave the server for local admin');
     const localContext=await post('edit_context',{weights:{}});
     assert.equal(localContext.status,200);
     const localPlan=await localContext.json();

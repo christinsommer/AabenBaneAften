@@ -72,6 +72,20 @@ af den nye kode; den normale releaseprocedure håndterer dette.
 
 ## PowerShell-script
 
+`Deploy.ps1` kører build og alle release-tests før produktionsændringer. Derefter
+kontrolleres SuperAdmin-konfigurationen, og databasebackup gendannes og migrationer
+afprøves lokalt. Først derefter udgives optimizer, database og hjemmeside.
+Backupkontrollen sammenligner alle oprindelige kolonner og rækker før og efter
+migrationen. Nye kolonner accepteres; ændrede værdier, slettede rækker og fjernede
+kolonner stopper udgivelsen.
+
+Ved første SuperAdmin-opsætning bruges `Deploy.ps1 -SuperAdminMemberNo <medlemsnummer>`.
+Scriptet slår medlemsnummeret op i produktionsdatabasen, kræver en åben administratorkonto
+og sætter dens interne ID som Cloudflare-secret `SUPERADMIN_PLAYER_ID`.
+Efterfølgende kan `Deploy.ps1` køres uden parameteren; det kræver, at secreten findes,
+og bevarer den eksisterende kontobinding. Secretens værdi kan ikke læses via secret-listen.
+`-CheckOnly` foretager ingen produktionskald. Lokale `.dev.vars` kopieres ikke til produktion.
+
 Kør `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Deploy.ps1` fra projektmappen.
 Med `-CheckOnly` køres lokale kontroller uden udgivelse.
 Scriptet gemmer terminalens output i `.data/deploy-<tidspunkt>.log`.

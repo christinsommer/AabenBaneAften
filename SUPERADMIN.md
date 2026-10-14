@@ -4,9 +4,11 @@ Admin er klubbens lokale administrator og beholder medlemsadministration,
 tilmeldinger, kampplaner, privatlivsopgaver og nyhedsmails.
 
 SuperAdmin har derudover sin egen fane med **Standard for kampplan**,
-**CPU og tid for optimering** og **Test e-mail**. Kampfaktorer i selve
-optimeringspanelet kan også kun ændres af SuperAdmin. En lokal Admin kan stadig
-beregne, gemme og redigere kampplaner med serverens gemte faktorer.
+**Optimerings-faktorer** for den aktuelle spillerunde, **CPU og tid for
+optimering**, **ChatGPT-forslag til kampplan** og **Test e-mail**. En lokal Admin
+kan stadig beregne, eksportere, gemme og redigere kampplaner med serverens gemte
+faktorer. Knapperne “Algoritme foreslå kampe” og “Eksporter kampplan” forbliver
+under Kampplan Admin.
 
 ## Kontobinding
 
@@ -33,6 +35,8 @@ Optimerings-API'et afviser lokale faktoroverskrivninger og returnerer ikke vægt
 eller beregningsstadier til lokal Admin. Faktorstandarder og hjælpetekster hentes
 fra serveren for SuperAdmin, frem for at være indlejret i de fælles faktorformularer.
 Almindelige kampresultater, validering og kampscorer er fortsat en del af klubdriften.
+ChatGPT-prompten ligger bag et SuperAdmin-kontrolleret API og findes ikke længere
+som en offentlig fil.
 
 Dette indfører ikke datamæssig isolation mellem flere klubber i samme database.
 Den eksisterende app er fortsat én klub pr. installation. Brug separate

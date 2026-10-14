@@ -6,19 +6,19 @@ import {Button} from '../components/ui/button';
 import type {AlgorithmWeights} from '../lib/optimizer';
 
 
-export function OptimizerDefaultsForm({defaults, descriptions={}, act, busy}: {
-  descriptions?:Record<string,string>; defaults?: AlgorithmWeights; act: (body: Record<string, unknown>) => Promise<boolean>; busy: boolean;
+export function OptimizerDefaultsForm({defaults, descriptions={}, act, busy, action='set_optimizer_defaults', title='Standard for kampplan', description='Faktorerne bruges som udgangspunkt hver uge under Kampplan Admin.', savedText='Standardværdierne er gemt.'}: {
+  action?:string;title?:string;description?:string;savedText?:string;descriptions?:Record<string,string>; defaults?: AlgorithmWeights; act: (body: Record<string, unknown>) => Promise<boolean>; busy: boolean;
 }) {
   const [values, setValues] = useState(() => Object.fromEntries(Object.entries(defaults??{}).map(([k,v])=>[k,String(v)])));
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
   return <Card className="border-[#dce9e1]">
-    <CardHeader><CardTitle>Standard for kampplan</CardTitle><CardDescription>Faktorerne bruges som udgangspunkt hver uge under Kampplan Admin.</CardDescription></CardHeader>
+    <CardHeader><CardTitle>{title}</CardTitle><CardDescription>{description}</CardDescription></CardHeader>
     <CardContent><form className="space-y-4" onSubmit={async event => {
       event.preventDefault(); setError(''); setSaved(false);
       try {
         const weights = Object.fromEntries(Object.entries(values).map(([key, value]) => [key, value === '' ? '' : Number(value)]));
-        if (await act({action:'set_optimizer_defaults', weights})) setSaved(true);
+        if (await act({action, weights})) setSaved(true);
       } catch (e) { setError(e instanceof Error ? e.message : 'Kontrollér faktorerne.'); }
     }}>
       <fieldset disabled={busy} className="grid gap-4 sm:grid-cols-2">
@@ -28,9 +28,9 @@ export function OptimizerDefaultsForm({defaults, descriptions={}, act, busy}: {
           <span className="text-xs text-slate-600">{descriptions[key]}</span>
         </label>)}
       </fieldset>
-      <Button disabled={busy} className="bg-[#13375e]">Gem standardværdier</Button>
+      <Button disabled={busy} className="bg-[#13375e]">Gem {title.toLocaleLowerCase('da-DK')}</Button>
       {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
-      {saved && <p role="status">Standardværdierne er gemt.</p>}
+      {saved && <p role="status">{savedText}</p>}
     </form></CardContent>
   </Card>;
 }

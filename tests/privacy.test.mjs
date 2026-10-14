@@ -75,6 +75,7 @@ test('privacy: real D1 registration rollback, consent, tokens, sending, review, 
   assert.equal(JSON.parse((await db.prepare('SELECT imported_kampplan FROM events WHERE id=?').bind(historicEvent.id).first()).imported_kampplan)[0].D,'Synthetic member');
   assert.equal((await db.prepare('SELECT comment FROM feedback WHERE match_id=?').bind(historicMatch.id).first()).comment,'Synthetic private comment');
   await db.prepare('DROP TRIGGER closure_failure').run();
+  await db.prepare("UPDATE players SET phone='12345678',phone_country_code='+45',email='erase-contact@example.test' WHERE id=?").bind(member.id).run();
   await s.review(admin.id,{playerId:member.id,choice:'erase',confirm:true});assert.equal((await imports.member.GET()).status,401);assert.equal((await post(imports.app,{action:'login',memberNo:'member',pin:'0123'})).status,401);
   assert.deepEqual(await db.prepare('SELECT member_no,name,first_name,last_name FROM players WHERE id=?').bind(member.id).first(),{member_no:'closed-'+member.id,name:'NN '+member.id,first_name:'NN',last_name:String(member.id)});
   assert.ok(await db.prepare('SELECT id FROM signups WHERE player_id=?').bind(member.id).first());
@@ -82,7 +83,9 @@ test('privacy: real D1 registration rollback, consent, tokens, sending, review, 
   assert.equal((await db.prepare('SELECT comment FROM feedback WHERE match_id=?').bind(historicMatch.id).first()).comment,'');
   const savedPlan=JSON.parse((await db.prepare('SELECT imported_kampplan FROM events WHERE id=?').bind(historicEvent.id).first()).imported_kampplan);
   assert.equal(savedPlan[0].D,'NN '+member.id);assert.equal(savedPlan[0].E,'Synthetic other');
-  const closed=await db.prepare('SELECT email,pin_hash,phone,christin_ranking,cr_reviewed_at FROM players WHERE id=?').bind(member.id).first();assert.deepEqual(closed,{email:'',pin_hash:'',phone:'',christin_ranking:7,cr_reviewed_at:'2026-10-01T12:00:00.000Z'});assert.equal((await db.prepare('SELECT count(*) n FROM privacy_review_events WHERE player_id=? AND note IS NOT NULL').bind(member.id).first()).n,0);
+  const closed=await db.prepare('SELECT email,pin_hash,phone,phone_country_code,christin_ranking,cr_reviewed_at FROM players WHERE id=?').bind(member.id).first();assert.deepEqual(closed,{email:'',pin_hash:'',phone:'',phone_country_code:'',christin_ranking:7,cr_reviewed_at:'2026-10-01T12:00:00.000Z'});assert.equal((await db.prepare('SELECT count(*) n FROM privacy_review_events WHERE player_id=? AND note IS NOT NULL').bind(member.id).first()).n,0);
+  const closedProfile=await s.reviewInfo(member.id);
+  assert.equal(closedProfile.email,'');assert.equal(closedProfile.phone,'');
   await assert.rejects(db.prepare("UPDATE players SET name='reopen' WHERE id=?").bind(member.id).run());
   const invitation=await db.prepare('SELECT invited_member_nos FROM match_requests WHERE event_id=?').bind(historicEvent.id).first();
   assert.deepEqual(JSON.parse(invitation.invited_member_nos),['closed-'+member.id,'legacy']);
@@ -110,7 +113,7 @@ test('privacy: real D1 registration rollback, consent, tokens, sending, review, 
   assert.equal(localState.user.isSuperAdmin,false);
   assert.equal(localState.optimizerDefaults,undefined);assert.equal(localState.optimizerResources,undefined);
   assert.equal(localState.optimizerWeights,undefined);
-  for(const action of ['set_optimizer_defaults','set_optimizer_resources','send_test_email'])assert.equal((await post(imports.app,{action,weights:{},optimizerResources:{cpu:2,seconds:30}})).status,403);
+  for(const action of ['set_optimizer_defaults','set_event_optimizer_weights','set_optimizer_resources','send_test_email'])assert.equal((await post(imports.app,{action,eventId:historicEvent.id,weights:{},optimizerResources:{cpu:2,seconds:30}})).status,403);
   assert.equal((await post(imports.app,{action:'set_admin',playerId:admin.id,makeAdmin:false})).status,403);
   assert.equal((await post(imports.app,{action:'update_member',playerId:admin.id,email:'attacker@example.test'})).status,403);
   await post(imports.app,{action:'login',memberNo:'admin',pin:'0123'});
@@ -119,6 +122,8 @@ test('privacy: real D1 registration rollback, consent, tokens, sending, review, 
   assert.equal((await post(imports.app,{action:'approve_cr',playerId:member.id,christinRanking:8})).status,404);
   assert.equal((await db.prepare('SELECT christin_ranking FROM players WHERE id=?').bind(member.id).first()).christin_ranking,7);
   assert.ok(ownerState.optimizerDefaults);assert.ok(ownerState.optimizerResources);
+  assert.equal((await post(imports.app,{action:'set_event_optimizer_weights',eventId:ownerState.event.id,weights:{...ownerState.optimizerDefaults,FactorSingle:321}})).status,200);
+  assert.equal((await (await imports.app.GET()).json()).optimizerWeights.FactorSingle,321);
   assert.equal((await post(imports.app,{action:'set_optimizer_resources',optimizerResources:{cpu:2,seconds:30}})).status,200);
   assert.equal((await post(imports.app,{action:'set_optimizer_defaults',weights:ownerState.optimizerDefaults})).status,200);
   delete globalThis.__privacyTest.env.SUPERADMIN_PLAYER_ID;

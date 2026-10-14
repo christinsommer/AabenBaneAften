@@ -15,7 +15,7 @@ test('admin court orders persist independently of factor defaults and reject una
     const db=proxy.env.DB;
     for(const file of readdirSync('drizzle').filter(f=>f.endsWith('.sql')).sort())
       await db.batch(migrationStatements(readFileSync(join('drizzle',file),'utf8')).map(s=>db.prepare(s)));
-    globalThis.__courtOrderTest={env:{DB:db},user:null};
+    globalThis.__courtOrderTest={env:{DB:db,SUPERADMIN_PLAYER_ID:'1'},user:null};
     const outfile=join(directory,'route.mjs');
     await build({entryPoints:['app/api/app/route.ts'],outfile,bundle:true,platform:'node',format:'esm',packages:'external',plugins:[{
       name:'court-test-context',setup(builder){
@@ -34,6 +34,12 @@ test('admin court orders persist independently of factor defaults and reject una
     globalThis.__courtOrderTest.user={id:1,role:'player'};
     assert.equal((await post({action:'set_optimizer_resources',optimizerResources:{cpu:2,seconds:30}})).status,403);
     assert.equal((await post({action:'set_court_order',courtOrder})).status,403);
+    globalThis.__courtOrderTest.user={id:2,role:'admin'};
+    assert.equal((await (await GET()).json()).optimizerResources,undefined);
+    assert.equal((await post({action:'set_optimizer_resources',optimizerResources:{cpu:2,seconds:30}})).status,403);
+    assert.equal((await post({action:'set_optimizer_defaults',weights:{FactorOpponentThisWeek:17}})).status,403);
+    assert.equal((await post({action:'set_court_order',courtOrder})).status,200);
+    assert.equal((await post({action:'set_court_order',courtOrder:{whole:[4,3,2,1],half:[5,6,7]}})).status,200);
     globalThis.__courtOrderTest.user={id:1,role:'admin'};
     assert.deepEqual((await (await GET()).json()).optimizerResources,{cpu:4,seconds:600});
     for(const optimizerResources of [{cpu:0,seconds:600},{cpu:33,seconds:600},{cpu:2.5,seconds:600},{cpu:4,seconds:0},{cpu:4,seconds:901},{cpu:4,seconds:null}])
@@ -73,7 +79,7 @@ test('admin court orders persist independently of factor defaults and reject una
     assert.equal(signup.status,200);
     assert.deepEqual((await signup.json()).signup.szPossible,['17:30','18:00']);
     assert.equal((await post({action:'signup',nHours:1,nPossible:2,szPossible:['17:30','20:30']})).status,400);
-    globalThis.__courtOrderTest.user={id:1,role:'admin'};
+    globalThis.__courtOrderTest.user={id:2,role:'admin'};
     const emptyGroup=await post({action:'set_play_times',playTimes:{whole:[],half:['17:30','18:30']}});
     assert.equal(emptyGroup.status,200);
     assert.deepEqual((await emptyGroup.json()).times,['17:30','18:30']);

@@ -274,10 +274,10 @@ test("Cloudflare Worker renders and authenticates against isolated D1", { timeou
     assert.equal(cleared.event.publishedAt,null);
     assert.ok(cleared.signupHistory.length > 0);
     for(const level of ['B+','A-','ukendt','a ukendt','']) {
-      assert.equal((await post({action:'register',privacyRead:true,privacyVersion:"2026-10-11-v1",memberNo:'invalid-ranking-'+level,pin:'123456',firstName:'Ranking',lastName:'Test',email:'ranking@example.com',gender:'K',level})).status,400);
+      assert.equal((await post({action:'register',privacyRead:true,privacyVersion:"2026-10-12-v1",memberNo:'invalid-ranking-'+level,pin:'123456',firstName:'Ranking',lastName:'Test',email:'ranking@example.com',gender:'K',level})).status,400);
     }
     for(const [level,cr] of Object.entries({A:2,AB:4,B:5,BC:7,C:8,Begynder:9})) {
-      const newMember=await post({action:'register',privacyRead:true,privacyVersion:"2026-10-11-v1",memberNo:'ranking-'+level,pin:'123456',firstName:'Ranking',lastName:'Test',email:'ranking@example.com',gender:'K',level,christinRanking:1});
+      const newMember=await post({action:'register',privacyRead:true,privacyVersion:"2026-10-12-v1",memberNo:'ranking-'+level,pin:'123456',firstName:'Ranking',lastName:'Test',email:'ranking@example.com',gender:'K',level,christinRanking:1});
       assert.equal(newMember.status,200);
       const newState=await newMember.json();
       assert.equal(newState.user.selfLevel,level);

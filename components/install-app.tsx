@@ -33,7 +33,7 @@ export function InstallApp() {
     } catch {setMessage('Brug browserens menu til at føje appen til hjemmeskærmen.');}
   }
   if(installed)return null;
-  return <aside className="mx-auto my-6 max-w-5xl px-5 text-sm text-slate-600">
+  return <aside className="my-6 w-full text-sm text-slate-600">
     <details className="rounded-xl border border-slate-200 bg-white p-4">
       <summary className="cursor-pointer font-semibold text-[#13375e]"><Smartphone className="mr-2 inline h-4 w-4"/>Gem appen på din telefon</summary>
       <div className="mt-3 space-y-2">

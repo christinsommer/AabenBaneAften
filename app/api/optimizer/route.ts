@@ -5,6 +5,7 @@ import { currentPlayer } from '../../../lib/auth';
 import { getDb } from '../../../db';
 import { events, matches, feedback, substitutions } from '../../../db/schema';
 import { loadOptimizerInput, optimizerRevisionSql } from '../../../lib/optimizer-server';
+import {loadEventOptimizerWeights} from '../../../lib/optimizer-defaults-server';
 import { proposalRows, scoreMatch, validateProposal } from '../../../lib/optimizer';
 import {normalizeKampplanRows} from '../../../lib/kampplan-rows';
 import {reviewPlan} from '../../../lib/plan-review';
@@ -15,10 +16,10 @@ export async function POST(request: Request) {
     const user = await currentPlayer();
     if (!user) return Response.json({error: 'Log ind først.'}, {status: 401});
     if (user.role !== 'admin') return Response.json({error: 'Kun administratorer kan foreslå kampe.'}, {status: 403});
-    const body = await request.json() as {action: string; eventId: number; weights: unknown; fingerprint?: string; matches?: unknown} | null;
+    const body = await request.json() as {action: string; eventId: number; weights?: unknown; fingerprint?: string; matches?: unknown} | null;
     if (!body || !['solve', 'save', 'save_edit', 'edit_context', 'review_edit'].includes(body.action) || !Number.isSafeInteger(body.eventId)) return Response.json({error: 'Ugyldig anmodning.'}, {status: 400});
     if(!isSuperAdmin(user)&&body.weights&&Object.keys(body.weights as object).length)return Response.json({error:'Kun SuperAdmin kan ændre optimeringsfaktorer.'},{status:403});
-    let requestedWeights=isSuperAdmin(user)?body.weights:undefined;
+    let requestedWeights=isSuperAdmin(user)&&body.weights&&Object.keys(body.weights as object).length?body.weights:await loadEventOptimizerWeights(body.eventId);
     if(!isSuperAdmin(user)&&['edit_context','review_edit','save_edit'].includes(body.action)) {
       const [stored]=await getDb().select({plan:events.importedKampplan}).from(events).where(eq(events.id,body.eventId)).limit(1);
       try{requestedWeights=JSON.parse(stored?.plan||'[]')[0]?._optimizerWeights;}catch{/* Legacy plan: use current server defaults. */}

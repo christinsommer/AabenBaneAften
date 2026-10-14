@@ -5,20 +5,22 @@ import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { spawn } from 'node:child_process';
 
-test('release check never touches production; test and backup failures stop deployment', { timeout: 60000 }, async () => {
+test('release check never touches production; test, configuration and backup failures stop both deployments', { timeout: 60000 }, async () => {
   const script = resolve('scripts/release.mjs');
-  for (const scenario of ['check', 'test-fails', 'backup-fails']) {
+  for (const scenario of ['check', 'test-fails', 'config-fails', 'backup-fails']) {
     const directory = mkdtempSync(join(tmpdir(), 'aabenbane-release-'));
     const put = (path, contents) => { const full = join(directory, path); mkdirSync(resolve(full, '..'), { recursive: true }); writeFileSync(full, contents); };
     put('scripts/check-cloudflare-config.mjs', '');
     put('scripts/optimizer-service.mjs', '');
+    put('scripts/deploy-superadmin.mjs', scenario === 'config-fails' ? 'process.exit(1)' : '');
+    put('scripts/optimizer-cloudflare.mjs', "require('node:fs').appendFileSync('calls.txt','optimizer '+process.argv[2]+'\\n')");
     put('lib/release-info.json', '{}');
     put('tests/example.test.mjs', scenario === 'test-fails' ? 'throw new Error("intentional failure")' : '');
     put('node_modules/@opennextjs/cloudflare/dist/cli/index.js', "require('node:fs').appendFileSync('calls.txt',process.argv[2]+'\\n')");
     put('node_modules/wrangler/bin/wrangler.js', "require('node:fs').appendFileSync('calls.txt',process.argv.slice(2).join(' ')+'\\n');process.exit(1)");
     try {
       const result = await new Promise((resolve, reject) => {
-        const child = spawn(process.execPath, [script, ...(scenario === 'check' ? ['--check'] : [])], { cwd: directory, stdio: ['ignore', 'pipe', 'pipe'] });
+        const child = spawn(process.execPath, [script, ...(scenario === 'check' ? ['--check'] : ['--with-optimizer'])], { cwd: directory, stdio: ['ignore', 'pipe', 'pipe'] });
         let output = '';
         child.stdout.on('data', chunk => output += chunk);
         child.stderr.on('data', chunk => output += chunk);
@@ -30,6 +32,7 @@ test('release check never touches production; test and backup failures stop depl
       assert.equal(calls.includes('d1 export'), scenario === 'backup-fails');
       assert.equal(calls.includes('migrations'), false);
       assert.equal(calls.includes('deploy'), false);
+      assert.equal(calls.includes('optimizer'), false);
       assert.equal(existsSync(join(directory, '.data/releases/release.lock')), false);
     } finally { rmSync(directory, { recursive: true, force: true }); }
   }

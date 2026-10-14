@@ -43,17 +43,21 @@ test('per-match scores appear only when the admin explicitly enables them', asyn
   assert.doesNotMatch(render({rows:[row],calendarDate:'2026-09-18'}),/>Score</);
 });
 
-test('optimizer has a compact two-column grid, integer distance input and help for all factors', async () => {
+test('optimizer keeps admin actions while factor inputs belong to the SuperAdmin form', async () => {
   const {OptimizerPanel}=await vite.ssrLoadModule('/app/optimizer-panel.tsx');
+  const {OptimizerDefaultsForm}=await vite.ssrLoadModule('/app/optimizer-defaults-form.tsx');
   const {algorithmWeightDefaults}=await vite.ssrLoadModule('/lib/optimizer.ts');
-  const html=renderToStaticMarkup(React.createElement(OptimizerPanel,{event:{id:1,date:'2026-09-18',status:'draft'},rows:[],wishes:[],busy:false,isOpen:false,refresh:()=>{},
-    initialWeights:{...algorithmWeightDefaults,FactorSingle:50,FactorDistanceSameTeamA:2}}));
+  const panel=renderToStaticMarkup(React.createElement(OptimizerPanel,{event:{id:1,date:'2026-09-18',status:'draft'},rows:[],wishes:[],busy:false,isOpen:false,refresh:()=>{},clearPlan:async()=>true}));
+  assert.match(panel,/Algoritme foreslå kampe/);
+  assert.match(panel,/Eksporter kampplan/);
+  for(const name of Object.keys(algorithmWeightDefaults)) assert.ok(!panel.includes(name));
+  const descriptions=Object.fromEntries(Object.keys(algorithmWeightDefaults).map(name=>[name,`Help for ${name}`]));
+  const html=renderToStaticMarkup(React.createElement(OptimizerDefaultsForm,{defaults:{...algorithmWeightDefaults,FactorSingle:50,FactorDistanceSameTeamA:2},descriptions,act:async()=>true,busy:false}));
   assert.match(html,/grid-cols-2/);
-  assert.match(html,/<input[^>]+name="FactorDistanceSameTeamA"[^>]*value="2"/);
-  assert.doesNotMatch(html,/<select[^>]+name="FactorDistanceSameTeamA"/);
-  assert.match(html,/name="FactorSingle"[^>]*value="50"/);
-  assert.match(html,/name="FactorOpponentThisWeek"[^>]*value="5"/);
-  for(const name of Object.keys(algorithmWeightDefaults)) assert.ok(html.includes(`aria-label="Info om ${name}"`));
+  assert.match(html,/FactorDistanceSameTeamA<\/span><input[^>]*step="1"[^>]*value="2"/);
+  assert.match(html,/FactorSingle<\/span><input[^>]*value="50"/);
+  assert.match(html,/FactorOpponentThisWeek<\/span><input[^>]*value="5"/);
+  for(const name of Object.keys(algorithmWeightDefaults)) assert.ok(html.includes(descriptions[name]));
 });
 
 test('admin settings render the configurable weekly opponent default', async () => {

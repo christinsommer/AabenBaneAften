@@ -26,7 +26,7 @@ import { normalizeKampplanRows } from "../../../lib/kampplan-rows";
 import {parseAlgorithmWeights, scoreMatch} from '../../../lib/optimizer';
 import {loadOptimizerInput} from '../../../lib/optimizer-server';
 
-import {loadOptimizerDefaults, loadPlaySchedule, loadOptimizerResources} from '../../../lib/optimizer-defaults-server';
+import {loadOptimizerDefaults, loadEventOptimizerWeights, loadPlaySchedule, loadOptimizerResources} from '../../../lib/optimizer-defaults-server';
 import {parseOptimizerResources} from '../../../lib/optimizer-resources';
 import {parseCourtOrder} from '../../../lib/court-order';
 import {parsePlayTimes,buildPlaySchedule} from '../../../lib/play-schedule';
@@ -74,7 +74,7 @@ async function state() {
   const importedMatches = event && (user?.role === 'admin' || event.status === 'published') ? parseImportedKampplan(event.importedKampplan) : [];
   const defaultWeights = isSuperAdmin(user) ? await loadOptimizerDefaults() : undefined;
   const {courtOrder,playTimes,timeGroups,times,slots} = await loadPlaySchedule();
-  let optimizerWeights = defaultWeights;
+  let optimizerWeights = isSuperAdmin(user) && event ? await loadEventOptimizerWeights(event.id) : undefined;
   let adminPlanScores: (number | null)[] | undefined;
   if (isSuperAdmin(user) && importedMatches.length && event) {
     const raw = JSON.parse(event.importedKampplan);
@@ -301,6 +301,19 @@ export async function POST(request:Request){
         try { weights = JSON.stringify(parseAlgorithmWeights(body.weights)); }
         catch(error) { return Response.json({error:error instanceof Error ? error.message : 'Kontrollér faktorerne.'},{status:400}); }
         await db.insert(optimizerDefaults).values({id:1,weights}).onConflictDoUpdate({target:optimizerDefaults.id,set:{weights:sql`json_patch(${optimizerDefaults.weights}, ${weights})`}});
+        return NextResponse.json(await state());
+      }
+      if(action==='set_event_optimizer_weights') {
+        if(!isSuperAdmin(user))return Response.json({error:'Kun SuperAdmin har adgang.'},{status:403});
+        const eventId=Number(body.eventId);
+        if(!Number.isSafeInteger(eventId)||eventId<1)return Response.json({error:'Ugyldig spillerunde.'},{status:400});
+        const [target]=await db.select({id:events.id}).from(events).where(eq(events.id,eventId)).limit(1);
+        if(!target)return Response.json({error:'Spillerunden findes ikke.'},{status:404});
+        let parsed;
+        try {parsed=parseAlgorithmWeights(body.weights);}
+        catch(error){return Response.json({error:error instanceof Error?error.message:'Kontrollér faktorerne.'},{status:400});}
+        const path=`$.eventOptimizerWeights."${eventId}"`,weights=JSON.stringify(parsed);
+        await db.insert(optimizerDefaults).values({id:1,weights:JSON.stringify({eventOptimizerWeights:{[eventId]:parsed}})}).onConflictDoUpdate({target:optimizerDefaults.id,set:{weights:sql`json_set(${optimizerDefaults.weights}, ${path}, json(${weights}))`}});
         return NextResponse.json(await state());
       }
       if(action==='set_court_order' || action==='set_play_times') {

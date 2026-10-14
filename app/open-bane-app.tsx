@@ -182,6 +182,9 @@ export default function OpenBaneApp() {
   }
   useEffect(() => {
     load();
+    const reloadAfterPrivacyChange = () => { void load(); };
+    window.addEventListener('privacy-updated', reloadAfterPrivacyChange);
+    return () => window.removeEventListener('privacy-updated', reloadAfterPrivacyChange);
   }, []);
   useEffect(() => {
     if (!data?.authenticated || busy) return;
@@ -226,7 +229,7 @@ export default function OpenBaneApp() {
       />
     );
   return <>
-    {registrationNotice && <div role="status" className="mx-auto max-w-5xl px-4 pt-4"><p className="rounded-lg border border-green-200 bg-green-50 p-4 text-green-900">{registrationNotice}</p></div>}
+    {registrationNotice && <div role="status" className="mx-auto max-w-5xl px-2 pt-4 sm:px-4"><p className="rounded-lg border border-green-200 bg-green-50 p-4 text-green-900">{registrationNotice}</p></div>}
     {!data.event
       ? <EmptyCalendarDashboard data={data} act={act} busy={busy} error={error} openProfile={openProfile} />
       : <Dashboard data={data} act={act} busy={busy} error={error} openProfile={openProfile} refresh={refresh} refreshing={refreshing} />}
@@ -270,7 +273,7 @@ function AuthScreen({ mode, setMode, act, busy, error, event, resetToken }: any)
   }
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,#dfe4ee,transparent_42%),#f7f8fb] px-4 py-8 sm:py-14">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,#dfe4ee,transparent_42%),#f7f8fb] px-2 py-8 sm:px-4 sm:py-14">
       <div className="mx-auto grid max-w-5xl overflow-hidden rounded-[2rem] border border-[#cfe1d7] bg-white shadow-[0_24px_80px_rgba(19,55,94,.18)] md:grid-cols-[.9fr_1.1fr]">
         <section className="relative overflow-hidden bg-[#13375e] p-8 text-white sm:p-12">
           <div className="tennis-court-bg" aria-hidden="true">
@@ -335,7 +338,6 @@ function AuthScreen({ mode, setMode, act, busy, error, event, resetToken }: any)
               <h2 className="text-2xl font-bold">Glemt pinkode</h2>
               <p className="mt-1 text-slate-500">Skriv dit medlemsnummer, så vi sender et link til den e-mail, der er knyttet til din profil.</p>
               <form onSubmit={handleForgotSubmit} className="mt-7 grid gap-4">
-                {mode === "register" && <RegistrationPrivacy/>}
                 <Field name="memberNo" label="HIK-medlemsnummer" autoComplete="username" />
                 {error && (
                   <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>
@@ -409,6 +411,7 @@ function AuthScreen({ mode, setMode, act, busy, error, event, resetToken }: any)
                   inputMode="numeric"
                   autoComplete={mode === "login" ? "current-password" : "new-password"}
                 />
+                {mode === "register" && <RegistrationPrivacy/>}
                 {error && (
                   <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">
                     {error}
@@ -486,11 +489,6 @@ function RulesDialog({ light = false }: { light?: boolean }) {
             {section.paragraphs.map((paragraph, index) => <p key={index} className="mt-2 whitespace-pre-line">{paragraph}</p>)}
           </section>)}
         </div>
-        <DialogFooter>
-          <DialogClose asChild>
-            <Button className="bg-[#13375e]">Luk reglerne</Button>
-          </DialogClose>
-        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
@@ -563,11 +561,6 @@ function WaitlistDialog({ items, matches, userMatches, userLevel }: any) {
             </section>
           </div>
         )}
-        <DialogFooter>
-          <DialogClose asChild>
-            <Button className="bg-[#13375e]">Luk ventelisten</Button>
-          </DialogClose>
-        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
@@ -615,9 +608,9 @@ function Dashboard({ data, act, busy, error, openProfile, refresh, refreshing }:
   const showReminder =
     userMatches.length > 0 && now >= reminderStart && now <= reminderEnd;
   return (
-    <main className="min-h-screen bg-[#f4f6fa]"><PrivacyGate id={data.user.id}/>{data.user.role==='admin'&&<PrivacyBadge/>}
+    <main className="min-h-screen bg-[#f4f6fa]"><PrivacyGate id={data.user.id}/>
       <header className="sticky top-0 z-20 border-b border-[#dce9e1] bg-white/95 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3 sm:px-6">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-2 py-3 sm:px-6">
           <div className="flex items-center gap-3">
             <img
               src="/hik-logo-clean.png"
@@ -645,7 +638,7 @@ function Dashboard({ data, act, busy, error, openProfile, refresh, refreshing }:
           </div>
         </div>
       </header>
-      <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-9">
+      <div className="mx-auto max-w-7xl px-2 py-6 sm:px-6 sm:py-9">
         {error && (
           <p className="mb-5 rounded-xl border border-red-200 bg-red-50 p-4 text-red-700">
             {error}
@@ -731,7 +724,7 @@ function Dashboard({ data, act, busy, error, openProfile, refresh, refreshing }:
           <TabsList className="mb-6 h-auto w-full justify-start gap-1 overflow-x-auto rounded-2xl bg-white p-1.5 shadow-sm">
             <TabsTrigger value="signup" className="px-3 py-2">
               <CalendarDays className="mr-2 h-4 w-4" />
-              Tilmelding
+              Tilmeldinger
             </TabsTrigger>
             <TabsTrigger value="plan" className="px-3 py-2">
               <Trophy className="mr-2 h-4 w-4" />
@@ -751,8 +744,9 @@ function Dashboard({ data, act, busy, error, openProfile, refresh, refreshing }:
             {data.user.isSuperAdmin&&<TabsTrigger value="superadmin">SuperAdmin</TabsTrigger>}
           </TabsList>
           {data.user.isSuperAdmin&&<TabsContent value="superadmin"><SuperAdminPanel data={data} act={act} busy={busy}/></TabsContent>}
-          <TabsContent value="signup">
+          <TabsContent value="signup" className="space-y-4">
             <SignupPanel key={`${data.event.id}:${JSON.stringify(data.times)}`} data={data} act={act} busy={busy} />
+            <CalendarList dates={data.calendarDates ?? []} currentId={data.event.id} />
           </TabsContent>
           <TabsContent value="plan">
             <PlanPanel data={data} userMatches={userMatches} act={act} busy={busy} />
@@ -766,7 +760,6 @@ function Dashboard({ data, act, busy, error, openProfile, refresh, refreshing }:
             </TabsContent>
           )}
         </Tabs>
-        <div className="mb-6"><CalendarList dates={data.calendarDates ?? []} currentId={data.event.id} /></div>
         <InstallApp />
         <Disclaimer />
       </div>
@@ -824,13 +817,13 @@ function EmptyCalendarDashboard({data,act,busy,error,openProfile}: {
   data:{user:MemberProfile & {id:number;role:string;isSuperAdmin?:boolean};calendarDates:CalendarDate[];players?:MemberProfile[]};
   act:AppAction;busy:boolean;error:string;openProfile:boolean;
 }) {
-  return <main className="min-h-screen bg-[#f4f6fa] px-4 py-8"><PrivacyGate id={data.user.id}/>{data.user.role==='admin'&&<PrivacyBadge/>}
+  return <main className="min-h-screen bg-[#f4f6fa] px-2 py-8 sm:px-4"><PrivacyGate id={data.user.id}/>
     <div className="mx-auto max-w-5xl space-y-5">
       <div className="flex items-center justify-between"><h1 className="text-2xl font-bold">Åben Bane</h1><Button variant="outline" onClick={()=>act({action:"logout"})}><LogOut className="mr-2 h-4 w-4"/>Log ud</Button></div>
       <p className="rounded-xl bg-white p-4">Der er ingen kommende spilledage på listen. {data.user.role==="admin"?"Tilføj en dato nedenfor for at åbne en ny runde.":"Administratoren skal tilføje flere datoer. Du kan stadig ændre din profil."}</p>
       {error&&<p role="alert" className="rounded-xl bg-red-50 p-4 text-red-700">{error}</p>}
       <Tabs defaultValue={openProfile?"profile":"dates"}>
-        <TabsList><TabsTrigger value="dates"><CalendarDays className="mr-2 h-4 w-4"/>Spilledage</TabsTrigger><TabsTrigger value="profile"><Settings className="mr-2 h-4 w-4"/>Profil</TabsTrigger>{data.user.role==="admin" && <TabsTrigger value="members">Admin · Medlemmer<CrReviewCount players={data.players}/></TabsTrigger>}{data.user.role==='admin'&&<><TabsTrigger value="privacy">Privatliv & inaktive profiler</TabsTrigger><TabsTrigger value="newsletter">Nyhedsmails</TabsTrigger></>}{data.user.isSuperAdmin&&<TabsTrigger value="superadmin">SuperAdmin</TabsTrigger>}</TabsList>{data.user.isSuperAdmin&&<TabsContent value="superadmin"><SuperAdminPanel data={data} act={act} busy={busy}/></TabsContent>}{data.user.role==='admin'&&<><TabsContent value="privacy"><PrivacyAdmin/></TabsContent><TabsContent value="newsletter"><PrivacyAdmin mode="newsletter"/></TabsContent></>}
+        <TabsList><TabsTrigger value="dates"><CalendarDays className="mr-2 h-4 w-4"/>Tilmeldinger</TabsTrigger><TabsTrigger value="profile"><Settings className="mr-2 h-4 w-4"/>Profil</TabsTrigger>{data.user.role==="admin" && <TabsTrigger value="members">Admin · Medlemmer<CrReviewCount players={data.players}/></TabsTrigger>}{data.user.role==='admin'&&<><TabsTrigger value="privacy" className="h-auto flex-col gap-1 py-2"><span>Privatliv & inaktive profiler</span><PrivacyBadge/></TabsTrigger><TabsTrigger value="newsletter">Nyhedsmails</TabsTrigger></>}{data.user.isSuperAdmin&&<TabsTrigger value="superadmin">SuperAdmin</TabsTrigger>}</TabsList>{data.user.isSuperAdmin&&<TabsContent value="superadmin"><SuperAdminPanel data={data} act={act} busy={busy}/></TabsContent>}{data.user.role==='admin'&&<><TabsContent value="privacy"><PrivacyAdmin/></TabsContent><TabsContent value="newsletter"><PrivacyAdmin mode="newsletter"/></TabsContent></>}
         <TabsContent value="dates"><CalendarList dates={data.calendarDates} act={data.user.role==="admin"?act:undefined} busy={busy}/></TabsContent>
         <TabsContent value="profile"><ProfilePanel user={data.user} act={act} busy={busy}/></TabsContent>
         {data.user.role==="admin" && <TabsContent value="members"><MembersPanel data={data} act={act} busy={busy}/></TabsContent>}
@@ -1206,7 +1199,7 @@ function SignupPanel({ data, act, busy }: any) {
             </p>
           )}
           <section className="mt-6 border-t border-slate-200 pt-4" aria-label="Tilmeldte medlemmer">
-            <h3 className="text-base font-semibold">Tilmeldte til denne spillerunde ({registeredMembers.length})</h3>
+            <h3 className="mb-1 text-base font-semibold">Tilmeldte til denne spillerunde ({registeredMembers.length})</h3>
             <p className="mt-1 text-sm text-slate-600">Se, hvem der har tilmeldt sig. Listen opdateres automatisk.</p>
             {registeredMembers.length ? <ul className="mt-3 grid gap-2 sm:grid-cols-2">
               {registeredMembers.map(member => <li key={member.id} className="rounded-lg bg-slate-50 px-3 py-2 text-sm [overflow-wrap:anywhere]">{member.name}</li>)}
@@ -1346,11 +1339,6 @@ function PlayerMatchCard({ match, name, data, act, busy, calendarDate }: any) {
                 )}
               </div>
             )}
-            <DialogFooter>
-              <DialogClose asChild>
-                <Button className="bg-[#13375e]">Luk ventelisten</Button>
-              </DialogClose>
-            </DialogFooter>
           </DialogContent>
         </Dialog>
       ) : substitution.status === "unresolved" ? (
@@ -1473,24 +1461,6 @@ function RegistrationScheduleForm({ event, act, busy }: any) {
 }
 
 function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
-  const [kampplanPrompt, setKampplanPrompt] = useState("");
-  const [promptError, setPromptError] = useState("");
-  useEffect(() => {
-    const controller = new AbortController();
-    async function loadPrompt() {
-      try {
-        const response = await fetch('/kampplan-prompt.txt', { cache: 'no-store', signal: controller.signal });
-        if (!response.ok) throw new Error('Prompten kunne ikke hentes. Genindlæs siden og prøv igen.');
-        const text = await response.text();
-        if (!text.trim()) throw new Error('Promptfilen er tom.');
-        setKampplanPrompt(text);
-      } catch (error) {
-        if (!controller.signal.aborted) setPromptError(error instanceof Error ? error.message : 'Prompten kunne ikke hentes.');
-      }
-    }
-    void loadPrompt();
-    return () => controller.abort();
-  }, []);
   const [editing, setEditing] = useState<number | null>(null);
   const [listView, setListView] = useState<"current" | "history">("current");
   const [uploadError, setUploadError] = useState("");
@@ -1507,7 +1477,7 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
   return (
     <Tabs defaultValue="signups" className="space-y-6">
       <TabsList aria-label="Admin" className="flex h-auto w-full flex-wrap justify-start gap-1 bg-[#e7f0e9] p-1 group-data-[orientation=horizontal]/tabs:h-auto [&>button]:h-auto">
-        <TabsTrigger value="privacy">Privatliv & inaktive profiler</TabsTrigger><TabsTrigger value="newsletter">Nyhedsmails</TabsTrigger>
+        <TabsTrigger value="privacy" className="flex-col gap-1 py-2"><span>Privatliv & inaktive profiler</span><PrivacyBadge/></TabsTrigger><TabsTrigger value="newsletter">Nyhedsmails</TabsTrigger>
         <TabsTrigger value="signups" className="min-h-9 px-2.5">Tilmeldinger</TabsTrigger>
         <TabsTrigger value="matches" className="min-h-9 px-2.5">Kampplan Admin</TabsTrigger>
         <TabsTrigger value="members" className="min-h-9 px-2.5">Medlemmer<CrReviewCount players={data.players}/></TabsTrigger>
@@ -1549,7 +1519,7 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
       <PlayerLists data={data} view={listView} setView={setListView} act={act} busy={busy} />
       </TabsContent>
       <TabsContent value="matches" forceMount className="space-y-6 data-[state=inactive]:hidden">
-      <OptimizerPanel descriptions={data.optimizerDescriptions} canConfigure={data.user.isSuperAdmin===true} key={`${data.event.id}:${JSON.stringify(data.optimizerDefaults)}`} clearPlan={() => act({action: "remove_kampplan", eventId: data.event.id})} event={data.event} rows={importedRows} wishes={wishes} initialWeights={data.optimizerWeights} isOpen={data.isOpen} busy={busy || planEditPending} refresh={refresh} />
+      <OptimizerPanel key={`optimizer-${data.event.id}`} clearPlan={() => act({action: "remove_kampplan", eventId: data.event.id})} event={data.event} rows={importedRows} wishes={wishes} isOpen={data.isOpen} busy={busy || planEditPending} refresh={refresh} />
       {!!openSubstitutions.length && (
         <Card className="border-amber-300 bg-amber-50">
           <CardHeader>
@@ -1576,30 +1546,6 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
           </CardContent>
         </Card>
       )}
-      <div className="space-y-2 rounded-xl border border-slate-200 bg-white p-4">
-        {kampplanPrompt ? <Button disabled={busy || planEditPending} className="bg-[#13375e]" onClick={async () => {
-          const tab = window.open('about:blank', '_blank');
-          if (tab) tab.opener = null;
-          try {
-            if (await act({action:'remove_kampplan', eventId:data.event.id})) {
-              const url = 'https://chatgpt.com/?q=' + encodeURIComponent(kampplanPrompt);
-              if (tab) tab.location.href = url; else window.location.href = url;
-            } else tab?.close();
-          } catch { tab?.close(); }
-        }}>
-            <Sparkles className="mr-2 h-4 w-4" />
-            Foreslå kampe
-        </Button> : <Button disabled>{promptError ? 'Foreslå kampe' : 'Henter prompt…'}</Button>}
-        {promptError && <p role="alert" className="text-sm text-red-700">{promptError}</p>}
-        <p className="text-sm text-slate-600">
-          Åbner ChatGPT i en ny fane med prompten. Vedhæft selv den eksporterede Excel-fil med tilmeldingerne i ChatGPT.
-          Download derefter KampPlan.xlsx fra ChatGPT, og brug “Importér kampplan” herunder.
-        </p>
-        <details className="text-sm text-slate-600">
-          <summary className="cursor-pointer">Hvis prompten ikke kommer med, kan du kopiere den her</summary>
-          <textarea aria-label="Prompt til kampplan" readOnly value={kampplanPrompt} onFocus={event => event.currentTarget.select()} className="mt-2 h-60 w-full rounded-md border p-3" />
-        </details>
-      </div>
       <div className="flex flex-wrap gap-3">
         <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2">
           <label htmlFor="import-kampplan" className="text-sm font-medium text-slate-700">
@@ -1667,7 +1613,7 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
         </p>
       )}
       {Array.isArray(data.importedMatches) && data.importedMatches.length > 0 && (
-        <PlanEditor contacts={data.planContacts} key={data.event.id} event={data.event} rows={data.importedMatches} scores={data.adminPlanScores}
+        <PlanEditor contacts={data.planContacts} key={`plan-editor-${data.event.id}`} event={data.event} rows={data.importedMatches} scores={data.adminPlanScores}
           weights={data.optimizerWeights} busy={busy} isOpen={data.isOpen} refresh={refresh} onPendingChange={setPlanEditPending} />
       )}
       <Card className="border-[#dce9e1]">
@@ -2069,7 +2015,7 @@ function MembersPanel({data,act,busy}:any) {
       <Card className="border-[#dce9e1]">
         <CardHeader><div className="flex flex-wrap items-center justify-between gap-3"><CardTitle>Medlemmer og CR<CrReviewCount players={data.players}/></CardTitle>
           {allMembersEmail ? <Button asChild variant="outline"><a href={allMembersEmail}><Mail className="mr-2 size-4" aria-hidden="true"/>E-mail alle medlemmer</a></Button> : <Button variant="outline" disabled>E-mail alle medlemmer</Button>}
-        </div><CardDescription>Medlemmer med CR til gennemgang står øverst. Godkend den automatiske CR, eller ret værdien og vælg “Gem og godkend CR”. Medlemmet kan tilmelde sig imens. CR er kun synlig for administratorer.</CardDescription></CardHeader>
+        </div><CardDescription>Sletning håndteres under Privatliv &amp; inaktive profiler.</CardDescription><CardDescription>Medlemmer med CR til gennemgang står øverst. Godkend den automatiske CR, eller ret værdien og vælg “Gem og godkend CR”. Medlemmet kan tilmelde sig imens. CR er kun synlig for administratorer.</CardDescription></CardHeader>
         <CardContent className="space-y-2 px-3 sm:px-6">
           <Label htmlFor="member-search">Fornavn Efternavn</Label>
           <Input id="member-search" type="search" placeholder="Søg efter navn…" value={search} onChange={event => setSearch(event.target.value)} />
@@ -2081,7 +2027,6 @@ function MembersPanel({data,act,busy}:any) {
             <CrReviewControl key={`${player.id}:${player.christinRanking}:${player.crReviewedAt}`} player={player} act={act} busy={busy}/>
             <div className="flex shrink-0 gap-1">
             <EditMemberDialog player={player} act={act} busy={busy} members={data.players}/>
-            <span className="text-xs text-slate-500">Sletning håndteres under Privatliv & inaktive profiler</span>
             </div></div>
             <details className="text-xs text-slate-600"><summary className="cursor-pointer py-1 leading-5">Kontakt og oplysninger</summary>
               <div className="space-y-1 pb-1 pt-1 [overflow-wrap:anywhere]"><p>{player.email || 'Ingen e-mailadresse'}</p>
@@ -2099,8 +2044,20 @@ function SuperAdminPanel({data,act,busy}:any){
  const [testEmailResult,setTestEmailResult]=useState('');
  if(!data.user.isSuperAdmin)return null;
  return <section className="space-y-6" aria-label="SuperAdmin"><h2 className="text-2xl font-bold">SuperAdmin</h2>
-      <OptimizerDefaultsForm descriptions={data.optimizerDescriptions} key={JSON.stringify(data.optimizerDefaults)} defaults={data.optimizerDefaults} act={act} busy={busy} />
+      {data.event&&<OptimizerDefaultsForm
+        action="set_event_optimizer_weights"
+        title="Optimerings-faktorer"
+        savedText="Optimerings-faktorerne er gemt."
+        description={`Faktorerne bruges af “Algoritme foreslå kampe” for spillerunden ${niceDate(data.event.date)}. Knapperne til beregning og eksport findes fortsat under Kampplan Admin.`}
+        descriptions={data.optimizerDescriptions}
+        key={`${data.event.id}:${JSON.stringify(data.optimizerWeights)}`}
+        defaults={data.optimizerWeights}
+        act={body=>act({...body,eventId:data.event.id})}
+        busy={busy}
+      />}
       <OptimizerResourcesForm key={JSON.stringify(data.optimizerResources)} defaults={data.optimizerResources} act={act} busy={busy} />
+      {data.event&&<ChatGptProposal data={data} act={act} busy={busy}/>}
+      <OptimizerDefaultsForm descriptions={data.optimizerDescriptions} key={JSON.stringify(data.optimizerDefaults)} defaults={data.optimizerDefaults} act={act} busy={busy} />
       <Card className="border-[#dce9e1]">
         <CardHeader>
           <CardTitle>Test e-mail</CardTitle>
@@ -2131,4 +2088,31 @@ function SuperAdminPanel({data,act,busy}:any){
         </CardContent>
       </Card>
 </section>;
+}
+
+function ChatGptProposal({data,act,busy}:any){
+  const [kampplanPrompt,setKampplanPrompt]=useState('');
+  const [promptError,setPromptError]=useState('');
+  useEffect(()=>{
+    const controller=new AbortController();
+    fetch('/api/superadmin/prompt',{cache:'no-store',signal:controller.signal}).then(response=>{
+      if(!response.ok)throw Error('Prompten kunne ikke hentes. Genindlæs siden og prøv igen.');
+      return response.text();
+    }).then(text=>{if(!text.trim())throw Error('Promptfilen er tom.');setKampplanPrompt(text);}).catch(error=>{
+      if(!controller.signal.aborted)setPromptError(error instanceof Error?error.message:'Prompten kunne ikke hentes.');
+    });
+    return()=>controller.abort();
+  },[]);
+  return <Card className="border-[#dce9e1]"><CardHeader><CardTitle>ChatGPT-forslag til kampplan</CardTitle><CardDescription>Alternativ manuel arbejdsgang med den lokale promptskabelon.</CardDescription></CardHeader><CardContent className="space-y-3">
+    {kampplanPrompt?<Button disabled={busy} className="bg-[#13375e]" onClick={async()=>{
+      const tab=window.open('about:blank','_blank');if(tab)tab.opener=null;
+      try{if(await act({action:'remove_kampplan',eventId:data.event.id})){
+        const url='https://chatgpt.com/?q='+encodeURIComponent(kampplanPrompt);
+        if(tab)tab.location.href=url;else window.location.href=url;
+      }else tab?.close();}catch{tab?.close();}
+    }}><Sparkles className="mr-2 h-4 w-4"/>Foreslå kampe</Button>:<Button disabled>{promptError?'Foreslå kampe':'Henter prompt…'}</Button>}
+    {promptError&&<p role="alert" className="text-sm text-red-700">{promptError}</p>}
+    <p className="text-sm text-slate-600">Åbner ChatGPT i en ny fane med prompten. Vedhæft selv den eksporterede Excel-fil med tilmeldingerne. Download derefter KampPlan.xlsx fra ChatGPT, og importér den under Kampplan Admin.</p>
+    <details className="text-sm text-slate-600"><summary className="cursor-pointer">Hvis prompten ikke kommer med, kan du kopiere den her</summary><textarea aria-label="Prompt til kampplan" readOnly value={kampplanPrompt} onFocus={event=>event.currentTarget.select()} className="mt-2 h-60 w-full rounded-md border p-3"/></details>
+  </CardContent></Card>;
 }
