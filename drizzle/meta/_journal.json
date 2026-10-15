@@ -120,6 +120,20 @@
       "when": 1791727052259,
       "tag": "0016_privacy_newsletter",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1792040427274,
+      "tag": "0017_dear_wallflower",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1792040915253,
+      "tag": "0018_shiny_eddie_brock",
+      "breakpoints": true
     }
   ]
 }

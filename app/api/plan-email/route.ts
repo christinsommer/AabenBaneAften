@@ -6,7 +6,7 @@ import {currentPlayer} from '../../../lib/auth';
 import {planEmail} from '../../../lib/plan-email';
 
 export async function POST(request:Request) {
-  const user=await currentPlayer();
+  const user=await currentPlayer({touch:true});
   if(!user)return Response.json({error:'Log ind først.'},{status:401});
   if(user.role!=='admin')return Response.json({error:'Kun administratorer kan sende kampplanen.'},{status:403});
   const body=await request.json().catch(()=>null) as {eventId?:number;requestId?:string}|null;

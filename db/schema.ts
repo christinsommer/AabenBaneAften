@@ -1,6 +1,13 @@
 import { sql } from "drizzle-orm";
 import { check, index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
+export const authRateLimits = sqliteTable('auth_rate_limits', {
+  key: text('key').primaryKey(),
+  attempts: integer('attempts').notNull(),
+  expiresAt: integer('expires_at').notNull(),
+  blockedUntil: integer('blocked_until').notNull(),
+}, (t) => [index('idx_auth_rate_limits_expires').on(t.expiresAt)]);
+
 export const optimizerDefaults = sqliteTable('optimizer_defaults', {
   id: integer('id').primaryKey(),
   weights: text('weights').notNull(),
@@ -46,6 +53,7 @@ export const sessions = sqliteTable("sessions", {
   tokenHash: text("token_hash").primaryKey(),
   playerId: integer("player_id").notNull(),
   expiresAt: text("expires_at").notNull(),
+  lastSeenAt: text("last_seen_at"),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 }, (t) => [index("idx_sessions_player_id").on(t.playerId)]);
 

@@ -13,7 +13,7 @@ import {applyCourtOrder} from '../../../lib/court-order';
 
 export async function POST(request: Request) {
   try {
-    const user = await currentPlayer();
+    const user = await currentPlayer({touch:true});
     if (!user) return Response.json({error: 'Log ind først.'}, {status: 401});
     if (user.role !== 'admin') return Response.json({error: 'Kun administratorer kan foreslå kampe.'}, {status: 403});
     const body = await request.json() as {action: string; eventId: number; weights?: unknown; fingerprint?: string; matches?: unknown} | null;

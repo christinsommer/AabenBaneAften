@@ -7,6 +7,7 @@ import Database from 'better-sqlite3';
 import { getPlatformProxy } from 'wrangler';
 import { migrationStatements } from './migration-statements.mjs';
 import { normalizeSelfLevel } from '../lib/ranking.ts';
+import {fingerprintLocalD1} from './local-d1-fingerprint.mjs';
 
 // This script only uses simulated bindings; it never invokes a remote command.
 const config = JSON.parse(readFileSync('wrangler.jsonc', 'utf8'));
@@ -21,13 +22,7 @@ try {
   const statements = [];
   const manifest=JSON.parse(readFileSync('drizzle/checksums.json','utf8'));
   const hash=value=>createHash('sha256').update(value).digest('hex');
-  async function fingerprint() {
-    const result={};
-    const tables=(await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT GLOB '_cf_*' AND name NOT IN ('d1_migrations','_cf_KV','privacy_migration_checksums') ORDER BY name").all()).results;
-    for(const {name} of tables){const rows=(await db.prepare(`SELECT * FROM "${name.replaceAll('"','""')}"`).all()).results.map(row=>JSON.stringify(row)).sort();result[name]={count:rows.length,hash:hash(rows.join('\n'))};}
-    return result;
-  }
-  const before=existing?await fingerprint():{};
+  const before=existing?await fingerprintLocalD1(db):{};
   if (!initialized) statements.push(db.prepare('CREATE TABLE d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)'));
   for (const file of readdirSync('drizzle').filter(name => name.endsWith('.sql')).sort()) {
     if(manifest[file]!==hash(readFileSync(`drizzle/${file}`, 'utf8').replaceAll('\r\n','\n')))throw new Error('Migration integrity mismatch: '+file);
@@ -65,7 +60,7 @@ try {
   }
   // A single D1 batch commits schema and imported rows together or rolls everything back.
   if (statements.length) await db.batch(statements);
-  if(existing&&statements.length){const after=await fingerprint();for(const [table,value]of Object.entries(before))if(JSON.stringify(value)!==JSON.stringify(after[table]))throw new Error('Migration changed existing data: '+table);console.log('Existing table counts and fingerprints preserved.');}
+  if(existing&&statements.length){const after=await fingerprintLocalD1(db,before);for(const [table,value]of Object.entries(before))if(JSON.stringify(value)!==JSON.stringify(after[table]))throw new Error('Migration changed existing data: '+table);console.log('Existing table counts and fingerprints preserved.');}
   const { members } = await db.prepare('SELECT COUNT(*) AS members FROM players').first();
   if (members === 0) {
     console.warn('WARNING: Local database contains no members. Existing logins will fail here. Restore a local backup or create a local profile.');

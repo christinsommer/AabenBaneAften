@@ -160,9 +160,9 @@ export default function OpenBaneApp() {
       if (payload.action === "register") {
         setRegistrationNotice("Du er nu oprettet. Tjek din mail om du har modtaget en bekræftelse. Hvis ikke, så kontakt administrator.");
       }
-      if (payload.action === "logout") setRegistrationNotice("");
+      if (payload.action === "logout" || payload.action === 'logout_all') setRegistrationNotice("");
       if (payload.action === "register") setOpenProfile(true);
-      if (payload.action === "logout" || payload.action === "login") setOpenProfile(false);
+      if (payload.action === "logout" || payload.action === 'logout_all' || payload.action === "login") setOpenProfile(false);
       // Login still verifies that the browser sends the newly issued cookie.
       if (payload.action === "login" || payload.action === "register" || typeof j.authenticated !== "boolean") {
         if (!await load(payload.action === "login" || payload.action === "register")) return false;
@@ -184,7 +184,11 @@ export default function OpenBaneApp() {
     load();
     const reloadAfterPrivacyChange = () => { void load(); };
     window.addEventListener('privacy-updated', reloadAfterPrivacyChange);
-    return () => window.removeEventListener('privacy-updated', reloadAfterPrivacyChange);
+    window.addEventListener('session-expired', reloadAfterPrivacyChange);
+    return () => {
+      window.removeEventListener('privacy-updated', reloadAfterPrivacyChange);
+      window.removeEventListener('session-expired', reloadAfterPrivacyChange);
+    };
   }, []);
   useEffect(() => {
     if (!data?.authenticated || busy) return;
@@ -862,11 +866,17 @@ function ProfilePanel({ user, act, busy, adminMode=false, members=[] }: {
 }) {
   const [saved, setSaved] = useState(false);
   const [birthYear, setBirthYear] = useState(user.birthYear?.toString() ?? '');
+  const [email, setEmail] = useState(user.email);
+  const [currentPin, setCurrentPin] = useState('');
+  const emailChanged = email.trim().toLowerCase() !== user.email.trim().toLowerCase();
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSaved(false);
     const values = Object.fromEntries(new FormData(event.currentTarget).entries());
-    if (await act({ ...values, emailVisible: values.emailVisible === "on", phoneVisible: values.phoneVisible === "on", action: "update_profile" })) setSaved(true);
+    if (await act({ ...values, emailVisible: values.emailVisible === "on", phoneVisible: values.phoneVisible === "on", action: "update_profile" })) {
+      setSaved(true);
+      setCurrentPin('');
+    }
   }
   return (
     <Card className="max-w-2xl border-[#dce9e1]">
@@ -883,9 +893,13 @@ function ProfilePanel({ user, act, busy, adminMode=false, members=[] }: {
           </div>
           <Field name="memberNo" label="Medlemsnummer" defaultValue={user.memberNo} readOnly />
           <div className="grid items-end gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-            <Field name="email" label="E-mailadresse" type="email" defaultValue={user.email} autoComplete="email" maxLength={254} />
+            <Field name="email" label="E-mailadresse" type="email" value={email} onChange={(event:React.ChangeEvent<HTMLInputElement>)=>setEmail(event.target.value)} autoComplete="email" maxLength={254} />
             <ContactVisibilityField name="emailVisible" label="E-mailadresse" defaultChecked={user.emailVisible ?? true} />
           </div>
+          {emailChanged && <div className="space-y-2">
+            <Field name="currentPin" label="Bekræft med din egen kode" type="password" inputMode="numeric" autoComplete="current-password" maxLength={8} value={currentPin} onChange={(event:React.ChangeEvent<HTMLInputElement>)=>setCurrentPin(event.target.value)} />
+            <p className="text-sm text-slate-600">{adminMode ? 'Brug din egen administratorkode. Medlemmet logges ud på alle enheder.' : 'Dine andre enheder logges ud, når du ændrer e-mailadressen.'}</p>
+          </div>}
           <div className="grid items-end gap-2 sm:grid-cols-[minmax(0,1fr)_auto]"><div className="grid grid-cols-[7rem_minmax(0,1fr)] gap-3">
             <Field name="phoneCountryCode" label="Landekode" defaultValue={user.phoneCountryCode ?? "+45"} autoComplete="tel-country-code" pattern="\+[1-9][0-9]{0,2}" maxLength={4} />
             <Field name="phone" label="Telefonnummer (valgfrit)" type="tel" inputMode="numeric" autoComplete="tel-national" defaultValue={user.phone??""} required={false} pattern="[0-9]*" maxLength={15} />
@@ -924,6 +938,11 @@ function ProfilePanel({ user, act, busy, adminMode=false, members=[] }: {
           <Button disabled={busy} className="bg-[#13375e]">{busy ? "Gemmer…" : "Gem profil"}</Button>
           {saved && <p role="status" className="text-sm font-semibold text-[#13375e]">Din profil er gemt.</p>}
         </form>
+        {!adminMode && <section className="mt-6 space-y-2 border-t pt-4">
+          <h2 className="font-semibold">Login og enheder</h2>
+          <p className="text-sm text-slate-600">Log ud på alle enheder, inklusive denne.</p>
+          <Button type="button" variant="outline" disabled={busy} onClick={()=>act({action:'logout_all'})}>Log ud på alle enheder</Button>
+        </section>}
       </CardContent>
     </Card>
   );
@@ -1678,7 +1697,7 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
       <MembersPanel data={data} act={act} busy={busy} />
       </TabsContent>
       <TabsContent value="settings" className="space-y-6">
-      <AdminManagers data={data} act={act} busy={busy} />
+      {data.user.isSuperAdmin && <AdminManagers data={data} act={act} busy={busy} />}
       <RegistrationDefaultsForm key={JSON.stringify(data.registrationDefaults)} defaults={data.registrationDefaults} act={act} busy={busy} />
       <CourtOrderForm key={JSON.stringify(data.courtOrder)} defaults={data.courtOrder} act={act} busy={busy} />
       <PlayTimesForm key={JSON.stringify(data.playTimes)} defaults={data.playTimes} act={act} busy={busy} />
@@ -1689,15 +1708,18 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
 
 function AdminManagers({ data, act, busy }: any) {
   const admins = data.players.filter((p: any) => p.role === "admin" && !p.isSuperAdmin);
+  const adminCount = data.players.filter((p: any) => p.role === 'admin').length;
   const candidates = data.players.filter((p: any) => p.role !== "admin");
   const [selected, setSelected] = useState("");
+  const [adminPin, setAdminPin] = useState("");
+  async function changeAdmin(playerId: number, makeAdmin: boolean) {
+    const result = await act({action:'set_admin',playerId,makeAdmin,adminPin});
+    setAdminPin('');
+    return result;
+  }
   async function addAdmin() {
     if (
-      await act({
-        action: "set_admin",
-        playerId: Number(selected),
-        makeAdmin: true,
-      })
+      await changeAdmin(Number(selected), true)
     )
       setSelected("");
   }
@@ -1711,6 +1733,10 @@ function AdminManagers({ data, act, busy }: any) {
         </CardDescription>
       </CardHeader>
       <CardContent>
+        <label className="mb-4 block text-sm font-medium">
+          Bekræft rolleændringer med din egen kode
+          <Input type="password" inputMode="numeric" autoComplete="current-password" value={adminPin} onChange={event=>setAdminPin(event.target.value)} maxLength={8} className="mt-2 max-w-sm" />
+        </label>
         <div className="mb-4 space-y-2">
           {admins.map((p: any) => (
             <div
@@ -1728,15 +1754,11 @@ function AdminManagers({ data, act, busy }: any) {
               </div>
               {p.id !== data.user.id && (
                 <Button
-                  disabled={busy || admins.length <= 1}
+                  disabled={busy || !adminPin || adminCount <= 1}
                   size="sm"
                   variant="outline"
                   onClick={() =>
-                    act({
-                      action: "set_admin",
-                      playerId: p.id,
-                      makeAdmin: false,
-                    })
+                    changeAdmin(p.id, false)
                   }
                 >
                   Fjern som administrator
@@ -1746,9 +1768,9 @@ function AdminManagers({ data, act, busy }: any) {
           ))}
         </div>
         <p className="mb-3 text-sm font-medium text-slate-600">
-          {admins.length} af 4 administratorpladser er i brug.
+          {adminCount} af 4 administratorpladser er i brug.
         </p>
-        {admins.length < 4 && (
+        {adminCount < 4 && (
           <div className="flex flex-col gap-2 sm:flex-row">
             <Select value={selected} onValueChange={setSelected}>
               <SelectTrigger className="sm:max-w-sm">
@@ -1763,7 +1785,7 @@ function AdminManagers({ data, act, busy }: any) {
               </SelectContent>
             </Select>
             <Button
-              disabled={busy || !selected}
+              disabled={busy || !selected || !adminPin}
               onClick={addAdmin}
               className="bg-[#13375e]"
             >
@@ -1771,7 +1793,7 @@ function AdminManagers({ data, act, busy }: any) {
             </Button>
           </div>
         )}
-        {!candidates.length && admins.length < 4 && (
+        {!candidates.length && adminCount < 4 && (
           <p className="text-sm text-slate-500">
             Der kommer flere valgmuligheder, når andre spillere har oprettet
             deres profil.

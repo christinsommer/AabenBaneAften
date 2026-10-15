@@ -1,4 +1,5 @@
 import {optimizerHelp} from '../../../lib/optimizer-settings';
+import {authRateLimit} from '../../../lib/auth-rate-limit';
 import {isSuperAdmin,superAdminPlayerId} from '../../../lib/superadmin';
 import {PRIVACY_VERSION,CONSENT_VERSION} from '../../../lib/privacy-text';
 import {registerWithPrivacy,activity,closed} from '../../../lib/privacy-service';
@@ -7,7 +8,7 @@ import { and, asc, count, desc, eq, gt, ne, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getDb } from "../../../db";
 import { optimizerDefaults, registrationDefaults, events, feedback, matches, matchRequests, pinResetTokens, players, sessions, signups, substitutions } from "../../../db/schema";
-import { createSession, currentPlayer, destroySession, hashPin, hashToken, verifyPin, verifyToken } from "../../../lib/auth";
+import { createSession, currentPlayer, destroySession, destroyAllSessions, hashPin, hashToken, verifyPin, verifyToken } from "../../../lib/auth";
 import { ensureEvent } from "../../../lib/schedule";
 import { sendEmail } from "../../../lib/email";
 import { sendWelcomeEmail } from "../../../lib/welcome-email";
@@ -32,6 +33,26 @@ import {parseCourtOrder} from '../../../lib/court-order';
 import {parsePlayTimes,buildPlaySchedule} from '../../../lib/play-schedule';
 
 export const dynamic = "force-dynamic";
+
+async function saveMemberProfile(request:Request, actor:typeof players.$inferSelect, target:typeof players.$inferSelect, values:Partial<typeof players.$inferInsert>, currentPin:unknown) {
+  const db=getDb();
+  const emailChanged=values.email!==undefined && values.email!==target.email.trim().toLowerCase();
+  if(!emailChanged) {
+    await db.update(players).set(values).where(eq(players.id,target.id));
+    return null;
+  }
+  const limited=await authRateLimit(request,'login',actor.memberNo);
+  if(limited)return limited;
+  if(!await verifyPin(String(currentPin??''),actor.pinHash))return Response.json({error:'Bekræft ændringen af e-mail med din egen kode.'},{status:403});
+  await db.batch([
+    db.update(players).set(values).where(eq(players.id,target.id)),
+    db.delete(sessions).where(eq(sessions.playerId,target.id)),
+    db.delete(pinResetTokens).where(eq(pinResetTokens.playerId,target.id)),
+  ]);
+  // Fresh authentication rotates this device's session; other devices must log in again.
+  if(target.id===actor.id)await createSession(actor.id);
+  return null;
+}
 
 function parseImportedKampplan(raw: unknown) {
   if (typeof raw !== "string" || !raw.trim()) return [];
@@ -137,14 +158,15 @@ async function state() {
     level:players.selfLevel,
     availability:signups.availability,
   }).from(signups).innerJoin(players,eq(players.id,signups.playerId)).where(and(eq(signups.eventId,event.id),eq(signups.status,"waitlist"))).orderBy(asc(signups.createdAt));
-  const names = await db.select({id:players.id,name:players.name,firstName:players.firstName}).from(players);
+  const memberNames = await db.select({id:players.id,name:players.name,firstName:players.firstName}).from(players);
   const normalizeContactName = (name: string) => name.normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('da-DK');
   const planNames = new Set(importedMatches.flatMap(row => ['D','E','F','G'].map(key => normalizeContactName(String(row[key] ?? '')))).filter(Boolean));
   const planIds = new Set<number>(eventMatches.flatMap(match => JSON.parse(match.playerIds)));
   const contactRows = user.role === 'admin' || event.status === 'published'
     ? await db.select({id:players.id,name:players.name,email:players.email,phone:players.phone,phoneCountryCode:players.phoneCountryCode,emailVisible:players.emailVisible,phoneVisible:players.phoneVisible}).from(players) : [];
   const planContacts = contactRows.filter(player => planIds.has(player.id) || planNames.has(normalizeContactName(player.name))).map(visiblePlanContact);
-  const namesById = new Map(names.map(player => [player.id, player.name]));
+  const names = user.role === 'admin' ? memberNames : memberNames.filter(player => player.id === user.id || planIds.has(player.id) || planNames.has(normalizeContactName(player.name)));
+  const namesById = new Map(memberNames.map(player => [player.id, player.name]));
   const substitutionRows = await db.select().from(substitutions).where(eq(substitutions.eventId,event.id)).orderBy(desc(substitutions.updatedAt));
   const substitutionsForUser = substitutionRows.filter((item)=>user.role==="admin"||item.outgoingPlayerId===user.id).map((item)=>({
     ...item,
@@ -162,6 +184,10 @@ export async function POST(request:Request){
   if(!sameOrigin(request))return Response.json({error:"Ugyldigt kald."},{status:403});
   try{
     const db=getDb(); const body=await request.json() as Record<string,any>; const action=String(body.action??"");
+    if(action==='login'||action==='request_pin_reset'||action==='reset_pin') {
+      const limited = await authRateLimit(request, action, String(body.memberNo??''));
+      if(limited)return limited;
+    }
     if(action==="request_pin_reset"){
       const memberNo=String(body.memberNo??"").trim();
       if(!memberNo)return Response.json({error:"Angiv dit medlemsnummer."},{status:400});
@@ -207,8 +233,7 @@ export async function POST(request:Request){
       if(!["M","K"].includes(body.gender)||!/^\d{4,8}$/.test(pin))return Response.json({error:"Vælg køn og en kode på 4–8 cifre."},{status:400});
       const [existing]=await db.select({id:players.id}).from(players).where(eq(players.memberNo,memberNo)).limit(1);
       if(existing)return Response.json({error:"Medlemsnummeret er allerede oprettet. Vælg “Log ind” og brug din personlige kode."},{status:409});
-      const [{value}]=await db.select({value:count()}).from(players);
-      await registerWithPrivacy(db.insert(players).values({...profile,christinRanking:initialCr(profile.selfLevel),gender:body.gender,role:value===0?"admin":"player",pinHash:await hashPin(pin)}).toSQL(),memberNo,body.newsletter===true||body.newsletter==="on");
+      await registerWithPrivacy(db.insert(players).values({...profile,christinRanking:initialCr(profile.selfLevel),gender:body.gender,role:"player",pinHash:await hashPin(pin)}).toSQL(),memberNo,body.newsletter===true||body.newsletter==="on");
       const [created]=await db.select().from(players).where(eq(players.memberNo,memberNo)); await createSession(created.id);
       const warning = await sendWelcomeEmail(created.email, sendEmail);
       return NextResponse.json({...await state(), ...(warning ? {warning} : {})});
@@ -217,7 +242,18 @@ export async function POST(request:Request){
       if(!player||await closed(player.id)||!(await verifyPin(String(body.pin??""),player.pinHash)))return Response.json({error:"Medlemsnummer eller kode er forkert."},{status:401}); await createSession(player.id);
     }else if(action==="logout"){await destroySession();return Response.json({ok:true});}
     else{
-      const user=await currentPlayer(); if(!user)return Response.json({error:"Log ind igen."},{status:401});
+      const user=await currentPlayer({touch:true}); if(!user)return Response.json({error:"Din session er udløbet. Log ind igen."},{status:401});
+      if(action==='logout_all') {
+        await destroyAllSessions(user.id);
+        return Response.json({ok:true});
+      }
+      if(action==='set_admin') {
+        if(!isSuperAdmin(user))return Response.json({error:'Kun SuperAdmin kan ændre administratoradgang.'},{status:403});
+        const limited=await authRateLimit(request,'login',user.memberNo);
+        if(limited)return limited;
+        if(!await verifyPin(String(body.adminPin??''),user.pinHash))return Response.json({error:'Bekræft ændringen med din egen kode.'},{status:403});
+        if(typeof body.makeAdmin!=='boolean'||!Number.isSafeInteger(body.playerId)||body.playerId<1)return Response.json({error:'Ugyldig rolleændring.'},{status:400});
+      }
       if(action==='admin_update_signup') {
         if(user.role!=='admin')return Response.json({error:'Kun administratorer kan rette andres tilmeldinger.'},{status:403});
         if(!Number.isSafeInteger(body.eventId)||!Number.isSafeInteger(body.signupId)||body.signupId<1)return Response.json({error:'Ugyldig tilmelding.'},{status:400});
@@ -266,13 +302,15 @@ export async function POST(request:Request){
         let spouse;
         try { spouse = spouseSettings(body, target, target.memberNo, await db.select({memberNo:players.memberNo}).from(players)); }
         catch(error) { return Response.json({error:error instanceof Error ? error.message : 'Ugyldig partner.'},{status:400}); }
-        await db.update(players).set({...profile,...spouse,christinRanking:cr,...(cr !== target.christinRanking ? {crReviewedAt:null} : {})}).where(eq(players.id,target.id));
+        const denied=await saveMemberProfile(request,user,target,{...profile,...spouse,christinRanking:cr,...(cr !== target.christinRanking ? {crReviewedAt:null} : {})},body.currentPin);
+        if(denied)return denied;
         return NextResponse.json(await state());
       }
       if(action==="update_profile"){
         let profile;
         try { profile=profileValues({...body,memberNo:user.memberNo,gender:body.gender===undefined?user.gender:body.gender}); } catch(error) { return Response.json({error:error instanceof Error?error.message:"Kontrollér profilen."},{status:400}); }
-        await db.update(players).set(profile).where(eq(players.id,user.id));
+        const denied=await saveMemberProfile(request,user,user,profile,body.currentPin);
+        if(denied)return denied;
         return NextResponse.json(await state());
       }
       if(action==="send_test_email"){

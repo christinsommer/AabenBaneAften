@@ -79,6 +79,8 @@ test('anonymous reset request sends a usable, expiring, single-use PIN link', {t
     assert.equal((await db.prepare('SELECT count(*) AS n FROM pin_reset_tokens WHERE player_id=?').bind(id).first()).n,0);
     assert.equal((await reset()).status,400);
     globalThis.__resetTestEnv.RESEND_API_KEY='';
+    // Delivery configuration is tested in a fresh rate-limit window.
+    await db.prepare('UPDATE auth_rate_limits SET expires_at=0').run();
     assert.equal((await requestLink()).status,502);
     assert.equal((await db.prepare('SELECT count(*) AS n FROM pin_reset_tokens').first()).n,0);
   } finally {
