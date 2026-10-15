@@ -39,11 +39,11 @@ try{
  assert.equal(await evaluate("document.querySelector('[role=dialog] a[href=\"/cookies\"]').getAttribute('target')"),'_blank');
  await click('Jeg har læst informationen');await until("!document.querySelector('[role=dialog]')");
  await click('Profil');await until("document.body.innerText.includes('Nyhedsmails')");await noOverflow();await screenshot('profile-mobile');
- await click('Admin',false);await click('Privatliv & inaktive profiler',false);await until("document.body.innerText.includes('Ingen automatisk sletning')");await noOverflow();await screenshot('privacy-admin-mobile');
- for(const label of ['Kontakt medlem','Behold profil','Afventer sletning/anonymisering','Slet/anonymisér profil']){
+ await click('Admin',false);await click('Privatliv & inaktive profiler',false);await until("document.body.innerText.includes('Lukning kræver altid din bekræftelse')");await noOverflow();await screenshot('privacy-admin-mobile');
+ for(const label of ['Kontakt medlem','Behold profil','Luk profil']){
   await click(label);await until("document.querySelector('dialog[open]')");
   assert.ok(await evaluate("(()=>{const d=document.querySelector('dialog[open]'),r=d.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight&&d.contains(document.activeElement);})()"),'Review dialog visible and focused');
-  if(label==='Slet/anonymisér profil')assert.ok(await evaluate("[...document.querySelectorAll('dialog button')].find(b=>b.textContent.includes('Bekræft sletning')).disabled"),'Deletion requires confirmation and respects blockers');
+  if(label==='Luk profil')assert.ok(await evaluate("[...document.querySelectorAll('dialog button')].find(b=>b.textContent.includes('Bekræft lukning')).disabled"),'Deletion requires confirmation and respects blockers');
   await noOverflow();await click('Luk vinduet');await until("!document.querySelector('dialog[open]')");
  }
  await click('Nyhedsmails');await until("[...document.querySelectorAll('button')].some(b=>b.textContent.trim()==='Opret nyhedsmail')");await click('Opret nyhedsmail');await click('Lav forslag fra kommende spilledage');await until("document.querySelector('textarea')?.value.includes('spilleaftener')");await click('Gem kladde');await click('Forhåndsvis');await noOverflow();await screenshot('newsletter-mobile');

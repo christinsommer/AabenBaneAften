@@ -55,7 +55,9 @@ test('privacy: real D1 registration rollback, consent, tokens, sending, review, 
   await db.prepare("UPDATE profile_privacy SET last_active_at='2020-01-01',activity_known=1 WHERE player_id=?").bind(member.id).run();assert.equal((await s.reviewInfo(member.id)).inactive,true);
   await db.prepare("UPDATE players SET christin_ranking=7,cr_reviewed_at='2026-10-01T12:00:00.000Z' WHERE id=?").bind(member.id).run();
   await s.review(admin.id,{playerId:member.id,choice:'keep',note:'Synthetic retention review',reviewAfter:'2099-01-01'});const kept=await s.reviewInfo(member.id);assert.equal(kept.last_active_at,'2020-01-01');assert.equal(kept.due,false);
-  await s.review(admin.id,{playerId:member.id,choice:'contact',method:'email',note:'Synthetic contact'});
+  await assert.rejects(s.review(admin.id,{playerId:member.id,choice:'contact',method:'email',note:'Synthetic contact'}),/opfølgningsdato/);
+  await s.review(admin.id,{playerId:member.id,choice:'contact',method:'email',note:'Synthetic contact',reviewAfter:'2099-01-01'});
+  assert.equal((await s.reviewInfo(member.id)).review_after,'2099-01-01');
   await assert.rejects(s.review(admin.id,{playerId:admin.id,choice:'erase',confirm:true}));
   await assert.rejects(db.prepare('DELETE FROM players WHERE id=?').bind(member.id).run());
   const historicEvent=await db.prepare("INSERT INTO events(date,registration_opens_at,registration_closes_at,status,imported_kampplan) VALUES('2001-01-01','2000-01-01','2001-01-01','published',?) RETURNING id").bind(JSON.stringify([{A:'18:00',B:'19:00',C:'1',D:'Synthetic member',E:'Synthetic other',F:'Guest One',G:'Guest Two'}])).first();

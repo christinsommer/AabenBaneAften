@@ -26,7 +26,9 @@ test('live verification tolerates sessions and member edits, but rejects schema,
   for(const [mutation,error] of [
    ['ALTER TABLE players ADD COLUMN unexpected TEXT;',/schema differs/],
    ["DELETE FROM d1_migrations WHERE name=(SELECT max(name) FROM d1_migrations);",/migration history differs/],
-   ["UPDATE sessions SET player_id=123456 WHERE token_hash='synthetic';",/integrity check failed/],
+   // sessions.player_id has no SQL foreign key. Exercise an actual declared
+   // reference so PRAGMA foreign_key_check can detect the broken relationship.
+   ["INSERT INTO privacy_acknowledgements(player_id,document_type,version,acknowledged_at,source) VALUES(123456,'privacy','v1','2026-10-14','test');",/integrity check failed/],
   ]){
    writeFileSync(after,sql+activity+mutation);
    assert.throws(()=>verifyLiveExport(before,after),error);

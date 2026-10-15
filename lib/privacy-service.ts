@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { getCloudflareContext } from '@opennextjs/cloudflare';
 import { sha256 } from './credentials';
+import { privacyReviewStatus } from './privacy-review-status';
 import { PRIVACY_VERSION, CONSENT_VERSION, CONSENT_TEXT, CONSENT_HELP, privacySections, cookieSections } from './privacy-text';
 
 const stamp = () => new Date().toISOString();
@@ -102,7 +103,7 @@ async function reviewProfiles(id?:number) {
     if(relations.newsletterText)blockers.push('Navn eller e-mail forekommer i nyhedsbrevstekst; kladder og arkiv kræver særskilt gennemgang');
     if(relations.inflightMail)blockers.push('En mailafsendelse er i gang eller afbrudt og skal først afklares');
     const unknown=!p.activity_known,inactive=!unknown&&new Date(p.last_active_at)<=threshold;
-    return {...p,relations,blockers,unknown,inactive,due:!p.closed_at&&(unknown||inactive)&&(!p.review_after||p.review_after<=stamp().slice(0,10)),events:reviewEvents.filter(e=>e.player_id===p.id)};
+    return {...p,relations,blockers,unknown,inactive,due:privacyReviewStatus(p)==='pending',events:reviewEvents.filter(e=>e.player_id===p.id)};
   });
 }
 export async function reviewInfo(id:number) {const [p]=await reviewProfiles(id);if(!p)throw Error('Profilen findes ikke.');return p;}
@@ -114,6 +115,7 @@ export async function review(actor:number,input:any) {
   if(!['contact','keep','pendingErasure','erase'].includes(action))throw Error('Ukendt vurdering.');
   if(action==='keep'&&(!note||!/^\d{4}-\d{2}-\d{2}$/.test(input.reviewAfter)||input.reviewAfter<=now.slice(0,10)))throw Error('Angiv begrundelse og en fremtidig revurderingsdato.');
   if(action==='contact'&&!['email','sms','phone'].includes(input.method))throw Error('Vælg kontaktmetode.');
+  if(action==='contact'&&(!/^\d{4}-\d{2}-\d{2}$/.test(input.reviewAfter)||input.reviewAfter<=now.slice(0,10)))throw Error('Angiv en fremtidig opfølgningsdato.');
   const batch=[guard(admin,actor),guard(active,id)];
   if(action==='erase') {
     if(input.confirm!==true||p.blockers.length)throw Error('Bekræft handlingen og afklar alle spærringer først.');
@@ -146,7 +148,7 @@ export async function review(actor:number,input:any) {
     // Closed profiles are excluded from the member/CR administration list below.
     batch.push(statement("UPDATE players SET member_no=?,name=?,first_name='NN',last_name=?,email='',phone='',phone_country_code='',pin_hash='',birth_year=NULL,age=NULL,self_level='Begynder',admin_level=NULL,gender='K',spouse_no=NULL,spouse_mode=NULL,email_visible=0,phone_visible=0,suspended_event_id=NULL WHERE id=?",closedMemberNo,replacement,String(id),id));
     batch.push(statement('DELETE FROM sessions WHERE player_id=?',id),statement('DELETE FROM pin_reset_tokens WHERE player_id=?',id),statement('UPDATE newsletter_tokens SET revoked_at=? WHERE player_id=?',now,id),statement("UPDATE newsletter_preferences SET status='unsubscribed',consent_id=NULL,paused_until=NULL WHERE player_id=?",id),statement('UPDATE newsletter_events SET email=NULL WHERE player_id=?',id),statement('UPDATE newsletter_recipients SET email=NULL WHERE player_id=?',id),statement('UPDATE privacy_review_events SET note=NULL WHERE player_id=?',id),statement('DELETE FROM privacy_acknowledgements WHERE player_id=?',id),statement("UPDATE profile_privacy SET closed_at=?,review_status='closed',last_contact_at=NULL,contact_method=NULL,review_after=NULL WHERE player_id=?",now,id));
-  } else if(action==='contact')batch.push(statement("UPDATE profile_privacy SET review_status='contacted',last_contact_at=?,contact_method=? WHERE player_id=?",now,input.method,id));
+  } else if(action==='contact')batch.push(statement("UPDATE profile_privacy SET review_status='contacted',last_contact_at=?,contact_method=?,review_after=? WHERE player_id=?",now,input.method,input.reviewAfter,id));
   else batch.push(statement('UPDATE profile_privacy SET review_status=?,review_after=? WHERE player_id=?',action,action==='keep'?input.reviewAfter:p.review_after,id));
   batch.push(statement('INSERT INTO privacy_review_events VALUES(?,?,?,?,?,?,?)',uuid(),id,action,action==='contact'?input.method:null,action==='erase'?null:note,now,actor));
   await privacyDb().batch(batch);
