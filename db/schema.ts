@@ -133,6 +133,17 @@ export const substitutions = sqliteTable("substitutions", {
   index("idx_substitutions_event_status").on(t.eventId, t.status),
 ]);
 
+export const optimizerJobs = sqliteTable('optimizer_jobs', {
+  id: text('id').primaryKey(),
+  eventId: integer('event_id').notNull(),
+  status: text('status').notNull().default('queued'),
+  snapshot: text('snapshot').notNull(),
+  warning: text('warning').notNull().default(''),
+  error: text('error').notNull().default(''),
+  createdAt: text('created_at').notNull(),
+  finishedAt: text('finished_at'),
+}, t => [uniqueIndex('idx_optimizer_jobs_active').on(t.eventId).where(sql`${t.status} IN ('queued','running')`)]);
+
 export const feedback = sqliteTable("feedback", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   matchId: integer("match_id").notNull(),

@@ -1,4 +1,5 @@
 import {isSuperAdmin} from '../../../lib/superadmin';
+import {sameOrigin} from '../../../lib/privacy-request';
 import { getCloudflareContext } from '@opennextjs/cloudflare';
 import { and, eq, sql } from 'drizzle-orm';
 import { currentPlayer } from '../../../lib/auth';
@@ -12,6 +13,7 @@ import {reviewPlan} from '../../../lib/plan-review';
 import {applyCourtOrder} from '../../../lib/court-order';
 
 export async function POST(request: Request) {
+  if(!sameOrigin(request))return Response.json({error:'Ugyldigt kald.'},{status:403});
   try {
     const user = await currentPlayer({touch:true});
     if (!user) return Response.json({error: 'Log ind først.'}, {status: 401});

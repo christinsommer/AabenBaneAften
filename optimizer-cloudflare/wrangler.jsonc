@@ -5,6 +5,9 @@
   "compatibility_date": "2026-09-17",
   "workers_dev": true,
   "observability": { "enabled": true },
+  "triggers": { "crons": ["* * * * *"] },
+  "workflows": [{"binding":"OPTIMIZER_JOBS","name":"aabenbane-optimizer-jobs","class_name":"OptimizerWorkflow"}],
+  "d1_databases": [{"binding":"DB","database_name":"aabenbaneaften","database_id":"f6e9f950-cd58-4c81-b707-98cd1753c800","migrations_dir":"../drizzle"}],
   "containers": [{
     "class_name": "OptimizerContainer",
     "image": "../optimizer-service/Dockerfile",

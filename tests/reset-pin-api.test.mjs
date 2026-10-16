@@ -38,7 +38,7 @@ test('anonymous reset request sends a usable, expiring, single-use PIN link', {t
       if(String(url)!=='https://api.resend.com/emails')return originalFetch(url,options);
       assert.equal(options.headers.Authorization,'Bearer test-key');
       messages.push(JSON.parse(options.body));
-      return new Response('{}',{status:mailFails?503:200});
+      return new Response('{}',{status:mailFails?403:200});
     };
     assert.equal((await post({action:'request_pin_reset',memberNo:''})).status,400);
     assert.equal((await post({action:'request_pin_reset',memberNo:'unknown'})).status,200);
@@ -83,6 +83,11 @@ test('anonymous reset request sends a usable, expiring, single-use PIN link', {t
     await db.prepare('UPDATE auth_rate_limits SET expires_at=0').run();
     assert.equal((await requestLink()).status,502);
     assert.equal((await db.prepare('SELECT count(*) AS n FROM pin_reset_tokens').first()).n,0);
+    globalThis.__resetTestEnv.RESEND_API_KEY='test-key';
+    await db.prepare('UPDATE auth_rate_limits SET expires_at=0').run();
+    globalThis.fetch=async()=>{throw new TypeError('simulated ambiguous timeout');};
+    assert.equal((await requestLink()).status,502);
+    assert.equal((await db.prepare('SELECT count(*) AS n FROM pin_reset_tokens').first()).n,1,'uncertain delivery keeps the potentially delivered link usable');
   } finally {
     globalThis.fetch=originalFetch;
     delete globalThis.__resetTestEnv;

@@ -28,6 +28,7 @@ import { MatchCalendarButton } from "../components/match-calendar-button";
 import { isPlayersImportedMatch } from "../lib/kampplan-filter";
 import { useEffect, useRef, useState } from "react";
 import { appRequest, requireLoginSession } from "../lib/app-request";
+import { loginConfig } from "../lib/login-config";
 import { firstMatchInstant, registrationIsOpen, waitlistIsOpen, registrationDateParts } from "../lib/registration";
 import { InstallApp } from "../components/install-app";
 import { levelScore } from '../lib/ranking';
@@ -273,6 +274,7 @@ function AuthScreen({ mode, setMode, act, busy, error, event, resetToken }: any)
 
   function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (busy) return;
     act(Object.fromEntries(new FormData(e.currentTarget).entries()));
   }
 
@@ -407,12 +409,12 @@ function AuthScreen({ mode, setMode, act, busy, error, event, resetToken }: any)
                     </div>
                   </>
                 )}
-                <Field name="memberNo" label="HIK-medlemsnummer" autoComplete="username" />
+                <Field key={mode} name="memberNo" label="HIK-medlemsnummer" autoComplete="username" autoFocus={mode === "login"} inputMode={mode === "login" ? loginConfig.memberNoInputMode : undefined} />
                 <Field
                   name="pin"
                   label="Pinkode (4–8 cifre)"
                   type="password"
-                  inputMode="numeric"
+                  inputMode={mode === "login" ? loginConfig.pinInputMode : "numeric"}
                   autoComplete={mode === "login" ? "current-password" : "new-password"}
                 />
                 {mode === "register" && <RegistrationPrivacy/>}
@@ -824,13 +826,13 @@ function EmptyCalendarDashboard({data,act,busy,error,openProfile}: {
   return <main className="min-h-screen bg-[#f4f6fa] px-2 py-8 sm:px-4"><PrivacyGate id={data.user.id}/>
     <div className="mx-auto max-w-5xl space-y-5">
       <div className="flex items-center justify-between"><h1 className="text-2xl font-bold">Åben Bane</h1><Button variant="outline" onClick={()=>act({action:"logout"})}><LogOut className="mr-2 h-4 w-4"/>Log ud</Button></div>
-      <p className="rounded-xl bg-white p-4">Der er ingen kommende spilledage på listen. {data.user.role==="admin"?"Tilføj en dato nedenfor for at åbne en ny runde.":"Administratoren skal tilføje flere datoer. Du kan stadig ændre din profil."}</p>
+      <p className="rounded-xl bg-white p-4">Der er ingen kommende spilledage på listen. Administratoren skal tilføje flere datoer. Du kan stadig ændre din profil.</p>
       {error&&<p role="alert" className="rounded-xl bg-red-50 p-4 text-red-700">{error}</p>}
       <Tabs defaultValue={openProfile?"profile":"dates"}>
         <TabsList><TabsTrigger value="dates"><CalendarDays className="mr-2 h-4 w-4"/>Tilmeldinger</TabsTrigger><TabsTrigger value="profile"><Settings className="mr-2 h-4 w-4"/>Profil</TabsTrigger>{data.user.role==="admin" && <TabsTrigger value="members">Admin · Medlemmer<CrReviewCount players={data.players}/></TabsTrigger>}{data.user.role==='admin'&&<><TabsTrigger value="privacy" className="h-auto flex-col gap-1 py-2"><span>Privatliv & inaktive profiler</span><PrivacyBadge/></TabsTrigger><TabsTrigger value="newsletter">Nyhedsmails</TabsTrigger></>}{data.user.isSuperAdmin&&<TabsTrigger value="superadmin">SuperAdmin</TabsTrigger>}</TabsList>{data.user.isSuperAdmin&&<TabsContent value="superadmin"><SuperAdminPanel data={data} act={act} busy={busy}/></TabsContent>}{data.user.role==='admin'&&<><TabsContent value="privacy"><PrivacyAdmin/></TabsContent><TabsContent value="newsletter"><PrivacyAdmin mode="newsletter"/></TabsContent></>}
-        <TabsContent value="dates"><CalendarList dates={data.calendarDates} act={data.user.role==="admin"?act:undefined} busy={busy}/></TabsContent>
+        <TabsContent value="dates"><CalendarList dates={data.calendarDates}/></TabsContent>
         <TabsContent value="profile"><ProfilePanel user={data.user} act={act} busy={busy}/></TabsContent>
-        {data.user.role==="admin" && <TabsContent value="members"><MembersPanel data={data} act={act} busy={busy}/></TabsContent>}
+        {data.user.role==="admin" && <TabsContent value="members"><CalendarList dates={data.calendarDates} act={act} busy={busy}/><MembersPanel data={data} act={act} busy={busy}/></TabsContent>}
       </Tabs>
     </div><Disclaimer/>
   </main>;
@@ -1013,7 +1015,7 @@ function SignupPanel({ data, act, busy }: any) {
   const roundDate = new Date(`${data.event.date}T12:00:00Z`);
   const roundTime = new Date(roundStart).toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit', hourCycle:'h23', timeZone:'Europe/Copenhagen'});
   const confirmationText = `Du har nu ønsket at spille ${hours} ${hours === 1 ? 'time' : 'timer'} ${roundDate.toLocaleDateString('da-DK', {weekday:'long', timeZone:'Europe/Copenhagen'})} d. ${roundDate.toLocaleDateString('da-DK', {day:'2-digit', month:'long', timeZone:'Europe/Copenhagen'})}.\nRunden starter kl. ${roundTime}.`;
-  const canJoinWaitlist = waitlistIsOpen(data.event, roundStart, now);
+  const canJoinWaitlist = current?.status !== 'active' && waitlistIsOpen(data.event, roundStart, now);
   const canChoose = canEdit || canJoinWaitlist;
   async function joinWaitlist() {
     const error = signupSelectionError(selected, hours);
@@ -1240,9 +1242,7 @@ function PlanPanel({ data, userMatches, act, busy }: any) {
   const linkedDate = typeof window !== 'undefined' ? planLink(window.location.search).date : null;
   if (linkedDate && linkedDate !== data.event.date) return <p role="status" className="rounded-xl border bg-white p-4">Linket gælder en anden spilledag end den aktuelle. <Button variant="link" onClick={() => { window.location.href = '/?view=plan&mine=1'; }}>Vis den aktuelle kampplan</Button></p>;
 
-  if (importedRows.length > 0) return <div className="space-y-2">{filterButton}<ImportedPlanTable contacts={data.planContacts} calendarDate={calendarDate} calendarPlayers={data.names} rows={onlyMine ? importedRows.filter((row: Record<string, unknown>) => isPlayersImportedMatch(row, data.user.name)) : importedRows} /></div>;
-
-  if (!data.matches.length && !importedRows.length)
+  if (data.event.status !== 'published' || (!data.matches.length && !importedRows.length))
     return (
       <Card className="border-dashed border-[#a9c9b6] bg-white/70">
         <CardContent className="grid min-h-64 place-items-center p-8 text-center">
@@ -1258,6 +1258,7 @@ function PlanPanel({ data, userMatches, act, busy }: any) {
         </CardContent>
       </Card>
     );
+  if (importedRows.length > 0) return <div className="space-y-2">{filterButton}<ImportedPlanTable contacts={data.planContacts} calendarDate={calendarDate} calendarPlayers={data.names} rows={onlyMine ? importedRows.filter((row: Record<string, unknown>) => isPlayersImportedMatch(row, data.user.name)) : importedRows} /></div>;
   return (
     <div className="space-y-6">
       {filterButton}
@@ -1538,7 +1539,7 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
       <PlayerLists data={data} view={listView} setView={setListView} act={act} busy={busy} />
       </TabsContent>
       <TabsContent value="matches" forceMount className="space-y-6 data-[state=inactive]:hidden">
-      <OptimizerPanel key={`optimizer-${data.event.id}`} clearPlan={() => act({action: "remove_kampplan", eventId: data.event.id})} event={data.event} rows={importedRows} wishes={wishes} isOpen={data.isOpen} busy={busy || planEditPending} refresh={refresh} />
+      <OptimizerPanel key={`optimizer-${data.event.id}`} event={data.event} rows={importedRows} wishes={wishes} isOpen={data.isOpen} busy={busy || planEditPending} refresh={refresh} />
       {!!openSubstitutions.length && (
         <Card className="border-amber-300 bg-amber-50">
           <CardHeader>

@@ -60,6 +60,27 @@ test('admin edits current signup wishes after closing registration, preserving s
     const publishedResponse=await post({nHours:1});
     assert.equal(publishedResponse.status,200,JSON.stringify(await publishedResponse.json()));
     assert.deepEqual(await read(),{...updated,requested_hours:1});
+    globalThis.__adminSignupTest.user={id:1,role:'player'};
+    await db.prepare("UPDATE events SET registration_closes_at='2020-01-01',status='draft' WHERE id=100").run();
+    await db.prepare("UPDATE signups SET status='active' WHERE id=1").run();
+    const activeSignup=await read();
+    for (const mode of ['closed','auto']) {
+      await db.prepare('UPDATE events SET registration_override=? WHERE id=100').bind(mode).run();
+      for (const action of ['join_waitlist','cancel_signup']) {
+        assert.equal((await post({action})).status,400,`${action} must fail when registration is ${mode}`);
+        assert.deepEqual(await read(),activeSignup);
+      }
+    }
+    await db.prepare("UPDATE signups SET status='cancelled' WHERE id=1").run();
+    assert.equal((await post({action:'join_waitlist'})).status,200,'members without an active signup can still join the waitlist');
+    assert.equal((await read()).status,'waitlist');
+    assert.equal((await post({action:'set_signup_status',status:'cancelled'})).status,403);
+    globalThis.__adminSignupTest.user={id:1,role:'admin'};
+    await db.prepare("UPDATE events SET registration_override='closed' WHERE id=100").run();
+    for (const status of ['active','waitlist','cancelled']) {
+      assert.equal((await post({action:'set_signup_status',status})).status,200,`admin can set ${status} after closing`);
+      assert.equal((await read()).status,status);
+    }
   } finally {
     delete globalThis.__adminSignupTest;
     await proxy?.dispose();

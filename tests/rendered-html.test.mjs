@@ -44,10 +44,22 @@ test("Cloudflare Worker renders and authenticates against isolated D1", { timeou
     });
     const page = await worker.fetch("/");
     assert.equal(page.status, 200);
+    assert.equal(page.headers.get('x-content-type-options'),'nosniff');
+    assert.equal(page.headers.get('x-frame-options'),'DENY');
+    const policy=page.headers.get('content-security-policy');
+    assert.match(policy,/frame-ancestors 'none'/);
+    const nonce=policy.match(/'nonce-([^']+)'/)?.[1];
+    assert.ok(nonce,'HTML receives a nonce policy');
+    const nextPage=await worker.fetch('/');
+    assert.notEqual(nextPage.headers.get('content-security-policy').match(/'nonce-([^']+)'/)?.[1],nonce);
+    await nextPage.text();
     const health = await worker.fetch('/api/health');
     assert.equal(health.status, 200);
     assert.deepEqual(await health.json(), { ok: true, release: JSON.parse(readFileSync('lib/release-info.json', 'utf8')).id });
     const html=await page.text();
+    const scripts=[...html.matchAll(/<script\b([^>]*)>/g)];
+    assert.ok(scripts.length>0);
+    for(const [,attributes] of scripts)assert.ok(attributes.includes(`nonce="${nonce}"`),'framework scripts carry the response nonce');
     assert.match(html, /name="codex-preview" content="development"/);
     assert.match(html,/rel="manifest"/);
     assert.match(html,/apple-touch-icon/);
@@ -56,12 +68,20 @@ test("Cloudflare Worker renders and authenticates against isolated D1", { timeou
     assert.equal(manifest.start_url,'/');
     for(const icon of manifest.icons)assert.equal((await worker.fetch(icon.src)).status,200);
     const anonymous = await worker.fetch("/api/app");
+    assert.equal(anonymous.headers.get('x-content-type-options'),'nosniff');
+    assert.equal(anonymous.headers.get('x-frame-options'),'DENY');
     assert.equal(anonymous.status, 200, await anonymous.clone().text());
     assert.equal((await anonymous.json()).authenticated, false);
     const post = (body, cookie) => worker.fetch("/api/app", {
       method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) },
       body: JSON.stringify(body),
     });
+    for(const path of ['/api/app','/api/optimizer','/api/plan-email','/api/privacy','/api/admin/privacy','/api/newsletter']) {
+      for(const headers of [{origin:'https://evil.test'},{'sec-fetch-site':'same-site'},{'content-type':'text/plain'},{'content-type':'application/jsonp'}]) {
+        const denied=await worker.fetch(path,{method:'POST',headers:{'content-type':'application/json',...headers},body:'{}'});
+        assert.equal(denied.status,403,`${path} rejects cross-origin/non-JSON calls before processing`);
+      }
+    }
     const badLogin = await post({ action: "login", memberNo: "13993", pin: "111111" });
     assert.equal(badLogin.status, 401);
     const login = await post({ action: "login", memberNo: "13993", pin: "987654" });

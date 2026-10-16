@@ -36,6 +36,9 @@ if (mode === 'deploy') {
   console.log('Container deployed. Run check after Cloudflare finishes provisioning.');
 } else {
   const headers = {authorization:`Bearer ${key}`, 'content-type':'application/json'};
+  const jobsHealth = await fetch(`${url}/jobs-health`,{headers,signal:AbortSignal.timeout(15000)});
+  assert.equal(jobsHealth.status,200,'Background job workflow must be deployed');
+  assert.equal((await jobsHealth.json()).jobProtocol,1);
   const health = await fetch(`${url}/health`, {headers,signal:AbortSignal.timeout(660000)});
   assert.equal(health.status,200,`Container health returned ${health.status}`);
   assert.equal((await health.json()).scoringVersion,'configurable-courts-v7');

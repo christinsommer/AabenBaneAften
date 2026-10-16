@@ -11,6 +11,7 @@ import { optimizerDefaults, registrationDefaults, events, feedback, matches, mat
 import { createSession, currentPlayer, destroySession, destroyAllSessions, hashPin, hashToken, verifyPin, verifyToken } from "../../../lib/auth";
 import { ensureEvent } from "../../../lib/schedule";
 import { sendEmail } from "../../../lib/email";
+import { EmailDeliveryError } from '../../../lib/resend-delivery';
 import { sendWelcomeEmail } from "../../../lib/welcome-email";
 import { firstMatchInstant, waitlistIsOpen, registrationIsOpen, registrationSchedule } from "../../../lib/registration";
 import { spouseSettings } from '../../../lib/spouse-settings';
@@ -184,6 +185,8 @@ export async function POST(request:Request){
   if(!sameOrigin(request))return Response.json({error:"Ugyldigt kald."},{status:403});
   try{
     const db=getDb(); const body=await request.json() as Record<string,any>; const action=String(body.action??"");
+    // Disabled until the feedback workflow and its authorization rules are defined.
+    if(action==='feedback')return Response.json({error:'Feedback er ikke tilgængelig endnu.'},{status:403,headers:{'Cache-Control':'no-store'}});
     if(action==='login'||action==='request_pin_reset'||action==='reset_pin') {
       const limited = await authRateLimit(request, action, String(body.memberNo??''));
       if(limited)return limited;
@@ -203,8 +206,9 @@ export async function POST(request:Request){
         await sendEmail({to:player.email,subject:"Vælg en ny PIN-kode til Åben Bane Aften",
           text:`Du har bedt om en ny PIN-kode. Åbn dette link for at vælge en ny kode: ${link}\nLinket kan bruges én gang og udløber om 30 minutter. Hvis du ikke har bedt om dette, kan du ignorere e-mailen.`,
           html:`<p>Du har bedt om en ny PIN-kode til Åben Bane Aften.</p><p><a href="${link}">Vælg en ny PIN-kode</a></p><p>Linket kan bruges én gang og udløber om 30 minutter. Hvis du ikke har bedt om dette, kan du ignorere e-mailen.</p>`});
-      }catch{
-        await db.delete(pinResetTokens).where(eq(pinResetTokens.tokenHash,tokenHash));
+      }catch(error){
+        // A timeout or 5xx may happen after acceptance. Keep that link usable until expiry.
+        if (!(error instanceof EmailDeliveryError && error.uncertain)) await db.delete(pinResetTokens).where(eq(pinResetTokens.tokenHash,tokenHash));
         return Response.json({error:"E-mailen kunne ikke sendes. Prøv igen senere, eller kontakt administratoren."},{status:502});
       }
       return Response.json({ok:true});
@@ -493,12 +497,14 @@ export async function POST(request:Request){
       if(["signup","cancel_signup","request_match","accept_match_request","lookup_member"].includes(action)&&!registrationOpen)return Response.json({error:event.registrationOverride==="closed"?"Tilmeldingen er lukket af administratoren.":`Tilmeldingen er lukket. Tidsplan: ${new Date(event.registrationOpensAt).toLocaleDateString('da-DK',{timeZone:'Europe/Copenhagen'}) + ' kl. ' + new Date(event.registrationOpensAt).toLocaleTimeString('en-GB',{timeZone:'Europe/Copenhagen',hour:'2-digit',minute:'2-digit',hourCycle:'h23'})} til ${new Date(event.registrationClosesAt).toLocaleDateString('da-DK',{timeZone:'Europe/Copenhagen'}) + ' kl. ' + new Date(event.registrationClosesAt).toLocaleTimeString('en-GB',{timeZone:'Europe/Copenhagen',hour:'2-digit',minute:'2-digit',hourCycle:'h23'})}.`},{status:400});
       if(action === 'join_waitlist') {
         if (Number(body.eventId) !== event.id) return Response.json({error:'Spillerunden er ændret. Genindlæs siden.'},{status:409});
+        const [existingSignup] = await db.select({status:signups.status}).from(signups).where(and(eq(signups.eventId,event.id),eq(signups.playerId,user.id))).limit(1);
+        if (existingSignup?.status === 'active') return Response.json({error:'Du er allerede tilmeldt og kan ikke skifte til venteliste, når tilmeldingen er lukket.'},{status:400});
         if (!waitlistIsOpen(event, await eventFirstMatchAt(event))) return Response.json({error:'Ventelisten er kun åben efter tilmeldingsfristen, når tilmeldingen er lukket, og før første kamp.'},{status:400});
         let input;
         try { input = signupInput(body,(await loadPlaySchedule()).times); if (input.nHours < 1) throw new Error('Vælg mindst 1 time.'); }
         catch(error) { return Response.json({error:error instanceof Error ? error.message : 'Kontrollér dine ønsker.'},{status:400}); }
         await db.insert(signups).values({eventId:event.id,playerId:user.id,availability:JSON.stringify(input.szPossible),requestedHours:input.nHours,status:'waitlist'})
-          .onConflictDoUpdate({target:[signups.eventId,signups.playerId],set:{availability:JSON.stringify(input.szPossible),requestedHours:input.nHours,status:'waitlist'}});
+          .onConflictDoUpdate({target:[signups.eventId,signups.playerId],set:{availability:JSON.stringify(input.szPossible),requestedHours:input.nHours,status:'waitlist'},setWhere:sql`${signups.status} <> 'active'`});
         await activity(user.id,'booking');
         return NextResponse.json(await state());
       }
@@ -526,8 +532,6 @@ export async function POST(request:Request){
       }else if(action==="accept_match_request"){
         const [req]=await db.select().from(matchRequests).where(and(eq(matchRequests.id,Number(body.id)),eq(matchRequests.eventId,event.id))).limit(1); if(!req||!JSON.parse(req.invitedMemberNos).includes(user.memberNo))return Response.json({error:"Invitationen findes ikke."},{status:404});
         const accepted=Array.from(new Set([...JSON.parse(req.acceptedPlayerIds),user.id])); await db.update(matchRequests).set({acceptedPlayerIds:JSON.stringify(accepted),status:accepted.length===4?"ready":"pending",completedAt:accepted.length===4?new Date().toISOString():null}).where(eq(matchRequests.id,req.id));
-      }else if(action==="feedback"){
-        await db.insert(feedback).values({matchId:Number(body.matchId),authorPlayerId:user.id,balance:body.balance,subjectPlayerId:body.subjectPlayerId?Number(body.subjectPlayerId):null,direction:body.direction??null,comment:String(body.comment??"").slice(0,500)}).onConflictDoUpdate({target:[feedback.matchId,feedback.authorPlayerId],set:{balance:body.balance,subjectPlayerId:body.subjectPlayerId?Number(body.subjectPlayerId):null,direction:body.direction??null,comment:String(body.comment??"").slice(0,500)}});
       }else if(action==="begin_substitute"){
         if(event.status!=="published")return Response.json({error:"Afløserfunktionen åbner, når kampplanen er offentliggjort."},{status:400});
         const [match]=await db.select().from(matches).where(and(eq(matches.id,Number(body.matchId)),eq(matches.eventId,event.id))).limit(1);

@@ -64,6 +64,9 @@ try {
     if (statSync(`${directory}/database.sql`).size < 100) throw new Error('Backup is empty; deployment stopped');
     const backupReport = verifyExport(directory+'/database.sql', directory+'/restored-rehearsal.sqlite');
     console.log('Backup restored and migration rehearsed; counts:', JSON.stringify(backupReport.counts));
+    await run(wrangler, ['d1', 'migrations', 'apply', 'DB', '--remote']);
+    await run(wrangler, ['d1', 'export', 'DB', '--remote', '--output='+directory+'/after-migration.sql'], directory+'/after-export.log');
+    verifyLiveExport(directory+'/database.sql',directory+'/after-migration.sql');
     if (full) {
       await run('scripts/optimizer-cloudflare.mjs', ['deploy']);
       const deadline = Date.now() + waitMinutes * 60000;
@@ -77,9 +80,6 @@ try {
       }
       await run('scripts/optimizer-cloudflare.mjs', ['connect']);
     }
-    await run(wrangler, ['d1', 'migrations', 'apply', 'DB', '--remote']);
-    await run(wrangler, ['d1', 'export', 'DB', '--remote', '--output='+directory+'/after-migration.sql'], directory+'/after-export.log');
-    verifyLiveExport(directory+'/database.sql',directory+'/after-migration.sql');
     await run('scripts/deploy-superadmin.mjs', ['apply', ...adminArgs]);
     await run(adapter, ['deploy']);
     let verified = false;

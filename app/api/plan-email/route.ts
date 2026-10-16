@@ -4,8 +4,10 @@ import {getDb} from '../../../db';
 import {events,players,signups,matches} from '../../../db/schema';
 import {currentPlayer} from '../../../lib/auth';
 import {planEmail} from '../../../lib/plan-email';
+import {sameOrigin} from '../../../lib/privacy-request';
 
 export async function POST(request:Request) {
+  if(!sameOrigin(request))return Response.json({error:'Ugyldigt kald.'},{status:403});
   const user=await currentPlayer({touch:true});
   if(!user)return Response.json({error:'Log ind først.'},{status:401});
   if(user.role!=='admin')return Response.json({error:'Kun administratorer kan sende kampplanen.'},{status:403});

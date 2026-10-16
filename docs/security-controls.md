@@ -1,5 +1,37 @@
 # Login, administrator roles and member data
 
+## Feedback disabled
+
+`POST /api/app` with `action: "feedback"` returns HTTP 403 for everyone, including
+administrators and SuperAdmin. The former insert/update handler has been removed.
+No database migration or deletion is performed by this change. Existing feedback
+and its established privacy/plan-cleanup handling remain intact. Reopening the API
+requires defining the workflow, validating inputs and enforcing match participation
+and subject-player authorization. Regression tests verify refusal without writes.
+
+## Browser and request protections
+
+All Next.js responses receive `nosniff`, `X-Frame-Options: DENY`, a no-referrer
+policy and a baseline CSP against framing and objects. APIs also get
+`default-src 'none'`. HTML pages use a fresh random script nonce
+per response, with dynamic rendering and no-store caching. Production scripts
+allow neither unsafe-inline nor unsafe-eval. Inline CSS remains allowed for
+React/Radix positioning. Frames and objects are blocked; app connections are
+restricted to the same origin. Development additionally permits eval and WebSockets
+for Next.js tooling. Existing mailto/tel links and downloads remain available.
+
+Every POST handler checks the common JSON/origin guard. Foreign or null origins,
+cross-site/same-site Fetch Metadata and non-JSON media types are rejected. Requests
+without browser origin metadata still require JSON and the endpoint's normal
+authentication/authorization; this is CSRF protection, not a substitute for login.
+
+`tests/rendered-html.test.mjs` checks actual Worker headers, nonce uniqueness,
+script nonces and rejection across all six POST endpoints. The Chrome check
+`scripts/check-privacy-browser.mjs` verifies normal UI flows without CSP errors
+and rejects an injected inline script.
+
+## Database deployment
+
 Migrations `0017_dear_wallflower.sql` and `0018_shiny_eddie_brock.sql` must be applied before deploying this code.
 The normal release script applies migrations before deploying the Worker. Local
 development applies them through `node scripts/setup-local-d1.mjs`.

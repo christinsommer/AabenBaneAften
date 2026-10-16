@@ -37,6 +37,16 @@ test('security: shared throttling, SuperAdmin-only roles and scoped member names
     const post=(body,ip='192.0.2.1')=>POST(new Request('https://example.test/api/app',{method:'POST',headers:{'content-type':'application/json','cf-connecting-ip':ip},body:JSON.stringify(body)}));
     const state=async()=>{const r=await GET();assert.equal(r.status,200);return r.json();};
     const clearLimits=()=>db.prepare('DELETE FROM auth_rate_limits').run();
+    const feedbackBlocked=async()=>{
+      const before=(await db.prepare('SELECT * FROM feedback ORDER BY id').all()).results;
+      for(const matchId of [1,999999]) {
+        const response=await post({action:'feedback',matchId,balance:'even',subjectPlayerId:1,comment:'Must not be stored'});
+        assert.equal(response.status,403);
+        assert.equal((await response.json()).error,'Feedback er ikke tilgængelig endnu.');
+      }
+      assert.deepEqual((await db.prepare('SELECT * FROM feedback ORDER BY id').all()).results,before);
+    };
+    await feedbackBlocked(); // Anonymous calls are disabled too.
 
     // Empty installation must never promote a public registration.
     const registered=await post({action:'register',memberNo:'first',firstName:'First',lastName:'Member',email:'first@example.test',gender:'K',level:'B',pin:'0123',privacyRead:true,privacyVersion:PRIVACY_VERSION});
@@ -48,6 +58,8 @@ test('security: shared throttling, SuperAdmin-only roles and scoped member names
     const admin=await insert('admin','admin'),hidden=await insert('Hidden Member'),opponent=await insert('Opponent');
     const event=(await state()).event;
     await db.prepare("INSERT INTO matches(event_id,court,start_time,player_ids) VALUES(?,1,'18:00',?)").bind(event.id,JSON.stringify([first.id,opponent])).run();
+    await db.prepare("INSERT INTO feedback(match_id,author_player_id,balance,comment) VALUES(1,?,'even','Preserve historical feedback')").bind(first.id).run();
+    await feedbackBlocked(); // Players cannot insert or overwrite historical feedback.
     assert.deepEqual((await state()).names.map(p=>p.id),[first.id]);
     await db.prepare("UPDATE events SET status='published' WHERE id=?").bind(event.id).run();
     assert.deepEqual((await state()).names.map(p=>p.id).sort(),[first.id,opponent].sort());
@@ -55,9 +67,11 @@ test('security: shared throttling, SuperAdmin-only roles and scoped member names
     assert.equal((await state()).names.some(p=>p.id===hidden),false);
     assert.equal((await post({action:'set_admin',playerId:hidden,makeAdmin:true})).status,403);
     await post({action:'login',memberNo:'admin',pin:'0123'});
+    await feedbackBlocked();
     assert.ok((await state()).names.some(p=>p.id===hidden));
     assert.equal((await post({action:'set_admin',playerId:hidden,makeAdmin:true,adminPin:'0123'})).status,403);
     globalThis.__securityTest.env.SUPERADMIN_PLAYER_ID=String(admin);
+    await feedbackBlocked(); // No administrator override.
     assert.equal((await post({action:'set_admin',playerId:hidden,makeAdmin:true,adminPin:'9999'})).status,403);
     assert.equal((await post({action:'set_admin',playerId:hidden,makeAdmin:true,adminPin:'0123'})).status,200);
     assert.equal((await db.prepare('SELECT role FROM players WHERE id=?').bind(hidden).first()).role,'admin');

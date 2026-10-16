@@ -1,5 +1,6 @@
 ﻿import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import {connection} from 'next/server';
 
 export const metadata: Metadata = {
   title: "HIK Åben Bane",
@@ -18,11 +19,13 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {themeColor:"#13375e"};
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // Nonces must be generated per response, never baked into prerendered HTML.
+  await connection();
   return (
     <html lang="da">
       <body className="antialiased">{children}<footer className="mx-auto flex max-w-5xl flex-wrap gap-5 p-6 text-sm"><a href="/privacy">Privatlivsinformation</a><a href="/cookies">Cookieinformation</a></footer></body>
