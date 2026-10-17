@@ -115,8 +115,10 @@ public static class SelfTests
         Check(gap.Matches.Length==2 && gap.Matches.All(m => m.Team1.Length == 1), "CR gap >3 must prohibit doubles");
         var boundary = Scheduler.Solve(Data(new[] {P(1, cr:1), P(2, cr:1), P(3, cr:4), P(4, cr:4)}, oneCourt), 30);
         Check(boundary.Matches.Single().Team1.Length == 2, "CR gap =3 must be allowed");
-        var banned = Scheduler.Solve(Data(new[] {P(1, member:"17108"), P(2, member:"13993"), P(3), P(4)}, oneCourt), 30);
+        var bannedInput = Data(new[] {P(1, member:"club-a"), P(2, member:"club-b"), P(3), P(4)}, oneCourt);
+        var banned = Scheduler.Solve(bannedInput with { ForbiddenMemberPairs = [["club-b", "club-a"]] }, 30);
         Check(!banned.Matches.Any(m => m.Team1.Concat(m.Team2).Contains(1) && m.Team1.Concat(m.Team2).Contains(2)), "Forbidden member pair");
+        Check(Scheduler.Solve(bannedInput, 30).Matches.Length == 1, "Removing pair permits match again");
         var unavailable = Scheduler.Solve(Data(new[] {P(1, times:["19:00"]), P(2), P(3), P(4)}, oneCourt), 30);
         Check(Count(unavailable, 1) == 0, "Must never use unavailable time");
         var mixed = Scheduler.Solve(Data(new[] {P(1, gender:"K"), P(2, gender:"K"), P(3), P(4)}, oneCourt), 30);
@@ -126,6 +128,10 @@ public static class SelfTests
         var historical = Scheduler.Solve(Data(Enumerable.Range(1,4).Select(i=>P(i)).ToArray(), oneCourt, history:history, locked:[lockMatch]), 30);
         Check(historical.Score == 15, "Two repeated partners get both penalties, four repeated opponent pairs: 100-40-20-20-5");
         var aged = Scheduler.Solve(Data(new[] {P(1, age:20), P(2, age:40), P(3, age:50), P(4, age:70)}, oneCourt, new Weights(FactorAge:1), locked:[lockMatch]), 30);
+        var partlyAged = Scheduler.Solve(Data(new[] {P(1, age:null), P(2, age:40), P(3, age:50), P(4, age:70)}, oneCourt, new Weights(FactorAge:1), locked:[lockMatch]), 30);
+        Check(partlyAged.Score == 75, "Unknown age is omitted: only known partner ages contribute 20");
+        var unknownAged = Scheduler.Solve(Data(Enumerable.Range(1,4).Select(i=>P(i,age:null)).ToArray(), oneCourt, new Weights(FactorAge:1), locked:[lockMatch]), 30);
+        Check(unknownAged.Score == 95, "All unknown ages contribute no penalty");
         var variedCr = new[] {P(1,cr:2), P(2,cr:5), P(3,cr:3), P(4,cr:4)};
         var sameTeam = Scheduler.Solve(Data(variedCr, oneCourt, new Weights(FactorDistanceSameTeamA:3), locked:[lockMatch]),30);
         Check(sameTeam.Score == 35, "Both team differences: 100-5-15*(3+1)=35");

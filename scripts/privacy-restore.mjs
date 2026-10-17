@@ -27,7 +27,7 @@ try{
     const keys=Object.keys(p).filter(k=>k!=='id');restored.prepare(`UPDATE players SET ${keys.map(k=>`"${k}"=?`).join(',')} WHERE id=?`).run(...keys.map(k=>p[k]),id);
    }
   }
-  const tables=['privacy_documents','privacy_acknowledgements','profile_privacy','privacy_review_events','newsletter_events','newsletter_preferences','newsletter_tokens','newsletter_drafts','newsletter_dispatches','newsletter_recipients'];
+  const tables=['security_mfa_events','privacy_documents','privacy_acknowledgements','profile_privacy','privacy_review_events','newsletter_events','newsletter_preferences','newsletter_tokens','newsletter_drafts','newsletter_dispatches','newsletter_recipients'];
   for(const table of [...tables].reverse())restored.prepare(`DELETE FROM "${table}"`).run();
   for(const table of tables)for(const row of latest.prepare(`SELECT * FROM "${table}"`).all()){
    if('player_id'in row&&!ids.has(row.player_id))continue;
@@ -35,6 +35,9 @@ try{
   }
   // Old restored addresses may differ: require fresh consent, never reactivate it.
   restored.exec("UPDATE newsletter_preferences SET status='never',consent_id=NULL,paused_until=NULL WHERE consent_id IN(SELECT e.id FROM newsletter_events e JOIN players p ON p.id=e.player_id WHERE e.email<>p.email)");
+  // Never resurrect a revoked browser, an old authenticator or a used recovery code.
+  restored.exec('DELETE FROM trusted_devices; DELETE FROM mfa_challenges; DELETE FROM admin_mfa');
+  for(const row of latest.prepare('SELECT * FROM admin_mfa').all())if(ids.has(row.player_id))restored.prepare('INSERT INTO admin_mfa(player_id,secret,version,last_step,recovery_hashes) VALUES(?,?,?,?,?)').run(row.player_id,row.secret,row.version,row.last_step,row.recovery_hashes);
   restored.exec("UPDATE newsletter_tokens SET revoked_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'); DELETE FROM sessions; DELETE FROM pin_reset_tokens; UPDATE newsletter_recipients SET status='excluded' WHERE status IN ('prepared','sending','uncertain')");
   // A newer closure must not resurrect old free-text notes or contact addresses.
   restored.exec("UPDATE privacy_review_events SET note=NULL WHERE player_id IN(SELECT player_id FROM profile_privacy WHERE closed_at IS NOT NULL); UPDATE newsletter_events SET email=NULL WHERE player_id IN(SELECT player_id FROM profile_privacy WHERE closed_at IS NOT NULL); UPDATE newsletter_recipients SET email=NULL WHERE player_id IN(SELECT player_id FROM profile_privacy WHERE closed_at IS NOT NULL)");

@@ -1,8 +1,10 @@
 import { getCloudflareContext } from '@opennextjs/cloudflare';
 import { sha256 } from './credentials';
+import {recordSecurityEvent} from './security-events';
 
 type Rule = { limit: number; window: number; delayAfter: number; delay: number };
 const rules = {
+  mfa: { ip: {limit:50, window:900, delayAfter:50, delay:0}, account: {limit:12, window:900, delayAfter:5, delay:30} },
   login: { ip: {limit:50, window:900, delayAfter:50, delay:0}, account: {limit:12, window:900, delayAfter:5, delay:30} },
   request_pin_reset: { ip: {limit:20, window:3600, delayAfter:20, delay:0}, account: {limit:3, window:3600, delayAfter:3, delay:0} },
   reset_pin: { ip: {limit:30, window:900, delayAfter:30, delay:0} },
@@ -39,6 +41,7 @@ export async function authRateLimit(request: Request, action: LimitedAction, mem
     .bind(now).run();
   let retry = await consume(db, await sha256(`${action}:ip:${ip}`), rule.ip, now);
   if (!retry && rule.account) retry = await consume(db, await sha256(`${action}:account:${memberNo.trim()}`), rule.account, now);
+  if(retry)await recordSecurityEvent('auth_limited');
   return retry ? Response.json({error:`For mange forsøg. Prøv igen om ${retry} sekunder.`}, {
     status:429, headers:{'Retry-After':String(retry),'Cache-Control':'no-store'},
   }) : null;

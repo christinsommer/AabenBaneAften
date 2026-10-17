@@ -11,7 +11,7 @@ export const optimizerHelp: Record<keyof AlgorithmWeights, string> = {
   FactorDoubleSameSex: 'Fradrag for en double med fire spillere af samme køn.',
   FactorSingle: 'Fradrag for en single, uanset spillernes køn.',
   Factor3OfAKind: 'Fradrag for en double med tre spillere af samme køn.',
-  FactorAge: 'Fradrag for aldersforskelle mellem makkere og mellem holdenes samlede alder. Kræver fødselsår for alle spillere. Værdien 0 slår fradraget fra.',
+  FactorAge: 'Fradrag for aldersforskelle mellem makkere, når begge aldre kendes, og mellem holdenes samlede alder, når alle aldre i kampen kendes. Manglende fødselsår stopper ikke beregningen. Værdien 0 slår fradraget fra.',
 };
 
 export const weightFields = (weights: AlgorithmWeights = algorithmWeightDefaults): Record<string, string> =>

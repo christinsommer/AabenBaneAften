@@ -1,4 +1,4 @@
-export const PRIVACY_VERSION = '2026-10-15-v1';
+export const PRIVACY_VERSION = '2026-10-16-v1';
 export const CONSENT_VERSION = '2026-10-11-v1';
 export const CONTACT = 'aabenbaneaften@hik.dk';
 export const CONSENT_TEXT = 'Ja tak, jeg vil modtage nyhedsmails fra Åben Bane Aften om kommende spilleaftener og aktiviteter.';
@@ -13,6 +13,7 @@ export const privacySections = [
  ['Dine rettigheder', 'Kontakt aabenbaneaften@hik.dk om indsigt, rettelse, sletning, begrænsning, indsigelse eller dataportabilitet, hvor betingelserne er opfyldt. Samtykke til nyhedsmails kan trækkes tilbage uden at påvirke tidligere lovlig behandling. Du kan klage til Datatilsynet. Sletteanmodninger vurderes konkret og behøver ikke afvente inaktivitetsfristen.'],
 ] as const;
 export const cookieSections = [
+ ['Administrator-2FA', 'Administratorer bruger en authenticator-app. TOTP-hemmeligheder gemmes krypteret, og gendannelseskoder gemmes som hashes. aaben_bane_mfa er en nødvendig HttpOnly-cookie til et loginforsøg på højst 10 minutter. Hvis du vælger Husk denne enhed, bruges aaben_bane_trusted i højst 14 dage; serveren gemmer kun et hash af tokenet og dets udløb. Begge cookies er SameSite=Strict og Secure i produktion. Perioden forlænges ikke ved brug. Profilen giver mulighed for at glemme alle huskede enheder. PIN- og 2FA-ændringer tilbagekalder browsergodkendelserne.'],
  ['Login', 'aaben_bane_session er en nødvendig førstepartscookie. Spillere logges ud efter 30 minutters inaktivitet og senest 8 timer efter login. Administratorer logges ud efter 15 minutters inaktivitet og senest 4 timer efter login. Cookien er HttpOnly, SameSite=Lax og Secure i produktion. Serveren gemmer kun et hash af sessionstokenet samt tidspunkter for oprettelse, seneste aktivitet og udløb. Automatisk opdatering i baggrunden forlænger ikke sessionen. Logout fjerner cookien og den aktuelle session; du kan også logge ud på alle enheder fra profilen.'],
  ['Browserlagring', 'Den gennemgåede app tilføjer ikke analyse- eller annoncecookies. Installation på hjemmeskærmen anvender browserens appfunktioner og lokal cache af almindelige ressourcer. Der er ikke tilføjet tracking eller et generelt cookie-acceptbanner. Hostingens eventuelle ekstra cookies skal verificeres på det offentlige domæne ved udgivelse.'],
  ['Personlige links', 'Nyhedsbrevslinks giver adgang til at bekræfte afmelding eller pause uden login. Åbning ændrer intet. Linkets hemmelighed sendes først til serveren ved din aktive bekræftelse; del ikke linket med andre.'],

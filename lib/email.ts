@@ -1,5 +1,6 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { deliverEmail } from './resend-delivery';
+import {recordSecurityEvent} from './security-events';
 
 type EmailMessage = {
   to: string;
@@ -23,4 +24,5 @@ export async function sendEmail(message: EmailMessage) {
       html: message.html,
       text: message.text,
     }));
+  await recordSecurityEvent('mail_sent');
 }

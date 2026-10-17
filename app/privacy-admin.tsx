@@ -2,7 +2,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import {useEffect,useRef,useState} from 'react';
 import {X, MessageSquare, UserCheck, UserRoundX} from 'lucide-react';
-import {privacyReviewStatus} from '@/lib/privacy-review-status';
+import {privacyReviewStatus,inactivityReviewDate} from '@/lib/privacy-review-status';
 import {Input} from '@/components/ui/input';
 import {Label} from '@/components/ui/label';
 import {privacyRequest,newsletterLabel} from './privacy-ui';
@@ -12,6 +12,7 @@ const closeButton='absolute right-2 top-2 inline-flex size-9 items-center justif
 const reviewLabel=(value:string)=>({active:'Ingen handling nødvendig',pending:'Skal gennemgås',contacted:'Afventer svar',contact:'Kontakt medlem',keep:'Behold profil',pendingErasure:'Afventer lukning',closed:'Lukket',erase:'Luk profil'}[value]??value);
 const reviewStatuses=['pending','active','contacted','pendingErasure','closed'];
 const displayedReviewStatus=privacyReviewStatus;
+const formatReviewDate=(value:string)=>new Date(value).toLocaleDateString('da-DK',{timeZone:'Europe/Copenhagen'});
 const profileActions=[
  {value:'contact',label:'Kontakt medlem',Icon:MessageSquare},
  {value:'keep',label:'Behold profil',Icon:UserCheck},
@@ -49,12 +50,13 @@ export default function PrivacyAdmin({mode='privacy'}:{mode?:string}){
  if(!data)return <p role="status">{error||'Indlæser privatlivsoplysninger…'}</p>;
  return <section className="space-y-4">{error&&<p role="alert" className="rounded bg-red-50 p-3 text-red-700">{error}</p>}{mode==='privacy'?<>
  <h2 className="text-2xl font-bold">Privatliv & inaktive profiler</h2><p>{data.profiles.filter((p:any)=>displayedReviewStatus(p)==='pending').length} profiler skal gennemgås. Vælg Behold, Kontakt eller Luk profil. Lukning kræver altid din bekræftelse.</p>
+ <p className="text-sm text-slate-600">Inaktivitetsvurdering beregnes som seneste aktivitet plus 24 måneder og flyttes ved ny aktivitet. Opfølgning er en dato fastsat af Admin og ændres ikke automatisk ved aktivitet.</p>
  <label className="block">Vis <select className={button} value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">Alle åbne</option>{reviewStatuses.map(status=><option key={status} value={status}>{reviewLabel(status)}</option>)}<option value="allProfiles">Alle profiler</option></select></label>
  <div className="space-y-2"><Label htmlFor="privacy-member-search">Fornavn Efternavn</Label><Input id="privacy-member-search" type="search" placeholder="Søg efter navn..." value={search} onChange={event=>setSearch(event.target.value)}/></div>
  {!visibleProfiles.length&&<p role="status" className="text-sm text-slate-600">Ingen medlemmer matcher søgningen.</p>}
  {visibleProfiles.map((p:any)=><article className="min-w-0 space-y-1.5 rounded-xl border bg-white px-3 py-2 text-sm [overflow-wrap:anywhere] sm:p-4" key={p.id}>
    <h3 className="font-semibold leading-5">{p.name}</h3>
-   <p className="text-xs leading-5"><span className="rounded bg-slate-100 px-1.5 py-0.5">Status: {reviewLabel(displayedReviewStatus(p))}</span>{' '}<span className="text-slate-600">{p.unknown?'Senest aktiv: Ukendt':`Senest aktiv: ${new Date(p.last_active_at).toLocaleDateString('da-DK')}`}{p.review_after&&` · Revurdering: ${p.review_after}`}</span></p>
+   <p className="text-xs leading-5"><span className="rounded bg-slate-100 px-1.5 py-0.5">Status: {reviewLabel(displayedReviewStatus(p))}</span>{' '}<span className="text-slate-600">{p.unknown?'Senest aktiv: Ukendt':`Senest aktiv: ${new Date(p.last_active_at).toLocaleDateString('da-DK')}`}{inactivityReviewDate(p)&&` · Inaktivitetsvurdering: ${formatReviewDate(inactivityReviewDate(p)!)}`}{p.review_after&&` · Opfølgning: ${formatReviewDate(p.review_after)}`}</span></p>
    {!p.closed_at&&<div className="flex gap-2" role="group" aria-label={`Handlinger for ${p.name}`}>
      {profileActions.map(({value,label,Icon})=><button type="button" key={value} title={label} aria-label={label} className={`inline-flex size-11 shrink-0 items-center justify-center rounded-lg border bg-white hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#13375e] ${value==='erase'?'text-red-700':'text-[#13375e]'}`} onClick={()=>select(p,value)}><Icon className="size-5" aria-hidden="true"/></button>)}
    </div>}
@@ -63,7 +65,7 @@ export default function PrivacyAdmin({mode='privacy'}:{mode?:string}){
      <div className="space-y-2 pb-1">
        {(p.email||p.phone)&&<p>{[p.email,p.phone].filter(Boolean).join(' · ')}</p>}
        <p>Senest aktiv: {new Date(p.last_active_at).toLocaleString('da-DK')}{p.unknown?' (standarddato; historisk aktivitet ukendt)':''}</p>
-       <p>Revurdering: {p.review_after||'Ikke angivet'}</p>
+       <p>Inaktivitetsvurdering: {inactivityReviewDate(p) ? formatReviewDate(inactivityReviewDate(p)!) : p.closed_at ? 'Ikke relevant for en lukket profil' : 'Kan ikke beregnes; seneste aktivitet er ukendt'}</p><p>Opfølgning (fastsat af Admin): {p.review_after ? formatReviewDate(p.review_after) : 'Ikke angivet'}</p>
        {p.last_contact_at&&<p>Kontakt: {new Date(p.last_contact_at).toLocaleString('da-DK')} via {p.contact_method}</p>}
        {p.events.map((e:any,i:number)=><p key={i}>{new Date(e.occurred_at).toLocaleString('da-DK')} · {reviewLabel(e.action)} · administrator #{e.actor_id} · {e.method} · {e.note}</p>)}
      </div>

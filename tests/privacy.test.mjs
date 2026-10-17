@@ -7,19 +7,21 @@ import {build} from 'esbuild';
 import {getPlatformProxy} from 'wrangler';
 import {migrationStatements} from '../scripts/migration-statements.mjs';
 import {sha256,hashPin} from '../lib/credentials.ts';
+import {enrollMfa,testMfaKey} from './mfa-helper.mjs';
 
 test('privacy: real D1 registration rollback, consent, tokens, sending, review, closure and API authorization', {timeout:180000},async()=>{
  const folder=mkdtempSync(join(process.cwd(),'.privacy-test-')),originalFetch=globalThis.fetch;
  let proxy;const jar=new Map();
  try{
   proxy=await getPlatformProxy({configPath:'wrangler.jsonc',persist:{path:join(folder,'db')}});const db=proxy.env.DB;
-  for(const file of readdirSync('drizzle').filter(f=>f.endsWith('.sql')&&!f.startsWith('0016')).sort())await db.batch(migrationStatements(readFileSync(`drizzle/${file}`,'utf8')).map(q=>db.prepare(q)));
+  for(const file of readdirSync('drizzle').filter(f=>f.endsWith('.sql')&&!f.startsWith('0016')&&!f.startsWith('0021')).sort())await db.batch(migrationStatements(readFileSync(`drizzle/${file}`,'utf8')).map(q=>db.prepare(q)));
   const insert=async(no,role='player')=>db.prepare("INSERT INTO players(member_no,name,first_name,last_name,email,gender,self_level,pin_hash,role) VALUES(?,?,'Synthetic','Member',?,'K','B',?,?) RETURNING id").bind(no,`Synthetic ${no}`,`${no}@example.test`,await hashPin('0123'),role).first();
   const admin=await insert('admin','admin'),legacy=await insert('legacy');
   await db.batch(migrationStatements(readFileSync('drizzle/0016_privacy_newsletter.sql','utf8')).map(q=>db.prepare(q)));
+  await db.batch(migrationStatements(readFileSync('drizzle/0021_admin_mfa.sql','utf8')).map(q=>db.prepare(q)));
   const historic=await db.prepare('SELECT * FROM profile_privacy WHERE player_id=?').bind(legacy.id).first();assert.equal(historic.activity_known,0);assert.equal(historic.last_active_at,'2026-09-25T00:00:00.000Z');
   const member=await insert('member'),other=await insert('other');
-  globalThis.__privacyTest={env:{DB:db,NEWSLETTER_ENABLED:'true',RESEND_API_KEY:'synthetic-test-key'},cookies:{get:n=>jar.has(n)?{value:jar.get(n)}:undefined,set:(n,v)=>jar.set(n,v),delete:n=>jar.delete(n)}};
+  globalThis.__privacyTest={env:{DB:db,MFA_ENCRYPTION_KEY:testMfaKey,NEWSLETTER_ENABLED:'true',RESEND_API_KEY:'synthetic-test-key'},cookies:{get:n=>jar.has(n)?{value:jar.get(n)}:undefined,set:(n,v)=>jar.set(n,v),delete:n=>jar.delete(n)}};
   const imports={};
   for(const [key,entry] of Object.entries({service:'lib/privacy-service.ts',app:'app/api/app/route.ts',member:'app/api/privacy/route.ts',admin:'app/api/admin/privacy/route.ts',token:'app/api/newsletter/route.ts'})){
    const outfile=join(folder,`${key}.mjs`);await build({entryPoints:[entry],outfile,bundle:true,platform:'node',format:'esm',packages:'external',plugins:[{name:'context',setup(b){b.onResolve({filter:/^next\/server$/},()=>({path:'next/server.js',external:true}));b.onResolve({filter:/^(next\/headers|@opennextjs\/cloudflare)$/},args=>({path:args.path,namespace:'test'}));b.onLoad({filter:/.*/,namespace:'test'},args=>({contents:args.path==='next/headers'?'export const cookies=async()=>globalThis.__privacyTest.cookies;':'export const getCloudflareContext=()=>({env:globalThis.__privacyTest.env});'}));}}]});imports[key]=await import(pathToFileURL(outfile).href);
@@ -109,7 +111,7 @@ test('privacy: real D1 registration rollback, consent, tokens, sending, review, 
   // Deployment-pinned SuperAdmin cannot be acquired through name changes or local admin actions.
   globalThis.__privacyTest.env.SUPERADMIN_PLAYER_ID=String(admin.id);
   await db.prepare("UPDATE players SET role='admin',name='Christin Hytoft Sommer' WHERE id=?").bind(other.id).run();
-  await post(imports.app,{action:'login',memberNo:'other',pin:'0123'});
+  await enrollMfa(body=>post(imports.app,body),await (await post(imports.app,{action:'login',memberNo:'other',pin:'0123'})).json());
   let localState=await (await imports.app.GET()).json();
   assert.ok(localState.user,JSON.stringify(localState));
   assert.equal(localState.user.isSuperAdmin,false);
@@ -118,7 +120,7 @@ test('privacy: real D1 registration rollback, consent, tokens, sending, review, 
   for(const action of ['set_optimizer_defaults','set_event_optimizer_weights','set_optimizer_resources','send_test_email'])assert.equal((await post(imports.app,{action,eventId:historicEvent.id,weights:{},optimizerResources:{cpu:2,seconds:30}})).status,403);
   assert.equal((await post(imports.app,{action:'set_admin',playerId:admin.id,makeAdmin:false})).status,403);
   assert.equal((await post(imports.app,{action:'update_member',playerId:admin.id,email:'attacker@example.test'})).status,403);
-  await post(imports.app,{action:'login',memberNo:'admin',pin:'0123'});
+  await enrollMfa(body=>post(imports.app,body),await (await post(imports.app,{action:'login',memberNo:'admin',pin:'0123'})).json());
   const ownerState=await (await imports.app.GET()).json();assert.equal(ownerState.user.isSuperAdmin,true);
   assert.equal(ownerState.players.some(p=>p.id===member.id),false,'closed profile is absent from member and CR administration');
   assert.equal((await post(imports.app,{action:'approve_cr',playerId:member.id,christinRanking:8})).status,404);

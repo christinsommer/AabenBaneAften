@@ -7,6 +7,19 @@ export type ReviewProfile = {
  last_active_at: string;
 };
 
+// Derived from activity, independently of an administrator's follow-up deadline.
+export function inactivityReviewDate(profile: ReviewProfile): string | null {
+ if (!profile.activity_known || profile.closed_at || profile.review_status === 'closed') return null;
+ const date = new Date(profile.last_active_at);
+ if (!Number.isFinite(date.getTime())) return null;
+ const day = date.getUTCDate();
+ date.setUTCDate(1);
+ date.setUTCMonth(date.getUTCMonth() + 24);
+ const lastDay = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)).getUTCDate();
+ date.setUTCDate(Math.min(day, lastDay));
+ return date.toISOString();
+}
+
 export function privacyReviewStatus(profile: ReviewProfile, now = new Date()) {
  if (profile.closed_at || profile.review_status === 'closed') return 'closed';
  if (profile.review_status === 'pendingErasure') return 'pendingErasure';

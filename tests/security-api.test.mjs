@@ -8,6 +8,7 @@ import {getPlatformProxy} from 'wrangler';
 import {migrationStatements} from '../scripts/migration-statements.mjs';
 import {hashPin,sha256} from '../lib/credentials.ts';
 import {PRIVACY_VERSION} from '../lib/privacy-text.ts';
+import {enrollMfa,testMfaKey} from './mfa-helper.mjs';
 
 test('security: shared throttling, SuperAdmin-only roles and scoped member names', {timeout:180000}, async()=>{
   const directory=mkdtempSync(join(process.cwd(),'.security-test-'));
@@ -17,7 +18,7 @@ test('security: shared throttling, SuperAdmin-only roles and scoped member names
     const db=proxy.env.DB, jar=new Map();
     for(const file of readdirSync('drizzle').filter(f=>f.endsWith('.sql')).sort())
       await db.batch(migrationStatements(readFileSync(join('drizzle',file),'utf8')).map(s=>db.prepare(s)));
-    globalThis.__securityTest={env:{DB:db},mails:0,cookies:{
+    globalThis.__securityTest={env:{DB:db,MFA_ENCRYPTION_KEY:testMfaKey},mails:0,cookies:{
       get:name=>jar.has(name)?{value:jar.get(name)}:undefined,
       set:(name,value)=>jar.set(name,value),delete:name=>jar.delete(name),
     }};
@@ -66,7 +67,7 @@ test('security: shared throttling, SuperAdmin-only roles and scoped member names
     await db.prepare("UPDATE events SET imported_kampplan=? WHERE id=?").bind(JSON.stringify([{A:'18:00',B:'19:00',C:'1',D:'First Member',E:'',F:'Opponent',G:''}]),event.id).run();
     assert.equal((await state()).names.some(p=>p.id===hidden),false);
     assert.equal((await post({action:'set_admin',playerId:hidden,makeAdmin:true})).status,403);
-    await post({action:'login',memberNo:'admin',pin:'0123'});
+    await enrollMfa(post,await (await post({action:'login',memberNo:'admin',pin:'0123'})).json());
     await feedbackBlocked();
     assert.ok((await state()).names.some(p=>p.id===hidden));
     assert.equal((await post({action:'set_admin',playerId:hidden,makeAdmin:true,adminPin:'0123'})).status,403);

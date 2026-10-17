@@ -141,6 +141,34 @@
       "when": 1792138249843,
       "tag": "0019_amused_quasimodo",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1792181100951,
+      "tag": "0020_security_monitoring",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1792181100953,
+      "tag": "0021_admin_mfa",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "6",
+      "when": 1792183383932,
+      "tag": "0022_admin_mfa_reset_audit",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "6",
+      "when": 1792218169531,
+      "tag": "0023_forbidden_pairs",
+      "breakpoints": true
     }
   ]
 }

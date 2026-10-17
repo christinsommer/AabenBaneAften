@@ -8,6 +8,7 @@ import { getPlatformProxy } from 'wrangler';
 import { migrationStatements } from '../scripts/migration-statements.mjs';
 import { hashPin } from '../lib/credentials.ts';
 import { appRequest, requireLoginSession } from '../lib/app-request.ts';
+import {enrollMfa,testMfaKey} from './mfa-helper.mjs';
 
 test('client helper logs in through real API and D1 with leading-zero PIN and session round trip', { timeout: 120000 }, async () => {
   const directory = mkdtempSync(join(process.cwd(), '.login-test-'));
@@ -24,7 +25,7 @@ test('client helper logs in through real API and D1 with leading-zero PIN and se
     const jar = new Map();
     let cookieOptions;
     globalThis.__loginTest = {
-      env: { DB: db },
+      env: { DB: db, MFA_ENCRYPTION_KEY:testMfaKey },
       cookies: {
         get: name => jar.has(name) ? { value: jar.get(name) } : undefined,
         set: (name, value, options) => { jar.set(name, value); cookieOptions = options; },
@@ -56,6 +57,9 @@ test('client helper logs in through real API and D1 with leading-zero PIN and se
     const schedule = {action:'set_registration_schedule',eventId:state.event.id,opensDate:'2026-09-16',opensHour:'09',closesDate:'2026-09-17',closesHour:'18'};
     await assert.rejects(appRequest(schedule), /Kun administratorer/);
     await db.prepare("UPDATE players SET role='admin' WHERE member_no='login-test'").run();
+    assert.equal((await appRequest()).authenticated,false,'promotion revokes the member session');
+    const setup=await appRequest({action:'login',memberNo:'login-test',pin:'0123'});
+    await enrollMfa(body=>POST(new Request('https://example.test/api/app',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)})),setup);
     const pending = await appRequest();
     assert.equal(pending.players.find(p=>p.id===state.user.id).crReviewedAt, null);
     for (const cr of [null,0,10,1.5,'5']) {

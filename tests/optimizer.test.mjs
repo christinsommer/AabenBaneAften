@@ -53,7 +53,7 @@ test('validator enforces CR boundaries, all banned combinations, singles and loc
   assert.equal(validateProposal([match], input({weights:{...algorithmWeightDefaults,FactorDistanceSameTeamA:3},players:[p(1,{cr:1}),p(2,{cr:4}),p(3,{cr:4}),p(4,{cr:4})]})).length,1);
   assert.throws(() => validateProposal([match], input({players:[p(1,{cr:1}),p(2),p(3),p(4)]})),/CR/);
   for(const [a,b] of [['17108','13993'],['17108','16212'],['11822','15722']])
-    assert.throws(() => validateProposal([match], input({players:[p(1,{memberNo:a}),p(2,{memberNo:b}),p(3),p(4)]})),/forbudt/);
+    assert.throws(() => validateProposal([match], input({forbiddenMemberPairs:[[a,b]],players:[p(1,{memberNo:a}),p(2,{memberNo:b}),p(3),p(4)]})),/forbudt/);
   const mixedSingle={...match,startTime:'20:30',team1:[1],team2:[2]};
   const lateInput=input({players:[p(1,{availability:['20:00','20:30']}),p(2,{gender:'K',availability:['20:00','20:30']})],slots:[{court:1,startTime:'20:00'},{court:1,startTime:'20:30'}]});
   assert.equal(validateProposal([mixedSingle],lateInput).length,1);
@@ -68,7 +68,10 @@ test('score counts every repeated relation once, including overlapping partner p
   const aged = input({players:[p(1,{age:20}),p(2,{age:40}),p(3,{age:50}),p(4,{age:70})],weights:{...algorithmWeightDefaults,FactorAge:1}});
   assert.equal(scoreMatch(match,aged).balanceAge,100);
   assert.equal(scoreMatch(match,aged).score,-5);
-  assert.throws(() => validateProposal([match], {...aged,players:[p(1,{age:null}),p(2),p(3),p(4)]}),/Alder/);
+  const unknown={...aged,players:[p(1,{age:null}),p(2,{age:40}),p(3,{age:50}),p(4,{age:70})]};
+  assert.doesNotThrow(() => validateProposal([match],unknown));
+  assert.equal(scoreMatch(match,unknown).balanceAge,20,'only the known partner pair contributes');
+  assert.equal(scoreMatch(match,{...aged,players:[1,2,3,4].map(id=>p(id,{age:null}))}).balanceAge,0);
 });
 test('single plan survives table normalization and calendar export', () => {
   const names = new Map([[1,'Anna'],[2,'Bente']]);

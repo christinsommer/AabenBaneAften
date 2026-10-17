@@ -1,4 +1,4 @@
-import {spouseTogether, forbiddenMemberPairs, minutes, scoreMatch, validateOptimizerInput, validateProposal, type OptimizerInput, type ProposedMatch} from './optimizer.ts';
+import {spouseTogether, minutes, scoreMatch, validateOptimizerInput, validateProposal, type OptimizerInput, type ProposedMatch} from './optimizer.ts';
 
 export type PlanIssue = {matchIndex: number; playerIds: number[]; message: string};
 export function reviewPlan(plan: ProposedMatch[], input: OptimizerInput) {
@@ -36,7 +36,7 @@ export function reviewPlan(plan: ProposedMatch[], input: OptimizerInput) {
     for (let a = 0; a < ids.length; a++) for (let b = a + 1; b < ids.length; b++) {
       const p = people.get(ids[a])!, q = people.get(ids[b])!;
       if (!spouseTogether(p,q) && Math.abs(p.cr - q.cr) > 3) add(index, [p.id, q.id], 'CR-forskellen i kampen må højst være 3.');
-      if (forbiddenMemberPairs.some(pair => pair.includes(p.memberNo) && pair.includes(q.memberNo) && p.id !== q.id))
+      if ((input.forbiddenMemberPairs ?? []).some(pair => pair.includes(p.memberNo) && pair.includes(q.memberNo) && p.id !== q.id))
         add(index, [p.id, q.id], 'Spillerne må ikke være i samme kamp.');
     }
     for (const team of [m.team1, m.team2]) if (team.length === 2) {

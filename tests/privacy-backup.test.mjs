@@ -11,7 +11,7 @@ test('privacy: consistent backup, isolated restore, additive migration and repet
  const dir=mkdtempSync(join(tmpdir(),'hik-privacy-'));const source=new Database(join(dir,'source.sqlite'));
  try{
   source.exec('CREATE TABLE d1_migrations(id INTEGER PRIMARY KEY,name TEXT UNIQUE,applied_at TEXT)');
-  for(const f of readdirSync('drizzle').filter(f=>f.endsWith('.sql')&&!f.startsWith('0016')).sort()){
+  for(const f of readdirSync('drizzle').filter(f=>f.endsWith('.sql')&&!f.startsWith('0016')&&!f.startsWith('0021')).sort()){
    for(const s of migrationStatements(readFileSync(`drizzle/${f}`,'utf8')))source.exec(s);
    source.prepare('INSERT INTO d1_migrations(name) VALUES(?)').run(f);
   }
@@ -32,10 +32,17 @@ test('offline recovery replays later closure and pause, revokes sessions and doe
   applyPending(db);
   db.exec("INSERT INTO players(member_no,name,email,gender,self_level,pin_hash) VALUES('one','Synthetic One','one@example.test','K','B','hash'),('two','Synthetic Two','two@example.test','K','B','hash')");
   db.exec("INSERT INTO newsletter_events VALUES('consent-one',1,'one@example.test','subscribe','2026-10-01','profile','v1','Checkbox','Help'),('consent-two',2,'two@example.test','subscribe','2026-10-01','profile','v1','Checkbox','Help'); INSERT INTO newsletter_preferences VALUES(1,'subscribed',NULL,'rev1','consent-one','2026-10-01'),(2,'subscribed',NULL,'rev2','consent-two','2026-10-01'); INSERT INTO sessions(token_hash,player_id,expires_at) VALUES('old-session',1,'2099-01-01')");
+  db.exec("INSERT INTO admin_mfa VALUES(2,'encrypted-old','old-version',1,'[\"old-code\"]'); INSERT INTO trusted_devices VALUES('old-trust',2,'old-version',9999999999999); INSERT INTO mfa_challenges VALUES('old-challenge',2,'hash','old-version',NULL,9999999999999,0)");
   await db.backup(backupPath);
+  db.exec("INSERT INTO security_mfa_events VALUES('later-reset',1792188000,1,2,'admin_reset',1)");
+  db.exec("UPDATE admin_mfa SET secret='encrypted-new',version='new-version',recovery_hashes='[]' WHERE player_id=2");
   db.exec("UPDATE players SET member_no='closed-one',name='Lukket profil',email='',pin_hash='' WHERE id=1; UPDATE profile_privacy SET closed_at='2026-10-10' WHERE player_id=1; UPDATE newsletter_preferences SET status='paused',paused_until='2026-11-10',changed_at='2026-10-11' WHERE player_id=2; DELETE FROM sessions");
   const result=spawnSync(process.execPath,['scripts/privacy-restore.mjs',backupPath,latestPath,outputPath],{encoding:'utf8',windowsHide:true});assert.equal(result.status,0,result.stderr);
   const restored=new Database(outputPath,{readonly:true});try{
+   assert.equal(restored.prepare('SELECT count(*) n FROM security_mfa_events WHERE id=?').get('later-reset').n,1,'later MFA reset audit is retained');
+   assert.equal(restored.prepare('SELECT version FROM admin_mfa WHERE player_id=2').get().version,'new-version');
+   assert.equal(restored.prepare('SELECT recovery_hashes FROM admin_mfa WHERE player_id=2').get().recovery_hashes,'[]');
+   for(const table of ['trusted_devices','mfa_challenges'])assert.equal(restored.prepare(`SELECT count(*) n FROM ${table}`).get().n,0);
    assert.equal(restored.prepare('SELECT email FROM players WHERE id=1').get().email,'');assert.ok(restored.prepare('SELECT closed_at FROM profile_privacy WHERE player_id=1').get().closed_at);
    assert.equal(restored.prepare('SELECT status FROM newsletter_preferences WHERE player_id=2').get().status,'paused');assert.equal(restored.prepare('SELECT count(*) n FROM sessions').get().n,0);assert.equal(restored.prepare('SELECT email FROM newsletter_events WHERE id=?').get('consent-one').email,null);
   }finally{restored.close();}

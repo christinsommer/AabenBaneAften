@@ -57,6 +57,7 @@ try {
     console.log('Release check passed. No production commands executed.');
   } else {
     // Validate production prerequisites before the first production mutation.
+    await run('scripts/setup-mfa.mjs', ['--check-remote']);
     await run('scripts/deploy-superadmin.mjs', ['check', ...adminArgs]);
     const directory = `.data/releases/${new Date().toISOString().replace(/[:.]/g, '-')}`;
     mkdirSync(directory);

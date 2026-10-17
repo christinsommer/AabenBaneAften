@@ -53,7 +53,7 @@ export function EditSignupButton({signup,eventId,name,times,busy,disabled,act}:{
             const options=times.filter(t=>t.endsWith(`:${minute}`));
             return options.length>0&&<fieldset key={minute}><legend className="mb-2 text-sm font-semibold">{minute==='00'?'Start på hel time':'Start på halv time'}</legend><div className="grid grid-cols-2 gap-2">{options.map(t=><label key={t} className="flex min-h-10 items-center gap-2 rounded-md border px-3 text-sm"><input type="checkbox" checked={selected.includes(t)} onChange={e=>setSelected(e.target.checked?[...selected,t]:selected.filter(v=>v!==t))}/>{playTimeLabel(t)}</label>)}</div></fieldset>;
           })}
-          <p className="text-xs text-slate-600">Vælg mindst to mulige tider og nok tider uden overlap. Tilgængelige mellemliggende tider tilføjes ved valg af sammenhængende timer.</p>
+          <p className="text-xs text-slate-600">Vælg mindst 2 tider for 1 time, 4 tider for 2 timer og 6 tider for 3 timer, med nok tider uden overlap. Tilgængelige mellemliggende tider tilføjes ved valg af sammenhængende timer.</p>
         </fieldset>
         {error&&<p role="alert" className="text-sm text-red-700">{error}</p>}
         <DialogFooter><Button type="button" variant="outline" disabled={saving} onClick={()=>changeOpen(false)}>Annuller</Button><Button type="submit" disabled={busy||saving}>{saving?'Gemmer…':'Gem tilmelding'}</Button></DialogFooter>

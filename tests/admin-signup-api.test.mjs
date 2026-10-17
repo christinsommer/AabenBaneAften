@@ -33,12 +33,17 @@ test('admin edits current signup wishes after closing registration, preserving s
     const {POST}=await import(pathToFileURL(outfile).href);
     const read=()=>db.prepare('SELECT * FROM signups WHERE id=1').first();
     const original=await read();
-    const payload={action:'admin_update_signup',eventId:100,signupId:1,nHours:2,nPossible:3,szPossible:['18:00','18:30','19:00'],
+    const payload={action:'admin_update_signup',eventId:100,signupId:1,nHours:2,nPossible:4,szPossible:['18:00','18:30','19:00','19:30'],
       expected:{requestedHours:1,availability:original.availability,status:'waitlist'}};
     const post=(extra={})=>POST(new Request('https://app.test/api/app',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...payload,...extra})}));
     assert.equal((await post()).status,401);
+    assert.equal((await post({action:'update_birth_year',birthYear:1980})).status,401);
     globalThis.__adminSignupTest.user={id:1,role:'player'};
     assert.equal((await post()).status,403);
+    const beforeProfile=await db.prepare('SELECT * FROM players WHERE id=1').first();
+    for(const birthYear of ['',null,'abcd',1939,9999,1980.5])assert.equal((await post({action:'update_birth_year',birthYear})).status,400);
+    assert.equal((await post({action:'update_birth_year',birthYear:'1980',playerId:999,name:'Do not overwrite'})).status,200);
+    assert.deepEqual(await db.prepare('SELECT * FROM players WHERE id=1').first(),{...beforeProfile,birth_year:1980},'birth-year form changes only the signed-in member birth year');
     globalThis.__adminSignupTest.user={id:1,role:'admin'};
     assert.equal((await post({eventId:99})).status,409);
     assert.equal((await post({signupId:99})).status,404);

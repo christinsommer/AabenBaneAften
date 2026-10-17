@@ -26,7 +26,9 @@ export function signupSelectionError(selected: readonly string[], hours: number)
     const [h,m] = time.split(':').map(Number);
     return h * 60 + m;
   }).sort((a,b) => a-b);
-  if (starts.length < 2) return 'Du skal vælge mindst 2 tider, også selvom du kun ønsker 1 time.';
+  const minimum = hours * 2;
+  const missing = minimum - starts.length;
+  if (missing > 0) return `Vælg gerne mindst ${missing} ${missing === 1 ? 'tid' : 'tider'} mere, så vi har lidt fleksibilitet til at finde den bedste kamp til dig.\nDu har valgt ${starts.length} af mindst ${minimum} tider.`;
   let count = 0, nextStart = -Infinity;
   for (const start of starts) if (start >= nextStart) { count++; nextStart = start + 60; }
   return count < hours ? `Du ønsker ${hours} timer. Vælg mindst ${hours} tider, som ikke overlapper. Hver kamp varer 1 time.` : null;

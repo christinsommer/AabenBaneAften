@@ -1,4 +1,9 @@
 "use client";
+import {SpouseSearch} from './spouse-search';
+import {ForbiddenPairsForm} from './forbidden-pairs-form';
+import {AdminMfaReset} from './admin-mfa-reset';
+import {MfaScreen,MfaSettings,type MfaPrompt} from './mfa-screen';
+import {BirthYearPrompt,BirthYearReminder} from './birth-year-prompt';
 import {RegistrationPrivacy,PrivacyGate,NewsletterPreferences} from './privacy-ui';
 import PrivacyAdmin,{PrivacyBadge} from './privacy-admin';
 import { OptimizerDefaultsForm } from './optimizer-defaults-form';
@@ -121,6 +126,8 @@ export default function OpenBaneApp() {
   const [resetToken, setResetToken] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [registrationNotice, setRegistrationNotice] = useState("");
+  const [mfaPrompt,setMfaPrompt]=useState<MfaPrompt|null>(null);
+  const [recoveryCodes,setRecoveryCodes]=useState<string[]|null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -158,6 +165,9 @@ export default function OpenBaneApp() {
     setError("");
     try {
       const j = await appRequest(payload);
+      if(j.mfa){setMfaPrompt(j.mfa);setData({authenticated:false});setOpenProfile(false);return true;}
+      if(j.recoveryCodes)setRecoveryCodes(j.recoveryCodes);
+      if(payload.action==='mfa_verify'||payload.action==='logout'||payload.action==='logout_all')setMfaPrompt(null);
       if (payload.action === "register") {
         setRegistrationNotice("Du er nu oprettet. Tjek din mail om du har modtaget en bekræftelse. Hvis ikke, så kontakt administrator.");
       }
@@ -165,8 +175,8 @@ export default function OpenBaneApp() {
       if (payload.action === "register") setOpenProfile(true);
       if (payload.action === "logout" || payload.action === 'logout_all' || payload.action === "login") setOpenProfile(false);
       // Login still verifies that the browser sends the newly issued cookie.
-      if (payload.action === "login" || payload.action === "register" || typeof j.authenticated !== "boolean") {
-        if (!await load(payload.action === "login" || payload.action === "register")) return false;
+      if (payload.action === "login" || payload.action === 'mfa_verify' || payload.action === "register" || typeof j.authenticated !== "boolean") {
+        if (!await load(payload.action === "login" || payload.action === 'mfa_verify' || payload.action === "register")) return false;
       } else {
         setData(j);
       }
@@ -210,6 +220,7 @@ export default function OpenBaneApp() {
     window.addEventListener('focus', updateSchedule);
     return () => { active = false; window.clearInterval(timer); window.removeEventListener('focus', updateSchedule); };
   }, [data?.authenticated, busy]);
+  if(mfaPrompt||recoveryCodes)return <MfaScreen prompt={mfaPrompt} recoveryCodes={recoveryCodes} act={act} busy={busy} error={error} onContinue={()=>setRecoveryCodes(null)}/>;
   if (!data)
     return (
       <main className="grid min-h-screen place-items-center bg-[#f4f6fa]">
@@ -234,6 +245,7 @@ export default function OpenBaneApp() {
       />
     );
   return <>
+    <PrivacyGate key={data.user.id} id={data.user.id}>{data.user.birthYear==null&&<BirthYearPrompt key={data.user.id} act={act} busy={busy}/>}</PrivacyGate>
     {registrationNotice && <div role="status" className="mx-auto max-w-5xl px-2 pt-4 sm:px-4"><p className="rounded-lg border border-green-200 bg-green-50 p-4 text-green-900">{registrationNotice}</p></div>}
     {!data.event
       ? <EmptyCalendarDashboard data={data} act={act} busy={busy} error={error} openProfile={openProfile} />
@@ -614,7 +626,7 @@ function Dashboard({ data, act, busy, error, openProfile, refresh, refreshing }:
   const showReminder =
     userMatches.length > 0 && now >= reminderStart && now <= reminderEnd;
   return (
-    <main className="min-h-screen bg-[#f4f6fa]"><PrivacyGate id={data.user.id}/>
+    <main className="min-h-screen bg-[#f4f6fa]">
       <header className="sticky top-0 z-20 border-b border-[#dce9e1] bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-2 py-3 sm:px-6">
           <div className="flex items-center gap-3">
@@ -751,6 +763,7 @@ function Dashboard({ data, act, busy, error, openProfile, refresh, refreshing }:
           </TabsList>
           {data.user.isSuperAdmin&&<TabsContent value="superadmin"><SuperAdminPanel data={data} act={act} busy={busy}/></TabsContent>}
           <TabsContent value="signup" className="space-y-4">
+            {data.user.birthYear==null&&<BirthYearReminder act={act} busy={busy}/>}
             <SignupPanel key={`${data.event.id}:${JSON.stringify(data.times)}`} data={data} act={act} busy={busy} />
             <CalendarList dates={data.calendarDates ?? []} currentId={data.event.id} />
           </TabsContent>
@@ -823,14 +836,14 @@ function EmptyCalendarDashboard({data,act,busy,error,openProfile}: {
   data:{user:MemberProfile & {id:number;role:string;isSuperAdmin?:boolean};calendarDates:CalendarDate[];players?:MemberProfile[]};
   act:AppAction;busy:boolean;error:string;openProfile:boolean;
 }) {
-  return <main className="min-h-screen bg-[#f4f6fa] px-2 py-8 sm:px-4"><PrivacyGate id={data.user.id}/>
+  return <main className="min-h-screen bg-[#f4f6fa] px-2 py-8 sm:px-4">
     <div className="mx-auto max-w-5xl space-y-5">
       <div className="flex items-center justify-between"><h1 className="text-2xl font-bold">Åben Bane</h1><Button variant="outline" onClick={()=>act({action:"logout"})}><LogOut className="mr-2 h-4 w-4"/>Log ud</Button></div>
       <p className="rounded-xl bg-white p-4">Der er ingen kommende spilledage på listen. Administratoren skal tilføje flere datoer. Du kan stadig ændre din profil.</p>
       {error&&<p role="alert" className="rounded-xl bg-red-50 p-4 text-red-700">{error}</p>}
       <Tabs defaultValue={openProfile?"profile":"dates"}>
         <TabsList><TabsTrigger value="dates"><CalendarDays className="mr-2 h-4 w-4"/>Tilmeldinger</TabsTrigger><TabsTrigger value="profile"><Settings className="mr-2 h-4 w-4"/>Profil</TabsTrigger>{data.user.role==="admin" && <TabsTrigger value="members">Admin · Medlemmer<CrReviewCount players={data.players}/></TabsTrigger>}{data.user.role==='admin'&&<><TabsTrigger value="privacy" className="h-auto flex-col gap-1 py-2"><span>Privatliv & inaktive profiler</span><PrivacyBadge/></TabsTrigger><TabsTrigger value="newsletter">Nyhedsmails</TabsTrigger></>}{data.user.isSuperAdmin&&<TabsTrigger value="superadmin">SuperAdmin</TabsTrigger>}</TabsList>{data.user.isSuperAdmin&&<TabsContent value="superadmin"><SuperAdminPanel data={data} act={act} busy={busy}/></TabsContent>}{data.user.role==='admin'&&<><TabsContent value="privacy"><PrivacyAdmin/></TabsContent><TabsContent value="newsletter"><PrivacyAdmin mode="newsletter"/></TabsContent></>}
-        <TabsContent value="dates"><CalendarList dates={data.calendarDates}/></TabsContent>
+        <TabsContent value="dates">{data.user.birthYear==null&&<BirthYearReminder act={act} busy={busy}/>}<CalendarList dates={data.calendarDates}/></TabsContent>
         <TabsContent value="profile"><ProfilePanel user={data.user} act={act} busy={busy}/></TabsContent>
         {data.user.role==="admin" && <TabsContent value="members"><CalendarList dates={data.calendarDates} act={act} busy={busy}/><MembersPanel data={data} act={act} busy={busy}/></TabsContent>}
       </Tabs>
@@ -839,6 +852,8 @@ function EmptyCalendarDashboard({data,act,busy,error,openProfile}: {
 }
 
 type MemberProfile = {
+  role?: string;
+  spouse?: {id:number;name:string}|null;
   spouseNo?: number | null;
   spouseMode?: number | null;
   emailVisible?: boolean;
@@ -870,14 +885,16 @@ function ProfilePanel({ user, act, busy, adminMode=false, members=[] }: {
   const [birthYear, setBirthYear] = useState(user.birthYear?.toString() ?? '');
   const [email, setEmail] = useState(user.email);
   const [currentPin, setCurrentPin] = useState('');
+  const [spousePlayerId, setSpousePlayerId] = useState<number | null | undefined>(undefined);
   const emailChanged = email.trim().toLowerCase() !== user.email.trim().toLowerCase();
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSaved(false);
     const values = Object.fromEntries(new FormData(event.currentTarget).entries());
-    if (await act({ ...values, emailVisible: values.emailVisible === "on", phoneVisible: values.phoneVisible === "on", action: "update_profile" })) {
+    if (await act({ ...values, ...(!adminMode && spousePlayerId !== undefined ? {spousePlayerId} : {}), emailVisible: values.emailVisible === "on", phoneVisible: values.phoneVisible === "on", action: "update_profile" })) {
       setSaved(true);
       setCurrentPin('');
+      setSpousePlayerId(undefined);
     }
   }
   return (
@@ -923,6 +940,7 @@ function ProfilePanel({ user, act, busy, adminMode=false, members=[] }: {
             {birthYear && <p className="text-sm text-slate-600">Beregnet alder: {ageFromBirthYear(Number(birthYear))} år.</p>}
           </div>
           {adminMode && <div className="grid gap-2"><Label htmlFor="edit-member-cr">CR</Label><select id="edit-member-cr" name="christinRanking" defaultValue={user.christinRanking??""} className="h-10 rounded-md border px-3"><option value="">Ikke vurderet</option>{[1,2,3,4,5,6,7,8,9].map(cr=><option key={cr} value={cr}>{`${cr}  ${CR_LABELS[cr]}`}</option>)}</select></div>}
+          {!adminMode && <SpouseSearch initial={user.spouse ?? null} disabled={busy} onChange={id => {setSpousePlayerId(id);setSaved(false);}} />}
           {adminMode && <>
             <div className="grid gap-2"><Label htmlFor="edit-spouse-no">Spouse No.</Label>
               <select id="edit-spouse-no" name="spouseNo" defaultValue={user.spouseNo ?? ''} className="h-10 min-w-0 rounded-md border px-3">
@@ -945,6 +963,7 @@ function ProfilePanel({ user, act, busy, adminMode=false, members=[] }: {
           <p className="text-sm text-slate-600">Log ud på alle enheder, inklusive denne.</p>
           <Button type="button" variant="outline" disabled={busy} onClick={()=>act({action:'logout_all'})}>Log ud på alle enheder</Button>
         </section>}
+        {!adminMode && user.role==='admin' && <MfaSettings act={act} busy={busy}/>}
       </CardContent>
     </Card>
   );
@@ -991,6 +1010,7 @@ function SignupPanel({ data, act, busy }: any) {
   }
   const registeredMembers: {id:number;name:string}[] = [...(data.registeredMembers ?? [])].sort((a,b) => a.name.localeCompare(b.name,'da'));
   const current = data.signup?.status === "not_registered" ? null : data.signup;
+  const [editingWishes, setEditingWishes] = useState(!current || current.status === 'cancelled' || !current.nHours);
   const [selected, setSelected] = useState<string[]>(
     (current?.szPossible ?? []).filter((time:string)=>data.times.includes(time)),
   );
@@ -1017,6 +1037,10 @@ function SignupPanel({ data, act, busy }: any) {
   const confirmationText = `Du har nu ønsket at spille ${hours} ${hours === 1 ? 'time' : 'timer'} ${roundDate.toLocaleDateString('da-DK', {weekday:'long', timeZone:'Europe/Copenhagen'})} d. ${roundDate.toLocaleDateString('da-DK', {day:'2-digit', month:'long', timeZone:'Europe/Copenhagen'})}.\nRunden starter kl. ${roundTime}.`;
   const canJoinWaitlist = current?.status !== 'active' && waitlistIsOpen(data.event, roundStart, now);
   const canChoose = canEdit || canJoinWaitlist;
+  const canChangeWishes = canChoose && editingWishes && !busy;
+  const wishesChanged = editingWishes && (current && current.status !== 'cancelled'
+    ? hours !== current.nHours || selected.length !== (current.szPossible?.length ?? 0) || selected.some(time => !current.szPossible?.includes(time))
+    : selected.length > 0);
   async function joinWaitlist() {
     const error = signupSelectionError(selected, hours);
     if (error) { setSelectionError(error); setConfirmError(''); setConfirmOpen(true); return; }
@@ -1025,6 +1049,7 @@ function SignupPanel({ data, act, busy }: any) {
       setSelected(expanded);
       setSaved(false);
       setRemoved(false);
+      setEditingWishes(false);
     }
   }
   async function saveWish() {
@@ -1043,6 +1068,7 @@ function SignupPanel({ data, act, busy }: any) {
     ) {
       setSelected(expanded);
       setSaved(true);
+      setEditingWishes(false);
       return true;
     }
     return false;
@@ -1053,6 +1079,7 @@ function SignupPanel({ data, act, busy }: any) {
       setSelected([]);
       setHours(1);
       setRemoved(true);
+      setEditingWishes(true);
       return true;
     }
     return false;
@@ -1100,7 +1127,7 @@ function SignupPanel({ data, act, busy }: any) {
         <CardHeader className="gap-1 px-4">
           <CardTitle>Dine spilleønsker</CardTitle>
           <CardDescription>
-            Vælg 1-3 timer; vælg ALLE mulige tidspunkter du kan; tryk "Gem mine ønsker". Vælg mindst 2 tider, også ved ønske om 1 time. Ved 2 eller 3 timer skal mindst henholdsvis 2 eller 3 af tiderne være uden overlap.
+            Vælg 1-3 timer; vælg ALLE mulige tidspunkter du kan; tryk "Gem mine ønsker". Du skal vælge mindst 2 tider for 1 time, 4 tider for 2 timer og 6 tider for 3 timer. Der skal også være nok tider uden overlap til dine ønskede timer.
           </CardDescription>
         </CardHeader>
         <CardContent className="px-4">
@@ -1109,7 +1136,7 @@ function SignupPanel({ data, act, busy }: any) {
             <div className="mt-2 grid grid-cols-3 gap-2">
               {[1,2,3].map(value => <button
                 key={value}
-                disabled={!canChoose || busy}
+                disabled={!canChangeWishes}
                 aria-pressed={hours === value}
                 onClick={() => {
                   setSaved(false);
@@ -1146,10 +1173,10 @@ function SignupPanel({ data, act, busy }: any) {
                   {group.times.map((t: string) => (
                     <label
                       key={t}
-                      className={`flex min-h-11 items-center gap-2 rounded-lg border px-3 py-2 ${canEdit ? "cursor-pointer" : "cursor-not-allowed opacity-55"} ${selected.includes(t) ? "border-[#13375e] bg-[#f0f3f8]" : "border-slate-200"}`}
+                      className={`flex min-h-11 items-center gap-2 rounded-lg border px-3 py-2 ${canChangeWishes ? "cursor-pointer" : "cursor-not-allowed"} ${selected.includes(t) ? "border-[#13375e] bg-[#f0f3f8]" : "border-slate-200"}`}
                     >
                       <Checkbox
-                        disabled={!canChoose || busy}
+                        disabled={!canChangeWishes}
                         checked={selected.includes(t)}
                         onCheckedChange={(yes) => {
                           setSaved(false);
@@ -1170,13 +1197,14 @@ function SignupPanel({ data, act, busy }: any) {
           </div>
           <p className="mt-4 text-sm text-slate-600">Når du gemmer, vælges tilgængelige mellemliggende tider automatisk, hvis du har valgt to timer i træk.</p>
           <div className="mt-4 flex flex-wrap gap-2">
+            {!editingWishes && <Button disabled={busy || !canChoose} className="bg-[#13375e]" onClick={() => {setEditingWishes(true);setSaved(false);setSelectionError(null);}}>Ret mine ønsker</Button>}
             <AlertDialog open={confirmOpen} onOpenChange={open => { if (!confirmPending.current) { setSelectionError(open ? signupSelectionError(selected, hours) : null); setConfirmOpen(open); setConfirmError(''); } }}>
-            <AlertDialogTrigger asChild><Button
+            {editingWishes && <AlertDialogTrigger asChild><Button
               disabled={busy || !canEdit}
               className="bg-[#13375e]"
             >
               {busy ? "Gemmer…" : "Gem mine ønsker"}
-            </Button></AlertDialogTrigger>
+            </Button></AlertDialogTrigger>}
             <AlertDialogContent onEscapeKeyDown={event => { if (confirmPending.current) event.preventDefault(); }}>
               <AlertDialogHeader>
                 <AlertDialogTitle>{selectionError ? 'Kontrollér dine tider' : 'Bekræft dine ønsker'}</AlertDialogTitle>
@@ -1216,9 +1244,10 @@ function SignupPanel({ data, act, busy }: any) {
             <p className="mt-2 flex items-center gap-2 text-sm font-medium text-[#13375e]">
               <Check className="h-4 w-4" />
               {current.status === 'cancelled' ? 'Din status er Afbud.' : current.nHours === 0 ? "Du har valgt ikke at spille." : `Du er ${current.status === "waitlist" ? "på venteliste" : "tilmeldt"}.`}
-              {current.status !== 'cancelled' && 'Dine senest gemte ønsker vises ovenfor.'}
+              {current.status !== 'cancelled' && !editingWishes && ' Dine gemte ønsker vises ovenfor.'}
             </p>
           )}
+          {wishesChanged && <p role="status" className="mt-2 text-sm font-medium text-amber-800">Dine ændringer er ikke gemt. {canEdit ? 'Tryk på “Gem mine ønsker” for at gemme dem.' : canJoinWaitlist ? 'Tryk på “Sæt mig på venteliste” for at gemme dem.' : 'Tilmeldingen er lukket.'}</p>}
           <section className="mt-6 border-t border-slate-200 pt-4" aria-label="Tilmeldte medlemmer">
             <h3 className="mb-1 text-base font-semibold">Tilmeldte til denne spillerunde ({registeredMembers.length})</h3>
             <p className="mt-1 text-sm text-slate-600">Se, hvem der har tilmeldt sig. Listen opdateres automatisk.</p>
@@ -1540,6 +1569,7 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
       </TabsContent>
       <TabsContent value="matches" forceMount className="space-y-6 data-[state=inactive]:hidden">
       <OptimizerPanel key={`optimizer-${data.event.id}`} event={data.event} rows={importedRows} wishes={wishes} isOpen={data.isOpen} busy={busy || planEditPending} refresh={refresh} />
+      <p className="text-sm text-slate-600">{data.signups.filter((s:any)=>s.signup.nHours>0&&s.signup.status!=='cancelled'&&data.players.find((p:any)=>p.id===s.player.id)?.birthYear==null).length} deltagere mangler fødselsår. Beregningen kan fortsætte; aldershensyn bruges kun, hvor de nødvendige aldre er kendt.</p>
       {!!openSubstitutions.length && (
         <Card className="border-amber-300 bg-amber-50">
           <CardHeader>
@@ -2041,6 +2071,8 @@ function MembersPanel({data,act,busy}:any) {
         </div><CardDescription>Sletning håndteres under Privatliv &amp; inaktive profiler.</CardDescription><CardDescription>Medlemmer med CR til gennemgang står øverst. Godkend den automatiske CR, eller ret værdien og vælg “Gem og godkend CR”. Medlemmet kan tilmelde sig imens. CR er kun synlig for administratorer.</CardDescription></CardHeader>
         <CardContent className="space-y-2 px-3 sm:px-6">
           <Label htmlFor="member-search">Fornavn Efternavn</Label>
+          <p className="text-sm">{data.players.filter((p:any)=>p.birthYear!=null).length} af {data.players.length} medlemmer har angivet fødselsår.</p>
+          <details><summary className="cursor-pointer text-sm font-medium">Mangler fødselsår ({data.players.filter((p:any)=>p.birthYear==null).length})</summary><ul className="space-y-2 py-2">{data.players.filter((p:any)=>p.birthYear==null).map((p:any)=><li key={p.id} className="flex items-center justify-between gap-2 text-sm"><span>{p.name} · #{p.memberNo}</span><EditMemberDialog player={p} act={act} busy={busy} members={data.players}/></li>)}</ul></details>
           <Input id="member-search" type="search" placeholder="Søg efter navn…" value={search} onChange={event => setSearch(event.target.value)} />
           {!sortedMembers.length && <p role="status" className="text-sm text-slate-600">Ingen medlemmer matcher søgningen.</p>}
           {sortedMembers.map((player: MemberProfile & {id:number;name:string;christinRanking:number|null}) => <div key={player.id} className="min-w-0 space-y-1.5 rounded-lg border px-2.5 py-2">
@@ -2067,6 +2099,8 @@ function SuperAdminPanel({data,act,busy}:any){
  const [testEmailResult,setTestEmailResult]=useState('');
  if(!data.user.isSuperAdmin)return null;
  return <section className="space-y-6" aria-label="SuperAdmin"><h2 className="text-2xl font-bold">SuperAdmin</h2>
+      <ForbiddenPairsForm key={JSON.stringify(data.forbiddenMemberPairs)} pairs={data.forbiddenMemberPairs??[]} members={data.players??[]} act={act} busy={busy}/>
+      <AdminMfaReset members={data.players??[]} ownId={data.user.id} act={act} busy={busy}/>
       {data.event&&<OptimizerDefaultsForm
         action="set_event_optimizer_weights"
         title="Optimerings-faktorer"

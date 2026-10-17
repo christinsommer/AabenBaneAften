@@ -41,7 +41,7 @@ if (mode === 'deploy') {
   assert.equal((await jobsHealth.json()).jobProtocol,1);
   const health = await fetch(`${url}/health`, {headers,signal:AbortSignal.timeout(660000)});
   assert.equal(health.status,200,`Container health returned ${health.status}`);
-  assert.equal((await health.json()).scoringVersion,'configurable-courts-v7');
+  assert.equal((await health.json()).scoringVersion,'optional-ages-v8');
   const match = {court:1,startTime:'18:00',team1:[1,2],team2:[3,4]};
   const input = {
     players:[2,5,3,4].map((cr,i)=>({id:i+1,memberNo:`smoke-${i+1}`,cr,gender:'M',age:40,availability:['18:00'],requestedHours:1,signupOrder:i+1,status:'active'})),

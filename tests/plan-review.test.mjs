@@ -54,7 +54,7 @@ test('review checks CR boundaries, partner distance, mixed teams, forbidden pair
   assert.ok(cr.issues.some(i=>i.message.includes('højst være 3') && i.playerIds.includes(1)));
   const mixed=reviewPlan([match],input({players:[p(1,{gender:'K'}),p(2,{gender:'K'}),p(3),p(4)]}));
   assert.match(mixed.issues[0].message,/Mixed/);
-  const forbidden=reviewPlan([match],input({players:[p(1,{memberNo:'17108'}),p(2,{memberNo:'13993'}),p(3),p(4)]}));
+  const forbidden=reviewPlan([match],input({forbiddenMemberPairs:[['17108','13993']],players:[p(1,{memberNo:'17108'}),p(2,{memberNo:'13993'}),p(3),p(4)]}));
   assert.deepEqual(forbidden.issues[0].playerIds,[1,2]);
   const locked=reviewPlan([{...match,team1:[1,3],team2:[2,4]}],input({locked:[match]}));
   assert.ok(locked.issues.some(i=>i.message.includes('låst')));

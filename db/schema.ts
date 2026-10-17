@@ -50,6 +50,7 @@ export const players = sqliteTable("players", {
 ]);
 
 export const sessions = sqliteTable("sessions", {
+  mfaVersion: text('mfa_version'),
   tokenHash: text("token_hash").primaryKey(),
   playerId: integer("player_id").notNull(),
   expiresAt: text("expires_at").notNull(),

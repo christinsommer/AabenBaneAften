@@ -1,3 +1,5 @@
+import {parseForbiddenPairs} from './forbidden-pairs.ts';
+
 export const algorithmWeightDefaults = {
   FactorMatchDifference: 40, FactorSameTeamDifference: 15, FactorDistanceSameTeamA: 2, FactorSameTeamLastWeek: 20, FactorSameTeam3Weeks: 10,
   FactorOpponentLastWeek: 5, FactorOpponentThisWeek: 5, FactorDoubleSameSex: 5, FactorSingle: 10, Factor3OfAKind: 30, FactorAge: 0,
@@ -11,12 +13,13 @@ export type OptimizerPlayer = {
 export type ProposedMatch = { court: number; startTime: string; team1: number[]; team2: number[] };
 export type HistoryRound = { date: string; matches: { team1: number[]; team2: number[] }[] };
 export type OptimizerInput = {
+  forbiddenMemberPairs?: [string, string][];
   optimizerResources?: {cpu:number;seconds:number};
   players: OptimizerPlayer[]; slots: { court: number; startTime: string }[];
   history: HistoryRound[]; locked: ProposedMatch[]; weights: AlgorithmWeights;
 };
 export const HISTORY_START = '2026-09-18';
-export const forbiddenMemberPairs = [['17108', '13993'], ['17108', '16212'], ['11822', '15722']];
+
 export const minutes = (time: string) => {
   if (!/^\d{2}:\d{2}$/.test(time)) throw new Error('Ugyldigt tidspunkt.');
   const [h, m] = time.split(':').map(Number);
@@ -74,8 +77,9 @@ export function scoreMatch(match: ProposedMatch, input: OptimizerInput, plan: re
   const double = a.length === 2;
   const women = [...a, ...b].filter(p => p.gender === 'K').length;
   const mix = !double ? 5 : women === 2 ? 0 : women === 0 || women === 4 ? 1 : 2;
-  const balanceAge = (double ? Math.abs((a[0].age ?? 0) - (a[1].age ?? 0)) + Math.abs((b[0].age ?? 0) - (b[1].age ?? 0)) : 0)
-    + Math.abs(sum(a, 'age') - sum(b, 'age'));
+  const agePair = (team: OptimizerPlayer[]) => team.every(p=>p.age!=null) ? Math.abs(team[0].age! - team[1].age!) : 0;
+  const balanceAge = (double ? agePair(a) + agePair(b) : 0)
+    + ([...a,...b].every(p=>p.age!=null) ? Math.abs(sum(a, 'age') - sum(b, 'age')) : 0);
   const relations = historyRelations(input.history);
   let sameTeamLastWeek = 0, sameTeam3Weeks = 0, opponentLastWeek = 0;
   for (const team of [a, b]) if (double) {
@@ -103,6 +107,7 @@ export function scoreMatch(match: ProposedMatch, input: OptimizerInput, plan: re
 }
 
 export function validateOptimizerInput(input: OptimizerInput) {
+  parseForbiddenPairs(input.forbiddenMemberPairs ?? []);
   parseAlgorithmWeights(input.weights);
   if (input.players.length > 200) throw new Error('Der kan højst beregnes for 200 spillere ad gangen.');
   const ids = new Set<number>(), members = new Set<string>();
@@ -117,8 +122,8 @@ export function validateOptimizerInput(input: OptimizerInput) {
     if (!Number.isInteger(p.requestedHours) || p.requestedHours < 1 || p.requestedHours > 3) throw new Error('Ugyldigt timeønske.');
     if (!Number.isSafeInteger(p.signupOrder) || p.signupOrder < 1 || !['active', 'waitlist'].includes(p.status)) throw new Error('Ugyldig tilmeldingsrækkefølge eller status.');
     if (!Array.isArray(p.availability) || p.availability.some(t => !input.slots.some(s => s.startTime === t))) throw new Error(`Medlem ${p.memberNo} har spilleønsker uden for de aktuelle spilletider. Opdatér tilmeldingen.`);
-    if (input.weights.FactorAge !== 0 && (!Number.isInteger(p.age) || p.age! < 0 || p.age! > 120))
-      throw new Error('Alder kan ikke beregnes for alle spillere. Angiv fødselsår eller brug FactorAge = 0.');
+    if (p.age != null && (!Number.isInteger(p.age) || p.age < 0 || p.age > 120))
+      throw new Error('Alder skal være ukendt eller et heltal fra 0 til 120.');
   }
   for (const slot of input.slots) minutes(slot.startTime);
 }
@@ -140,7 +145,7 @@ export function validateProposal(raw: unknown, input: OptimizerInput, options: {
     const players = ids.map(id => people.get(id)!);
     for (const a of players) for (const b of players)
       if (!spouseTogether(a,b) && Math.abs(a.cr - b.cr) > 3) throw new Error('CR-forskellen i en kamp er større end 3.');
-    if (forbiddenMemberPairs.some(pair => pair.every(no => players.some(p => p.memberNo === no)))) throw new Error('Kampen indeholder en forbudt spillerkombination.');
+    if ((input.forbiddenMemberPairs ?? []).some(pair => pair.every(no => players.some(p => p.memberNo === no)))) throw new Error('Kampen indeholder en forbudt spillerkombination.');
     if (ids.length === 4) for (const team of [row.team1, row.team2]) {
       const [a, b] = team.map((id: number) => people.get(id)!);
       if (!options.manualEdit && !spouseTogether(a,b) && Math.min(a.cr, b.cr) <= 4 && Math.abs(a.cr - b.cr) > input.weights.FactorDistanceSameTeamA)

@@ -36,7 +36,9 @@ test('session lifetimes, idle activity, revocation and email reauthentication ag
           : 'export const getCloudflareContext=()=>({env:globalThis.__sessionTest.env});'}));
       }
     }]});
-    const {createSession,currentPlayer,app,privacy}=await import(pathToFileURL(outfile).href);
+    const {createSession:issueSession,currentPlayer,app,privacy}=await import(pathToFileURL(outfile).href);
+    await db.prepare("INSERT INTO admin_mfa(player_id,secret,version,recovery_hashes) VALUES(?,'fixture','verified-fixture','[]')").bind(adminId).run();
+    const createSession=id=>issueSession(id,id===adminId?'verified-fixture':undefined);
     const cookie='aaben_bane_session';
     const session=async()=>db.prepare('SELECT * FROM sessions WHERE token_hash=?').bind(await sha256(jar.get(cookie))).first();
     const post=(body,module=app)=>module.POST(new Request('https://example.test/api/app',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}));

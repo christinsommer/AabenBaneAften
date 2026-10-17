@@ -8,8 +8,9 @@ import {closed,activity} from './privacy-service';
 const COOKIE = "aaben_bane_session";
 import { hex, sha256 } from "./credentials";
 import {sessionPolicy} from './session-policy';
+import {clearMfaChallenge,forgetTrustedDevices} from './admin-mfa';
 export { hashPin, verifyPin, hashToken, verifyToken } from "./credentials";
-export async function createSession(playerId: number) {
+export async function createSession(playerId: number, mfaVersion?:string) {
   if(await closed(playerId))throw Error("Profilen er lukket.");
   const { cookies } = await import("next/headers");
   const db=getDb();
@@ -17,7 +18,12 @@ export async function createSession(playerId: number) {
   if(!player)throw Error('Profilen findes ikke.');
   const token = hex(crypto.getRandomValues(new Uint8Array(32))), tokenHash = await sha256(token);
   const now = new Date(), expires = new Date(now.getTime() + sessionPolicy(player.role).absoluteMs);
-  await db.insert(sessions).values({ tokenHash, playerId, createdAt:now.toISOString(), lastSeenAt:now.toISOString(), expiresAt: expires.toISOString() });
+  // Guard the INSERT as well as reads: a revoked proof cannot create an admin session.
+  const result=await db.run(sql`INSERT INTO sessions(token_hash,player_id,created_at,last_seen_at,expires_at,mfa_version)
+    SELECT ${tokenHash},${playerId},${now.toISOString()},${now.toISOString()},${expires.toISOString()},${mfaVersion??null}
+    WHERE EXISTS(SELECT 1 FROM players p JOIN profile_privacy a ON a.player_id=p.id WHERE p.id=${playerId} AND a.closed_at IS NULL
+      AND (p.role<>'admin' OR EXISTS(SELECT 1 FROM admin_mfa m WHERE m.player_id=p.id AND m.version=${mfaVersion??null})))`);
+  if(!result.meta.changes)throw Error('Administratorlogin kræver 2FA. Log ind igen.');
   await activity(playerId,"login");
   (await cookies()).set(COOKIE, token, {
     httpOnly: true,
@@ -28,11 +34,13 @@ export async function createSession(playerId: number) {
   });
 }
 export async function destroySession() {
+  await clearMfaChallenge();
   const { cookies } = await import("next/headers");
   const jar = await cookies();
   const token = jar.get(COOKIE)?.value; if (token) await getDb().delete(sessions).where(eq(sessions.tokenHash, await sha256(token))); jar.delete(COOKIE);
 }
 export async function destroyAllSessions(playerId: number) {
+  await forgetTrustedDevices(playerId);
   await getDb().delete(sessions).where(eq(sessions.playerId,playerId));
   const { cookies } = await import("next/headers");
   (await cookies()).delete(COOKIE);
@@ -43,6 +51,7 @@ export async function destroyAllSessions(playerId: number) {
 function validSession(now: string) {
   const admin = sql`(SELECT role FROM players WHERE id = ${sessions.playerId}) = 'admin'`;
   return sql`COALESCE(
+    (NOT ${admin} OR EXISTS(SELECT 1 FROM admin_mfa m WHERE m.player_id=${sessions.playerId} AND m.version=${sessions.mfaVersion})) AND
     julianday(${sessions.expiresAt}) > julianday(${now}) AND
     julianday(${sessions.createdAt}) > julianday(${now}) - CASE WHEN ${admin} THEN ${sessionPolicy('admin').absoluteMs} ELSE ${sessionPolicy('player').absoluteMs} END / 86400000.0 AND
     julianday(${sessions.lastSeenAt}) > julianday(${now}) - CASE WHEN ${admin} THEN ${sessionPolicy('admin').idleMs} ELSE ${sessionPolicy('player').idleMs} END / 86400000.0,

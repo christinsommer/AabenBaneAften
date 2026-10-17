@@ -8,6 +8,9 @@ import { getPlatformProxy, unstable_dev } from "wrangler";
 import { hashToken } from "../lib/credentials.ts";
 import { PRIVACY_VERSION } from '../lib/privacy-text.ts';
 import { migrationStatements } from '../scripts/migration-statements.mjs';
+import {enrollMfa,testMfaKey} from './mfa-helper.mjs';
+
+const responseCookie=(response,name='aaben_bane_session')=>response.headers.getSetCookie().find(value=>value.startsWith(name+'='))?.split(';')[0];
 
 test("Cloudflare Worker renders and authenticates against isolated D1", { timeout: 180000 }, async () => {
   const directory = mkdtempSync(join(tmpdir(), "aabenbane-worker-"));
@@ -39,7 +42,7 @@ test("Cloudflare Worker renders and authenticates against isolated D1", { timeou
 
     worker = await unstable_dev(".open-next/worker.js", {
       config: "wrangler.jsonc", local: true, port: 0, persist: true, persistTo: directory,
-      vars: { RESEND_API_KEY: "", SUPERADMIN_PLAYER_ID: "1" },
+      vars: { RESEND_API_KEY: "", SUPERADMIN_PLAYER_ID: "1", MFA_ENCRYPTION_KEY:testMfaKey },
       logLevel: "error", experimental: { disableExperimentalWarning: true, watch: false },
     });
     const page = await worker.fetch("/");
@@ -84,18 +87,21 @@ test("Cloudflare Worker renders and authenticates against isolated D1", { timeou
     }
     const badLogin = await post({ action: "login", memberNo: "13993", pin: "111111" });
     assert.equal(badLogin.status, 401);
-    const login = await post({ action: "login", memberNo: "13993", pin: "987654" });
+    const firstFactor = await post({ action: "login", memberNo: "13993", pin: "987654" });
+    const login = await enrollMfa(body=>post(body,responseCookie(firstFactor,'aaben_bane_mfa')),await firstFactor.json());
+    const recoveryCodes=(await login.clone().json()).recoveryCodes;
     assert.equal(login.status, 200);
-    let cookie = login.headers.get("set-cookie")?.split(";")[0];
+    let cookie = responseCookie(login);
     assert.ok(cookie);
     const resetLink = await post({ action: "request_pin_reset", memberNo: "13993" });
     assert.equal(resetLink.status, 502); // Mail is deliberately disabled in this isolated Worker.
     const pinReset = await post({ action: "reset_pin", token: resetToken, pin: "4321", confirmPin: "4321" });
     assert.equal(pinReset.status, 200);
-    const loginWithNewPin = await post({ action: "login", memberNo: "13993", pin: "4321" });
+    const newFirstFactor = await post({ action: "login", memberNo: "13993", pin: "4321" });
+    const loginWithNewPin = await post({action:'mfa_verify',code:recoveryCodes[0]},responseCookie(newFirstFactor,'aaben_bane_mfa'));
     assert.equal(loginWithNewPin.status, 200);
     assert.equal((await (await worker.fetch('/api/app', { headers: { cookie } })).json()).authenticated, false);
-    cookie = loginWithNewPin.headers.get("set-cookie")?.split(";")[0];
+    cookie = responseCookie(loginWithNewPin);
     assert.ok(cookie);
     const state = await login.json();
     assert.equal(state.calendarDates.length,34);
@@ -128,14 +134,14 @@ test("Cloudflare Worker renders and authenticates against isolated D1", { timeou
     assert.equal(registered.signup.nPossible,0);
     assert.equal(registered.signup.nHours,0);
     assert.equal('christinRanking' in registered.user,false);
-    let playerCookie = registration.headers.get("set-cookie")?.split(";")[0];
+    let playerCookie = responseCookie(registration);
     assert.equal((await post({action:'delete_member',playerId:state.user.id,confirmMemberNo:'13993'},playerCookie)).status,403);
     assert.equal((await post({action:'add_date',date:'2099-06-01'},playerCookie)).status,403);
     assert.equal((await post({action:'remove_date',eventId:state.event.id},playerCookie)).status,403);
     const forbidden = await post({ action: "set_admin", playerId: 1, makeAdmin: true }, playerCookie);
     assert.equal(forbidden.status, 403);
     const profile=await post({action:"update_profile",currentPin:'123456',firstName:"Updated",lastName:"Player",email:"updated@example.com",level:"AB",memberNo:"13993",playerId:1,role:"admin",christinRanking:9},playerCookie);
-    playerCookie=profile.headers.get('set-cookie')?.split(';')[0];
+    playerCookie=responseCookie(profile);
     assert.equal(profile.status,200);
     const updated=await profile.json();
     assert.equal(updated.user.name,"Updated Player");
@@ -175,14 +181,14 @@ test("Cloudflare Worker renders and authenticates against isolated D1", { timeou
     assert.equal(editedPlayer.role,'player');
     const playerLogin=await post({action:'login',memberNo:'test-player',pin:'123456'});
     assert.equal(playerLogin.status,200);
-    playerCookie=playerLogin.headers.get('set-cookie')?.split(';')[0];
+    playerCookie=responseCookie(playerLogin);
     assert.equal((await post({action:"set_cr",playerId:updated.user.id,christinRanking:null},cookie)).status,200);
     assert.equal((await post({action:"set_registration",mode:"closed"},playerCookie)).status,403);
     assert.equal((await post({action:"end_test"},playerCookie)).status,403);
     assert.equal((await post({action:'signup',availability:['18:00'],requestedHours:1},playerCookie)).status,400);
     assert.equal((await post({action:'signup',availability:['18:00','18:30'],requestedHours:2},playerCookie)).status,400);
     const signupBody={action:"signup",availability:["18:00","19:00"],requestedHours:1};
-    const example={action:'signup',nHours:2,nPossible:3,szPossible:['18:30','19:30','20:30']};
+    const example={action:'signup',nHours:2,nPossible:4,szPossible:['18:00','18:30','19:00','19:30']};
     const saved=await (await post(example,playerCookie)).json();
     assert.equal(saved.signup.nHours,2);
     assert.ok(Number.isInteger(saved.signup.signupOrder) && saved.signup.signupOrder > 0);
@@ -197,10 +203,10 @@ test("Cloudflare Worker renders and authenticates against isolated D1", { timeou
     assert.equal(changedSignup.nHours,saved.signup.nHours);
     assert.deepEqual((await (await worker.fetch('/api/app',{headers:{cookie:playerCookie}})).json()).registeredMembers,[]);
     assert.equal((await post({action:'set_signup_status',signupId:saved.signup.id,status:'active'},cookie)).status,200);
-    const editedSignup = await (await post({...example,nHours:3,signupOrder:-100},playerCookie)).json();
+    const editedSignup = await (await post({...example,nHours:3,nPossible:6,szPossible:['18:00','18:30','19:00','19:30','20:00','20:30'],signupOrder:-100},playerCookie)).json();
     assert.equal(editedSignup.signup.signupOrder,saved.signup.signupOrder);
     await post(example,playerCookie);
-    assert.equal(saved.signup.nPossible,3);
+    assert.equal(saved.signup.nPossible,4);
     assert.deepEqual(saved.signup.szPossible,example.szPossible);
     const roster=await (await worker.fetch('/api/app',{headers:{cookie}})).json();
     assert.equal(roster.signups.length,2);
@@ -221,7 +227,7 @@ test("Cloudflare Worker renders and authenticates against isolated D1", { timeou
     assert.equal(cancelledRoster.signups.find(row=>row.player.memberNo==='test-player').signup.nHours,0);
     assert.equal((await post({...example,nPossible:2},playerCookie)).status,400);
     assert.equal((await post({...example,nHours:4},playerCookie)).status,400);
-    const rejoined = await (await post({...example,nHours:3},playerCookie)).json();
+    const rejoined = await (await post({...example,nHours:3,nPossible:6,szPossible:['18:00','18:30','19:00','19:30','20:00','20:30']},playerCookie)).json();
     assert.equal(rejoined.signup.nHours,3);
     assert.ok(rejoined.signup.signupOrder > saved.signup.signupOrder);
     assert.equal((await (await post({...example,nHours:0,nPossible:0,szPossible:[]},playerCookie)).json()).signup.nHours,0);
@@ -263,7 +269,7 @@ test("Cloudflare Worker renders and authenticates against isolated D1", { timeou
     assert.equal('christinRanking' in emptyMember.user,false);
     const emptyProfile=await post({action:'update_profile',currentPin:'123456',firstName:'Updated',lastName:'Player',email:'updated@example.com',level:'AB'},playerCookie);
     assert.equal(emptyProfile.status,200);
-    playerCookie=emptyProfile.headers.get('set-cookie')?.split(';')[0];
+    playerCookie=responseCookie(emptyProfile);
     const restored=await (await post({action:'add_date',date:'2026-09-11'},cookie)).json();
     assert.equal(restored.calendarDates[0].id,state.event.id);
     const future=await (await post({action:'add_date',date:'2099-05-04'},cookie)).json();

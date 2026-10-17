@@ -5,6 +5,7 @@ import {events,players,signups,matches} from '../../../db/schema';
 import {currentPlayer} from '../../../lib/auth';
 import {planEmail} from '../../../lib/plan-email';
 import {sameOrigin} from '../../../lib/privacy-request';
+import {recordSecurityEvent} from '../../../lib/security-events';
 
 export async function POST(request:Request) {
   if(!sameOrigin(request))return Response.json({error:'Ugyldigt kald.'},{status:403});
@@ -33,6 +34,7 @@ export async function POST(request:Request) {
       const response=await fetch('https://api.resend.com/emails/batch',{method:'POST',signal:AbortSignal.timeout(15000),headers:{Authorization:`Bearer ${apiKey}`,'Content-Type':'application/json','Idempotency-Key':`plan/${event.id}/${body.requestId}/${i}`},body:JSON.stringify(batch)});
       if(!response.ok)throw new Error(`Mailtjenesten afviste afsendelsen (HTTP ${response.status}).`);
       sent+=batch.length;
+      await recordSecurityEvent('mail_sent',batch.length);
     }
     return Response.json({sent});
   }catch(error){return Response.json({error:`${sent} e-mails er bekræftet modtaget af mailtjenesten. ${error instanceof Error?error.message:'Afsendelsen fejlede.'} Prøv igen med samme knap.`,sent},{status:502});}

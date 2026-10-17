@@ -11,6 +11,7 @@ export function optimizerSignupsSql(eventId: number) {
 // Member and signup edits are allowed; plan/settings changes and member deletion are not.
 export function optimizerScheduleSql() {
   return sql`json_array(
+    (SELECT json_group_array(json_array(member_a,member_b)) FROM (SELECT * FROM forbidden_pairs ORDER BY member_a,member_b)),
     (SELECT weights FROM optimizer_defaults WHERE id=1),
     (SELECT json_group_array(json_array(id,date,status,registration_opens_at,registration_closes_at,registration_schedule_custom,registration_override,imported_kampplan,is_test,test_active,archived)) FROM (SELECT * FROM events ORDER BY id)),
     (SELECT json_group_array(id) FROM (SELECT id FROM players ORDER BY id)),

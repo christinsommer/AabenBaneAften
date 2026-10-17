@@ -10,7 +10,7 @@ public record HistoryMatch(int[] Team1, int[] Team2);
 public record Round(string Date, HistoryMatch[] Matches);
 public record Weights(int FactorMatchDifference = 40, int FactorSameTeamLastWeek = 20, int FactorSameTeam3Weeks = 10, int FactorOpponentLastWeek = 5, int FactorDoubleSameSex = 5, int FactorSingle = 10, int Factor3OfAKind = 30, int FactorAge = 0, int FactorSameTeamDifference = 15, int FactorDistanceSameTeamA = 2, int FactorOpponentThisWeek = 5);
 public record OptimizerResources(int Cpu = 4, int Seconds = 600);
-public record Input(Player[] Players, Slot[] Slots, Round[] History, Match[] Locked, Weights Weights, OptimizerResources? OptimizerResources = null);
+public record Input(Player[] Players, Slot[] Slots, Round[] History, Match[] Locked, Weights Weights, OptimizerResources? OptimizerResources = null, string[][]? ForbiddenMemberPairs = null);
 public record Stage(string Name, long Value, string Status);
 public record Result(Match[] Matches, string Status, Stage[] Stages, long Score, double Seconds);
 
@@ -20,9 +20,9 @@ public static class Scheduler
     static string Pair(int a, int b) => a < b ? $"{a}:{b}" : $"{b}:{a}";
     static bool PointsTo(Player a, Player b) => a.SpouseNo is not null && long.TryParse(b.MemberNo, out var number) && a.SpouseNo == number;
     static bool Together(Player a, Player b) => a.SpouseMode == 2 && PointsTo(a,b) || b.SpouseMode == 2 && PointsTo(b,a);
-    static bool Forbidden(Player a, Player b) => !Together(a,b) && Math.Abs(a.Cr - b.Cr) > 3 ||
-        new[] { ("17108", "13993"), ("17108", "16212"), ("11822", "15722") }
-            .Any(pair => a.MemberNo == pair.Item1 && b.MemberNo == pair.Item2 || a.MemberNo == pair.Item2 && b.MemberNo == pair.Item1);
+    static bool Forbidden(Input input, Player a, Player b) => !Together(a,b) && Math.Abs(a.Cr - b.Cr) > 3 ||
+        (input.ForbiddenMemberPairs ?? [])
+            .Any(pair => a.MemberNo == pair[0] && b.MemberNo == pair[1] || a.MemberNo == pair[1] && b.MemberNo == pair[0]);
 
     static void SetHint(CpModel model, CpSolver solver)
     {
@@ -46,13 +46,15 @@ public static class Scheduler
         if (input.Players is null || input.Slots is null || input.History is null || input.Locked is null || input.Weights is null)
             throw new ArgumentException("Ufuldstændige beregningsdata.");
         var players = input.Players;
+        if (input.ForbiddenMemberPairs is { } pairs && (pairs.Length > 1000 || pairs.Any(pair => pair is null || pair.Length != 2 || pair.Any(string.IsNullOrWhiteSpace) || pair[0] == pair[1])))
+            throw new ArgumentException("Ugyldige spillerpar.");
         if (players.Length > 200 || input.Slots.Length > 32 || input.History.Length > 3 || players.Select(p => p.Id).Distinct().Count() != players.Length)
             throw new ArgumentException("Ugyldigt antal spillere, banetider eller historikrunder.");
         var w = input.Weights;
         if (new[] {w.FactorOpponentThisWeek, w.FactorDistanceSameTeamA, w.FactorMatchDifference, w.FactorSameTeamDifference, w.FactorSameTeamLastWeek, w.FactorSameTeam3Weeks, w.FactorOpponentLastWeek, w.FactorDoubleSameSex, w.FactorSingle, w.Factor3OfAKind, w.FactorAge}.Any(v => Math.Abs((long)v) > 1_000_000))
             throw new ArgumentException("Ugyldige vægte.");
         foreach (var p in players)
-            if (p.Cr is < 1 or > 9 || p.RequestedHours is < 1 or > 3 || p.SignupOrder < 1 || p.Gender is not ("M" or "K") || p.Status is not ("active" or "waitlist") || p.Availability is null || w.FactorAge != 0 && (p.Age is null or < 0 or > 120))
+            if (p.Cr is < 1 or > 9 || p.RequestedHours is < 1 or > 3 || p.SignupOrder < 1 || p.Gender is not ("M" or "K") || p.Status is not ("active" or "waitlist") || p.Availability is null || p.Age is < 0 or > 120)
                 throw new ArgumentException("En spiller mangler gyldige tilmeldings-, CR-, køns- eller aldersoplysninger.");
 
         var timer = Stopwatch.StartNew();
@@ -121,12 +123,19 @@ public static class Scheduler
             if (w.FactorAge != 0)
             {
                 var ageBalance = model.NewIntVar(0, 240, $"ageBalance{s}");
-                model.AddAbsEquality(ageBalance, TeamSum(0, p => p.Age!.Value) - TeamSum(1, p => p.Age!.Value));
+                var rawAgeBalance = model.NewIntVar(0, 240, $"rawAgeBalance{s}");
+                model.AddAbsEquality(rawAgeBalance, TeamSum(0, p => p.Age ?? 0) - TeamSum(1, p => p.Age ?? 0));
+                var unknownAge = model.NewBoolVar($"unknownAge{s}");
+                var unknownCount = TeamSum(0, p => p.Age is null ? 1 : 0) + TeamSum(1, p => p.Age is null ? 1 : 0);
+                model.Add(unknownCount > 0).OnlyEnforceIf(unknownAge);
+                model.Add(unknownCount == 0).OnlyEnforceIf(unknownAge.Not());
+                model.Add(ageBalance == 0).OnlyEnforceIf(unknownAge);
+                model.Add(ageBalance == rawAgeBalance).OnlyEnforceIf(unknownAge.Not());
                 score.AddTerm(ageBalance, -w.FactorAge);
             }
             for (int p = 0; p < players.Length; p++) for (int q = p + 1; q < players.Length; q++)
             {
-                if (Forbidden(players[p], players[q])) { model.Add(present[p, s] + present[q, s] <= 1); continue; }
+                if (Forbidden(input, players[p], players[q])) { model.Add(present[p, s] + present[q, s] <= 1); continue; }
                 if (!players[p].Availability.Contains(slots[s].StartTime) || !players[q].Availability.Contains(slots[s].StartTime)) continue;
                 if (!Together(players[p],players[q]) && Math.Min(players[p].Cr, players[q].Cr) <= 4 && Math.Abs(players[p].Cr - players[q].Cr) > w.FactorDistanceSameTeamA)
                     for (int t = 0; t < 2; t++) model.Add(x[p, s, t] + x[q, s, t] <= 1);
@@ -134,7 +143,7 @@ public static class Scheduler
                 long partnerPenalty = (lastPartners.Contains(key) ? w.FactorSameTeamLastWeek : 0L)
                     + (Together(players[p],players[q]) ? 0 : (long)w.FactorSameTeamDifference * Math.Abs(players[p].Cr - players[q].Cr))
                     + (recentPartners.Contains(key) ? w.FactorSameTeam3Weeks : 0L)
-                    + (w.FactorAge != 0 ? (long)w.FactorAge * Math.Abs(players[p].Age!.Value - players[q].Age!.Value) : 0);
+                    + (w.FactorAge != 0 && players[p].Age.HasValue && players[q].Age.HasValue ? (long)w.FactorAge * Math.Abs(players[p].Age!.Value - players[q].Age!.Value) : 0);
                 long opponentPenalty = lastOpponents.Contains(key) ? w.FactorOpponentLastWeek : 0;
                 if (partnerPenalty != 0 || opponentPenalty != 0)
                 {
@@ -155,7 +164,7 @@ public static class Scheduler
         }
         // A pair may partner only once in this plan, except mandatory spouse teams.
         for (int p = 0; p < players.Length; p++) for (int q = p + 1; q < players.Length; q++) {
-            if (Together(players[p],players[q]) || Forbidden(players[p],players[q])) continue;
+            if (Together(players[p],players[q]) || Forbidden(input, players[p],players[q])) continue;
             var partnerships = new List<BoolVar>();
             for (int s = 0; s < slots.Length; s++) {
                 if (!players[p].Availability.Contains(slots[s].StartTime) || !players[q].Availability.Contains(slots[s].StartTime)) continue;
@@ -166,7 +175,7 @@ public static class Scheduler
         // Penalize each unordered opponent pair's meetings beyond the first.
         if (w.FactorOpponentThisWeek != 0)
         for (int p = 0; p < players.Length; p++) for (int q = p + 1; q < players.Length; q++) {
-            if (Together(players[p],players[q]) || Forbidden(players[p],players[q])) continue;
+            if (Together(players[p],players[q]) || Forbidden(input, players[p],players[q])) continue;
             var meetings = new List<BoolVar>();
             for (int s = 0; s < slots.Length; s++) {
                 if (!players[p].Availability.Contains(slots[s].StartTime) || !players[q].Availability.Contains(slots[s].StartTime)) continue;

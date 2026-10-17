@@ -18,5 +18,9 @@
   "0016_privacy_newsletter.sql": "01179332b9dc20894067eb8fd842ad39bf513f7c1809468af6d90149141ec6df",
   "0017_dear_wallflower.sql": "fd676941bdee060e562af071f68e3479b5842202acd8741d31a53948ba61df42",
   "0018_shiny_eddie_brock.sql": "9a4a5897ba0d51d0304f26e6c4b93c1b63271bed921336a20657d4aa129e7f91",
-  "0019_amused_quasimodo.sql": "c35d7f26ba132fec71caa9620b9920533f6f331daa8d1450970cccced8c5c281"
+  "0019_amused_quasimodo.sql": "c35d7f26ba132fec71caa9620b9920533f6f331daa8d1450970cccced8c5c281",
+  "0020_security_monitoring.sql": "203bc7836fd30131c9c5751bd0afdd03ae2397f34eedd45b87da42f8094b471f",
+  "0021_admin_mfa.sql": "01d7e965c1b2d9d67ec34a753aaf646d75d1edac8d85eddd14c248738d006dc5",
+  "0022_admin_mfa_reset_audit.sql": "9446d57b52e6a853156fb7b210fbfa73c5f5ff729358c33b5da6bb42490f84ea",
+  "0023_forbidden_pairs.sql": "20515d44b6f70730410ff54836ac00f0f2ae6995322a9348dab37262ab0d1eb9"
 }

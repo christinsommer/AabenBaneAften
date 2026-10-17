@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { getCloudflareContext } from '@opennextjs/cloudflare';
 import { sha256 } from './credentials';
+import {recordSecurityEvent} from './security-events';
 import { privacyReviewStatus } from './privacy-review-status';
 import { PRIVACY_VERSION, CONSENT_VERSION, CONSENT_TEXT, CONSENT_HELP, privacySections, cookieSections } from './privacy-text';
 
@@ -209,5 +210,6 @@ export async function sendRecipient(actor:number,dispatchId:string,playerId:numb
   } catch { /* Timeout may have occurred after provider accepted the message. Never blindly resend. */ }
   await statement('UPDATE newsletter_recipients SET status=?,sent_at=?,provider_id=? WHERE dispatch_id=? AND player_id=?',status,status==='sent'?stamp():null,providerId,dispatchId,playerId).run();
   if(status!=='sent')throw Error('Afsendelsen er fejlet eller usikker. Kontrollér mailudbyderen før yderligere handling.');
+  await recordSecurityEvent('mail_sent');
   return {status,delivered:false};
 }

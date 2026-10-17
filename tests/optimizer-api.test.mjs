@@ -148,7 +148,7 @@ test('real CP-SAT service and D1: permissions, closed registration, history, val
     assert.equal((await post()).status,409,'edits during solve invalidate proposal');
     duringSolve=null;
     await db.prepare('UPDATE players SET birth_year=NULL WHERE id=1').run();
-    assert.match((await (await post('solve',{weights:{...algorithmWeightDefaults,FactorAge:1}})).json()).error,/Alder/);
+    assert.equal((await post('solve',{weights:{...algorithmWeightDefaults,FactorAge:1}})).status,200,'unknown ages do not prevent optimization');
     await db.prepare("UPDATE events SET status='published' WHERE id=100").run();
     assert.equal((await post()).status,400,'must not overwrite published schedule');
     await db.prepare("UPDATE events SET status='draft' WHERE id IN (3,4,5,100)").run();
