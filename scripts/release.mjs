@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdirSync, writeFileSync, openSync, closeSync, unlinkSync, readdirSync, statSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, openSync, closeSync, unlinkSync, readdirSync, statSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import {verifyExport,verifyLiveExport} from './privacy-backup-lib.mjs';
 
@@ -15,7 +15,16 @@ const wrangler = 'node_modules/wrangler/bin/wrangler.js';
 const adapter = 'node_modules/@opennextjs/cloudflare/dist/cli/index.js';
 mkdirSync('.data/releases', { recursive: true });
 const lock = '.data/releases/release.lock';
-const fd = openSync(lock, 'wx');
+let fd;
+try {
+  fd = openSync(lock, 'wx');
+} catch (error) {
+  if (error.code !== 'EEXIST') throw error;
+  let owner = '';
+  try { owner = readFileSync(lock, 'utf8').trim(); } catch { /* Report the lock even if unreadable. */ }
+  console.error(`Release blocked by ${lock}.${owner ? ` Owner: ${owner}` : ' This older lock has no owner information.'}\nCheck for an active deployment before removing this file. An interrupted release may have left it behind. No release steps were started.`);
+  process.exit(1);
+}
 async function run(script, args = [], output) {
   const logFile = output ?? `.data/releases/step-${Date.now()}-${script.replace(/[^a-zA-Z0-9-]/g, '_')}.log`;
   console.log(`Running ${script} ${args.join(' ')}`);
@@ -47,7 +56,14 @@ async function run(script, args = [], output) {
   });
 }
 try {
+  writeFileSync(fd, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString(), cwd: process.cwd() }) + '\n');
   await run('scripts/check-cloudflare-config.mjs');
+  // Fail on missing production configuration before the expensive build/tests.
+  // --check remains entirely local.
+  if (!check) {
+    await run('scripts/setup-mfa.mjs', ['--check-remote']);
+    await run('scripts/deploy-superadmin.mjs', ['check', ...adminArgs]);
+  }
   await run('scripts/optimizer-service.mjs', ['test']);
   const id = randomUUID();
   writeFileSync('lib/release-info.json', JSON.stringify({ id }) + '\n');
@@ -56,9 +72,6 @@ try {
   if (check) {
     console.log('Release check passed. No production commands executed.');
   } else {
-    // Validate production prerequisites before the first production mutation.
-    await run('scripts/setup-mfa.mjs', ['--check-remote']);
-    await run('scripts/deploy-superadmin.mjs', ['check', ...adminArgs]);
     const directory = `.data/releases/${new Date().toISOString().replace(/[:.]/g, '-')}`;
     mkdirSync(directory);
     await run(wrangler, ['d1', 'export', 'DB', '--remote', `--output=${directory}/database.sql`], `${directory}/backup.log`);

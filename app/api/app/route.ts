@@ -255,7 +255,7 @@ export async function POST(request:Request){
       return Response.json({...await state(),recoveryCodes:result.recoveryCodes},{headers:{'Cache-Control':'no-store'}});
     }else if(action==="login"){
       const [player]=await db.select().from(players).where(eq(players.memberNo,String(body.memberNo??"").trim())).limit(1);
-      if(!player||await closed(player.id)||!(await verifyPin(String(body.pin??""),player.pinHash))){await recordSecurityEvent('login_failed');return Response.json({error:"Medlemsnummer eller kode er forkert."},{status:401});}
+      if(!player||await closed(player.id)||!(await verifyPin(String(body.pin??""),player.pinHash))){await recordSecurityEvent('login_failed');return Response.json({error:"Medlemsnummer eller pinkode er forkert eller også mangler du at oprette din profil på aabenbaneaften.dk."},{status:401});}
       await destroySession();
       if(player.role==='admin') {
         const version=await trustedMfaVersion(player.id);

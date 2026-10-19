@@ -26,7 +26,9 @@ test('existing local D1 upgrades only after a verified backup and preserves logi
   writeFileSync(join(dir,'wrangler.jsonc'),JSON.stringify({d1_databases:original.d1_databases,compatibility_date:original.compatibility_date}));cpSync('drizzle',join(dir,'drizzle'),{recursive:true});
   proxy=await getPlatformProxy({configPath:join(dir,'wrangler.jsonc'),persist:{path:join(dir,'.wrangler/local-dev/v3')}});const db=proxy.env.DB;
   await db.prepare('CREATE TABLE d1_migrations(id INTEGER PRIMARY KEY,name TEXT UNIQUE,applied_at TEXT)').run();
-  for(const file of readdirSync('drizzle').filter(f=>f.endsWith('.sql')&&!f.startsWith('0016')).sort())await db.batch([...migrationStatements(readFileSync(`drizzle/${file}`,'utf8')).map(q=>db.prepare(q)),db.prepare('INSERT INTO d1_migrations(name) VALUES(?)').bind(file)]);
+  // Recreate the schema before privacy was introduced. Later migrations depend
+  // on its tables and must be applied by setup, not before migration 0016.
+  for(const file of readdirSync('drizzle').filter(f=>f.endsWith('.sql')&&f<'0016').sort())await db.batch([...migrationStatements(readFileSync(`drizzle/${file}`,'utf8')).map(q=>db.prepare(q)),db.prepare('INSERT INTO d1_migrations(name) VALUES(?)').bind(file)]);
   await db.prepare("INSERT INTO players(member_no,name,email,gender,self_level,pin_hash) VALUES('preserved','Synthetic Preserved','preserved@example.test','K','B','preserved-hash')").run();
   await proxy.dispose();proxy=undefined;
   const run=spawnSync(process.execPath,[resolve('scripts/setup-local-d1.mjs')],{cwd:dir,encoding:'utf8',windowsHide:true});assert.equal(run.status,0,run.stderr);assert.match(run.stdout,/backup and restore rehearsal verified/);

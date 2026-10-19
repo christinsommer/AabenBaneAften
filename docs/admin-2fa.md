@@ -5,8 +5,8 @@ Admin og Super Admin skal bekræfte PIN-login med TOTP (SHA-1, 6 cifre, 30 sekun
 ## Før første deployment
 
 1. Generér en kryptografisk tilfældig nøgle på 32 bytes, gengivet som 64 hex-tegn. Gem den i driftsansvarliges passwordmanager sammen med backupinstruktionerne. Brug fx `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` på en betroet computer. Del eller commit aldrig nøglen.
-2. Kør `npx wrangler secret put MFA_ENCRYPTION_KEY --config wrangler.jsonc`, og indsæt nøglen i Wranglers prompt. Brug en anden nøgle end til lokal udvikling.
-3. Kør den almindelige deploy. Release-scriptet kontrollerer, at hemmeligheden findes, før produktionsdata ændres. Migration `0021_admin_mfa.sql` tilføjer tabeller og sessionsmarkering. Eksisterende adminsessioner uden 2FA-markering afvises; administratorerne skal logge ind og opsætte 2FA.
+2. Kør `npx.cmd wrangler secret put MFA_ENCRYPTION_KEY --config wrangler.jsonc` i Windows PowerShell, og indsæt nøglen i Wranglers prompt. Brug en anden nøgle end til lokal udvikling. `.dev.vars` overføres ikke automatisk til produktion.
+3. Kontrollér med `node scripts/setup-mfa.mjs --check-remote`, og kør den almindelige deploy. Release-scriptet kontrollerer, at hemmeligheden findes, før build og tests starter. Migration `0021_admin_mfa.sql` tilføjer tabeller og sessionsmarkering. Eksisterende adminsessioner uden 2FA-markering afvises; administratorerne skal logge ind og opsætte 2FA.
 
 Ved lokal udvikling: `node scripts/setup-mfa.mjs --local`, derefter den sædvanlige lokale databasemigrering og genstart af udviklingsserveren. Scriptet gemmer kun en ny lokal nøgle, hvis ingen findes; det udskriver aldrig nøglen.
 

@@ -52,6 +52,9 @@ test('client helper logs in through real API and D1 with leading-zero PIN and se
     const state = await appRequest();
     requireLoginSession(state);
     assert.equal(state.user.memberNo, 'login-test');
+    const birthYearState = await appRequest({ action: 'update_birth_year', birthYear: '1986' });
+    assert.equal(birthYearState.user.birthYear, 1986, 'prompt response immediately includes the saved year');
+    assert.equal((await appRequest()).user.birthYear, 1986, 'saved year survives a reload');
     assert.equal('crReviewedAt' in state.user, false);
     await assert.rejects(appRequest({action:'approve_cr',playerId:state.user.id,christinRanking:5}), /Kun administratorer/);
     const schedule = {action:'set_registration_schedule',eventId:state.event.id,opensDate:'2026-09-16',opensHour:'09',closesDate:'2026-09-17',closesHour:'18'};
@@ -106,8 +109,9 @@ test('client helper logs in through real API and D1 with leading-zero PIN and se
     jar.clear();
     assert.throws(() => requireLoginSession({ authenticated: false }), /Login kunne ikke bevares/);
     assert.equal((await appRequest()).authenticated, false);
-    await assert.rejects(appRequest({ action: 'login', memberNo: 'login-test', pin: '9999' }), /Medlemsnummer eller kode er forkert/);
-    await assert.rejects(appRequest({ action: 'login', memberNo: 'missing', pin: '0123' }), /Medlemsnummer eller kode er forkert/);
+    const loginError = { message: 'Medlemsnummer eller pinkode er forkert eller også mangler du at oprette din profil på aabenbaneaften.dk.' };
+    await assert.rejects(appRequest({ action: 'login', memberNo: 'login-test', pin: '9999' }), loginError);
+    await assert.rejects(appRequest({ action: 'login', memberNo: 'missing', pin: '0123' }), loginError);
     assert.equal(jar.size, 0);
   } finally {
     globalThis.fetch = originalFetch;

@@ -1,12 +1,34 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {algorithmWeightDefaults, validateProposal, scoreMatch} from '../lib/optimizer.ts';
-import {reviewPlan, editableMatches, proposedMatches, swapPlayerSlots} from '../lib/plan-review.ts';
+import {withoutEmptyMatches, algorithmWeightDefaults, validateProposal, scoreMatch} from '../lib/optimizer.ts';
+import {setPlayerSlot, reviewPlan, editableMatches, proposedMatches, swapPlayerSlots} from '../lib/plan-review.ts';
 
 const p=(id, extra={})=>({id,memberNo:String(id),cr:4,gender:'M',age:40,availability:['18:00','18:30','19:00','20:00','20:30','21:00'],requestedHours:2,signupOrder:id,status:'active',...extra});
 const match={court:1,startTime:'18:00',team1:[1,2],team2:[3,4]};
 const input=(extra={})=>({players:[p(1),p(2),p(3),p(4),p(5),p(6),p(7),p(8)],weights:algorithmWeightDefaults,history:[],locked:[],
   slots:[{court:1,startTime:'18:00'},{court:5,startTime:'18:30'},{court:1,startTime:'19:00'},{court:2,startTime:'20:00'},{court:5,startTime:'20:30'},{court:1,startTime:'21:00'}],...extra});
+
+test('two singles can merge into a double, leaving a removable empty court',()=>{
+  const singles=[{court:5,startTime:'20:30',team1:[1],team2:[2]},{court:6,startTime:'20:30',team1:[3],team2:[4]}];
+  const data=input({players:[1,2,3,4].map(id=>p(id,{availability:['20:30']})),slots:singles.map(({court,startTime})=>({court,startTime}))});
+  let edit=editableMatches(singles);
+  edit=swapPlayerSlots(edit,{match:1,team:0,slot:0},{match:0,team:0,slot:1});
+  edit=swapPlayerSlots(edit,{match:1,team:1,slot:0},{match:0,team:1,slot:1});
+  const merged=proposedMatches(edit);
+  const review=reviewPlan(merged,data);
+  assert.equal(review.valid,true);assert.equal(review.scores[1],null);
+  assert.equal(validateProposal(withoutEmptyMatches(merged),data,{manualEdit:true}).length,1);
+  assert.equal(reviewPlan(merged,{...data,locked:[singles[1]]}).valid,false);
+  const removed=proposedMatches(setPlayerSlot(edit,{match:0,team:0,slot:1},null));
+  assert.equal(reviewPlan(removed,data).valid,false,'partially filled games remain invalid');
+  assert.equal(merged[0].team1.length,2,'removal does not mutate original draft');
+});
+
+test('unused member candidates do not block editing or add partner obligations',()=>{
+  const data=input({players:[p(1),p(2),p(3),p(4),p(99,{cr:null,manualCandidate:true})]});
+  assert.equal(reviewPlan([match],data).valid,true);
+  assert.throws(()=>validateProposal([{...match,team1:[1,99]}],data,{manualEdit:true}),/CR/);
+});
 
 test('manual review recalculates repeated opponents after a team change',()=>{
   const second={...match,startTime:'19:00',team1:[1,3],team2:[2,4]};

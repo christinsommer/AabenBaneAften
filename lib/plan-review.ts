@@ -1,7 +1,8 @@
-import {spouseTogether, minutes, scoreMatch, validateOptimizerInput, validateProposal, type OptimizerInput, type ProposedMatch} from './optimizer.ts';
+import {manualPlanInput, withoutEmptyMatches, spouseTogether, minutes, scoreMatch, validateOptimizerInput, validateProposal, type OptimizerInput, type ProposedMatch} from './optimizer.ts';
 
 export type PlanIssue = {matchIndex: number; playerIds: number[]; message: string};
 export function reviewPlan(plan: ProposedMatch[], input: OptimizerInput) {
+  input = manualPlanInput(plan, input);
   validateOptimizerInput(input);
   if (!Array.isArray(plan) || !plan.length || plan.length > input.slots.length || plan.some(m =>
     !m || !Array.isArray(m.team1) || !Array.isArray(m.team2) || m.team1.length > 2 || m.team2.length > 2 ||
@@ -18,6 +19,7 @@ export function reviewPlan(plan: ProposedMatch[], input: OptimizerInput) {
   const partnerMatches = new Map<string, number>();
   const scores = plan.map((m, index) => {
     const ids = [...m.team1, ...m.team2];
+    if (!ids.length) return null;
     const start = minutes(m.startTime);
     if (!input.slots.some(s => s.court === m.court && s.startTime === m.startTime)) add(index, ids, 'Banen er ikke reserveret på dette tidspunkt.');
     const complete = m.team1.length === m.team2.length && [1, 2].includes(m.team1.length);
@@ -67,6 +69,7 @@ export function reviewPlan(plan: ProposedMatch[], input: OptimizerInput) {
     }
   }
   for (let a = 0; a < plan.length; a++) for (let b = a + 1; b < plan.length; b++) {
+    if (!(plan[a].team1.length + plan[a].team2.length) || !(plan[b].team1.length + plan[b].team2.length)) continue;
     if (plan[a].court === plan[b].court && Math.abs(minutes(plan[a].startTime) - minutes(plan[b].startTime)) < 60)
       for (const index of [a, b]) add(index, [...plan[index].team1, ...plan[index].team2], 'To kampe overlapper på samme bane.');
   }
@@ -77,7 +80,11 @@ export function reviewPlan(plan: ProposedMatch[], input: OptimizerInput) {
   }
   // The save validator remains the final authority if a rule is added in the future.
   if (!issues.length) {
-    try { validateProposal(plan, input, {manualEdit: true}); }
+    try {
+      const occupied = withoutEmptyMatches(plan) as ProposedMatch[];
+      if (!occupied.length) throw new Error('Kampplanen skal indeholde mindst én kamp.');
+      validateProposal(occupied, input, {manualEdit: true});
+    }
     catch (error) { add(-1, [], error instanceof Error ? error.message : 'Kampplanen er ugyldig.'); }
   }
   return {valid: issues.length === 0, issues, exceptions, scores};
@@ -94,5 +101,13 @@ export function swapPlayerSlots(plan: EditableMatch[], from: PlayerSlot, to: Pla
   const source = copy[from.match]?.teams[from.team], target = copy[to.match]?.teams[to.team];
   if (!source || !target || ![0,1].includes(from.slot) || ![0,1].includes(to.slot)) throw new Error('Ugyldig spillerplacering.');
   [source[from.slot], target[to.slot]] = [target[to.slot], source[from.slot]];
+  return copy;
+}
+
+export function setPlayerSlot(plan: EditableMatch[], target: PlayerSlot, playerId: number | null): EditableMatch[] {
+  const copy = structuredClone(plan);
+  const team = copy[target.match]?.teams[target.team];
+  if (!team || ![0,1].includes(target.slot) || playerId !== null && (!Number.isSafeInteger(playerId) || playerId <= 0)) throw new Error('Ugyldig spillerplacering.');
+  team[target.slot] = playerId;
   return copy;
 }

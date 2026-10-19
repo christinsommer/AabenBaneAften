@@ -108,6 +108,7 @@ try {
 
     Stop-ProjectDevServer
     Stop-ProjectOptimizer
+    & (Join-Path $projectRoot 'scripts/clean-build.ps1') -ProjectRoot $projectRoot
     if ($CheckOnly) {
         Invoke-Checked 'node.exe' @('scripts/release.mjs', '--check')
         Write-Host 'Local checks passed. Production was not changed.' -ForegroundColor Green

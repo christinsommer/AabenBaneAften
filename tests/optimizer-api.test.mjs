@@ -7,7 +7,8 @@ import {spawn} from 'node:child_process';
 import {build} from 'esbuild';
 import {getPlatformProxy} from 'wrangler';
 import {migrationStatements} from '../scripts/migration-statements.mjs';
-import {algorithmWeightDefaults} from '../lib/optimizer.ts';
+import {proposalRows,algorithmWeightDefaults} from '../lib/optimizer.ts';
+import {unusedImportedCourts} from '../lib/unused-courts.ts';
 
 test('real CP-SAT service and D1: permissions, closed registration, history, validation, preview and atomic draft save', {timeout:180000}, async () => {
   const dll = resolve('optimizer-service/bin/Debug/net10.0/OptimizerService.dll');
@@ -188,6 +189,47 @@ test('real CP-SAT service and D1: permissions, closed registration, history, val
     assert.equal(localPlan.weights,undefined,'configured factors never leave server for local admin');
     assert.equal((await post('save_edit',{weights:{},matches:localPlan.matches,fingerprint:localPlan.fingerprint})).status,200,'local admin can edit and save using original server-side factors');
     globalThis.__optimizerTest.env.SUPERADMIN_PLAYER_ID='1';
+    // Manual edits can merge singles and select active members without signups.
+    await db.prepare("UPDATE events SET imported_kampplan='' WHERE id=2").run();
+    await db.prepare('UPDATE players SET christin_ranking=5').run();
+    await db.prepare("UPDATE signups SET availability='[\"20:30\"]',requested_hours=1 WHERE event_id=100").run();
+    await db.prepare('DELETE FROM signups WHERE event_id=100 AND player_id=4').run();
+    for(const id of [5,6,7,8])await db.prepare("INSERT INTO players(id,member_no,name,gender,self_level,pin_hash,christin_ranking) VALUES(?,?,?,'M','B','test',?)")
+      .bind(id,String(id),id===5?'Player 1 Test':`Player ${id} Test`,id===8?null:5).run();
+    await db.prepare("UPDATE profile_privacy SET closed_at='2026-10-01' WHERE player_id=6").run();
+    await db.prepare('UPDATE players SET suspended_event_id=100 WHERE id=7').run();
+    const singles=[{court:5,startTime:'20:30',team1:[1],team2:[2]},{court:6,startTime:'20:30',team1:[3],team2:[4]}];
+    const names=new Map([1,2,3,4].map(id=>[id,`Player ${id} Test`]));
+    const singleRows=proposalRows(singles,names).map((row,i)=>({...row,...(i===0?{_optimizerRevision:'manual-test'}:{})}));
+    await db.prepare('UPDATE events SET imported_kampplan=? WHERE id=100').bind(JSON.stringify(singleRows)).run();
+    await db.prepare('DELETE FROM matches WHERE event_id=100').run();
+    for(const m of singles)await db.prepare('INSERT INTO matches(event_id,court,start_time,player_ids) VALUES(100,?,?,?)').bind(m.court,m.startTime,JSON.stringify([...m.team1,...m.team2])).run();
+    const manualReply=await post('edit_context');
+    assert.equal(manualReply.status,200,await manualReply.clone().text());
+    const manualContext=await manualReply.json();
+    assert.deepEqual(manualContext.matches,singles,'stored IDs resolve duplicate names and unregistered players');
+    assert.ok(manualContext.players.some(p=>p.id===5 && p.registered===false && p.memberNo==='5'));
+    assert.ok(!manualContext.players.some(p=>[6,7].includes(p.id)),'closed and suspended members excluded');
+    const joined=[{...singles[0],team1:[5,3],team2:[2,4]},{...singles[1],team1:[],team2:[]}];
+    const manualPayload={matches:joined,fingerprint:manualContext.fingerprint};
+    const checkJoined=await post('review_edit',manualPayload);
+    assert.equal(checkJoined.status,200,await checkJoined.clone().text());
+    assert.equal((await checkJoined.json()).valid,true);
+    assert.equal((await post('save',manualPayload)).status,400,'solver saves cannot introduce unregistered members');
+    const saveJoined=await post('save_edit',manualPayload);
+    assert.equal(saveJoined.status,200,await saveJoined.clone().text());
+    const mergedRows=JSON.parse((await db.prepare('SELECT imported_kampplan FROM events WHERE id=100').first()).imported_kampplan);
+    assert.equal(mergedRows.length,1);
+    assert.equal((await db.prepare('SELECT count(*) AS n FROM matches WHERE event_id=100').first()).n,1);
+    assert.deepEqual(unusedImportedCourts(mergedRows,['20:30'],[{court:5,startTime:'20:30'},{court:6,startTime:'20:30'}]),[{time:'20:30',courts:[6]}]);
+    assert.equal((await db.prepare('SELECT count(*) AS n FROM signups WHERE event_id=100 AND player_id IN (4,5)').first()).n,0,'manual additions do not create signups');
+    const reopened=await (await post('edit_context')).json();
+    assert.deepEqual(reopened.matches,[joined[0]]);
+    await db.prepare("INSERT INTO forbidden_pairs(member_a,member_b) VALUES('3','5')").run();
+    assert.equal((await post('save_edit',{matches:[joined[0]],fingerprint:reopened.fingerprint})).status,409,'changed boundaries invalidate manual drafts');
+    const bannedContext=await (await post('edit_context')).json();
+    assert.equal(bannedContext.valid,false);
+    assert.equal((await post('save_edit',{matches:[joined[0]],fingerprint:bannedContext.fingerprint})).status,400,'forbidden pairs remain hard boundaries');
     imported[0].D='Unknown member';
     await db.prepare('UPDATE events SET imported_kampplan=? WHERE id=2').bind(JSON.stringify(imported)).run();
     assert.match((await (await post()).json()).error,/entydigt/);

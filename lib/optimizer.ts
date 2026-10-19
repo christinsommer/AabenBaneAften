@@ -6,6 +6,7 @@ export const algorithmWeightDefaults = {
 };
 export type AlgorithmWeights = typeof algorithmWeightDefaults;
 export type OptimizerPlayer = {
+  manualCandidate?: boolean;
   spouseNo?: number | null; spouseMode?: number | null;
   id: number; memberNo: string; cr: number; gender: 'M' | 'K'; age: number | null;
   availability: string[]; requestedHours: number; signupOrder: number; status: 'active' | 'waitlist';
@@ -130,6 +131,7 @@ export function validateOptimizerInput(input: OptimizerInput) {
 
 // Independent of CP-SAT: never trust a solver response or a client-submitted proposal.
 export function validateProposal(raw: unknown, input: OptimizerInput, options: {manualEdit?: boolean; partial?: boolean} = {}): ProposedMatch[] {
+  if (options.manualEdit) input = manualPlanInput(raw, input);
   validateOptimizerInput(input);
   if (!Array.isArray(raw) || raw.length > input.slots.length) throw new Error('Ugyldigt antal kampe.');
   const people = new Map(input.players.map(p => [p.id, p]));
@@ -189,6 +191,17 @@ export function validateProposal(raw: unknown, input: OptimizerInput, options: {
       throw new Error(`Medlem ${people.get(id)!.memberNo} har mere end 30 minutters pause mellem kampe.`);
   }
   return result.sort((a, b) => a.startTime.localeCompare(b.startTime) || a.court - b.court);
+}
+
+// Unregistered members are available to the editor, but only selected members
+// participate in validation (including partner rules and the 200-player limit).
+export function manualPlanInput(raw: unknown, input: OptimizerInput): OptimizerInput {
+  const ids = new Set(Array.isArray(raw) ? raw.flatMap(m => m && Array.isArray(m.team1) && Array.isArray(m.team2) ? [...m.team1,...m.team2] : []) : []);
+  return {...input, players:input.players.filter(p => !p.manualCandidate || ids.has(p.id))};
+}
+
+export function withoutEmptyMatches(raw: unknown): unknown {
+  return Array.isArray(raw) ? raw.filter(m => !(m && Array.isArray(m.team1) && Array.isArray(m.team2) && m.team1.length === 0 && m.team2.length === 0)) : raw;
 }
 
 export function proposalRows(matches: ProposedMatch[], names: Map<number, string>) {

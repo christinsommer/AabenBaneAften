@@ -7,7 +7,7 @@ import { getDb } from '../../../db';
 import { events, matches, feedback, substitutions } from '../../../db/schema';
 import { loadOptimizerInput, optimizerRevisionSql } from '../../../lib/optimizer-server';
 import {loadEventOptimizerWeights} from '../../../lib/optimizer-defaults-server';
-import { proposalRows, scoreMatch, validateProposal } from '../../../lib/optimizer';
+import { withoutEmptyMatches, proposalRows, scoreMatch, validateProposal } from '../../../lib/optimizer';
 import {normalizeKampplanRows} from '../../../lib/kampplan-rows';
 import {reviewPlan} from '../../../lib/plan-review';
 import {applyCourtOrder} from '../../../lib/court-order';
@@ -26,20 +26,20 @@ export async function POST(request: Request) {
       const [stored]=await getDb().select({plan:events.importedKampplan}).from(events).where(eq(events.id,body.eventId)).limit(1);
       try{requestedWeights=JSON.parse(stored?.plan||'[]')[0]?._optimizerWeights;}catch{/* Legacy plan: use current server defaults. */}
     }
-    const loaded = await loadOptimizerInput(body.eventId, requestedWeights);
+    const loaded = await loadOptimizerInput(body.eventId, requestedWeights, false, ['edit_context','review_edit','save_edit'].includes(body.action));
     const {input, names} = loaded;
     if (body.action === 'edit_context') {
       const normalize = (value: string) => value.normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('da-DK');
       const resolve = (name: string) => {
         const ids = [...names].filter(([, value]) => normalize(value) === normalize(name)).map(([id]) => id);
-        if (ids.length !== 1 || !input.players.some(p => p.id === ids[0])) throw new Error(`“${name}” kan ikke knyttes entydigt til en tilmeldt spiller.`);
+        if (ids.length !== 1 || !input.players.some(p => p.id === ids[0])) throw new Error(`“${name}” kan ikke knyttes entydigt til et aktivt medlem.`);
         return ids[0];
       };
       const rows = normalizeKampplanRows(JSON.parse(loaded.event.importedKampplan || '[]'));
       if (!rows.length) throw new Error('Der er ingen kampplan at redigere.');
-      const plan = rows.map(row => ({court: Number(row.C.replace(/\D/g, '')), startTime: row.A.replace('.', ':'),
+      const plan = JSON.parse(loaded.event.importedKampplan || '[]')[0]?._optimizerRevision ? loaded.storedPlan : rows.map(row => ({court: Number(row.C.replace(/\D/g, '')), startTime: row.A.replace('.', ':'),
         team1: [row.D, row.E].filter(Boolean).map(resolve), team2: [row.F, row.G].filter(Boolean).map(resolve)}));
-      return Response.json({matches: plan, players: input.players.map(p => ({id:p.id, name:names.get(p.id)})), locked: input.locked,
+      return Response.json({matches: plan, players: input.players.map(p => ({id:p.id, name:names.get(p.id),memberNo:p.memberNo,registered:!p.manualCandidate})), locked: input.locked,
         weights: isSuperAdmin(user)?input.weights:undefined, fingerprint: loaded.fingerprint, ...reviewPlan(plan, input)});
     }
     if (body.action === 'review_edit') {
@@ -48,7 +48,7 @@ export async function POST(request: Request) {
     }
     if (body.action === 'save' || body.action === 'save_edit') {
       if (body.fingerprint !== loaded.fingerprint) return Response.json({error: 'Tilmeldinger, medlemmer eller kampplan er ændret. Lav et nyt forslag.'}, {status: 409});
-      const plan = validateProposal(body.matches, input, {manualEdit: body.action === 'save_edit'});
+      const plan = validateProposal(body.action === 'save_edit' ? withoutEmptyMatches(body.matches) : body.matches, input, {manualEdit: body.action === 'save_edit'});
       const exceptions = body.action === 'save_edit' ? reviewPlan(plan, input).exceptions : [];
       if (!plan.length) return Response.json({error: 'Et tomt forslag kan ikke gemmes.'}, {status: 400});
       const rows = proposalRows(plan, names).map((row, index) => ({...row, _optimizerScore: scoreMatch(plan[index], input, plan).score,

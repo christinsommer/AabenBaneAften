@@ -332,21 +332,6 @@ function AuthScreen({ mode, setMode, act, busy, error, event, resetToken }: any)
           </div>
         </section>
         <section className="p-6 sm:p-12">
-          <div className="mb-7 flex rounded-xl bg-[#edf1f7] p-1">
-            <button
-              onClick={() => { setMode("login"); setNotice(""); }}
-              className={`flex-1 rounded-lg px-4 py-3 font-semibold ${mode === "login" ? "bg-white text-[#13375e] shadow-sm" : "text-slate-500"}`}
-            >
-              Log ind
-            </button>
-            <button
-              onClick={() => { setMode("register"); setNotice(""); }}
-              className={`flex-1 rounded-lg px-4 py-3 font-semibold ${mode === "register" ? "bg-white text-[#13375e] shadow-sm" : "text-slate-500"}`}
-            >
-              Opret profil
-            </button>
-          </div>
-
           {notice && (
             <p className="mb-4 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800">{notice}</p>
           )}
@@ -398,12 +383,16 @@ function AuthScreen({ mode, setMode, act, busy, error, event, resetToken }: any)
           {mode !== "forgot" && mode !== "reset" && (
             <div>
               <h2 className="text-2xl font-bold">
-                {mode === "login" ? "Velkommen tilbage" : "Opret spillerprofil"}
+                {mode === "login" ? "Log ind" : "Opret login"}
               </h2>
               <p className="mt-1 text-slate-500">
                 Brug dit HIK-medlemsnummer og en pinkode.
               </p>
-              <form onSubmit={submit} className="mt-7 grid gap-4">
+              <form onSubmit={submit} onKeyDown={e => {
+                if (mode !== 'login' || e.key !== 'Enter' || e.nativeEvent.isComposing || !(e.target instanceof HTMLInputElement)) return;
+                e.preventDefault();
+                if (!busy && !e.repeat) e.currentTarget.requestSubmit();
+              }} className="mt-7 grid gap-4">
                 <input type="hidden" name="action" value={mode} />
                 {mode === "register" && (
                   <>
@@ -449,9 +438,25 @@ function AuthScreen({ mode, setMode, act, busy, error, event, resetToken }: any)
                   disabled={busy}
                   className="mt-2 h-12 bg-[#13375e] text-base hover:bg-[#0d2947]"
                 >
-                  {busy ? "Vent…" : mode === "login" ? "Log ind" : "Opret profil"}
+                  {busy ? "Vent…" : mode === "login" ? "Log ind" : "Opret login"}
                 </Button>
               </form>
+              <p className="mt-6 text-center text-sm text-slate-600">
+                {mode === "login" ? "Har du ikke en profil? " : "Har du allerede en profil? "}
+                <button
+                  type="button"
+                  disabled={busy}
+                  className="font-bold text-[#13375e] underline underline-offset-2 disabled:opacity-50"
+                  onClick={() => { setMode(mode === "login" ? "register" : "login"); setNotice(""); }}
+                >
+                  {mode === "login" ? "Opret login" : "Log ind"}
+                </button>
+              </p>
+              {mode === "login" && (
+                <p className="mt-2 text-center text-sm leading-6 text-slate-600">
+                  Du skal oprette en særskilt profil til aabenbaneaften.dk, også selvom du allerede booker baner på hik.halbooking.dk.
+                </p>
+              )}
             </div>
           )}
         </section>
@@ -883,6 +888,13 @@ function ProfilePanel({ user, act, busy, adminMode=false, members=[] }: {
 }) {
   const [saved, setSaved] = useState(false);
   const [birthYear, setBirthYear] = useState(user.birthYear?.toString() ?? '');
+  const [savedBirthYear, setSavedBirthYear] = useState(user.birthYear);
+  // The prompt can save while this form is already mounted. Update only this
+  // field so a later profile save cannot overwrite the newly saved year.
+  if (savedBirthYear !== user.birthYear) {
+    setSavedBirthYear(user.birthYear);
+    setBirthYear(user.birthYear?.toString() ?? '');
+  }
   const [email, setEmail] = useState(user.email);
   const [currentPin, setCurrentPin] = useState('');
   const [spousePlayerId, setSpousePlayerId] = useState<number | null | undefined>(undefined);

@@ -5,11 +5,11 @@ import {Button} from '../components/ui/button';
 import {Card, CardContent, CardHeader, CardTitle} from '../components/ui/card';
 import type {PlanContact} from '../components/player-contact';
 import {ImportedPlanTable} from './imported-plan';
-import {editableMatches, proposedMatches, swapPlayerSlots, type EditableMatch, type PlayerSlot, type PlanIssue} from '../lib/plan-review';
+import {setPlayerSlot, editableMatches, proposedMatches, swapPlayerSlots, type EditableMatch, type PlayerSlot, type PlanIssue} from '../lib/plan-review';
 import type {AlgorithmWeights, ProposedMatch} from '../lib/optimizer';
 
 type Review = {valid: boolean; issues: PlanIssue[]; exceptions?: PlanIssue[]; scores: (number | null)[]};
-type EditContext = Review & {matches: ProposedMatch[]; players: {id: number; name: string}[];
+type EditContext = Review & {matches: ProposedMatch[]; players: {id: number; name: string; memberNo: string; registered: boolean}[];
   locked: ProposedMatch[]; weights: AlgorithmWeights; fingerprint: string};
 const slotKey = (s: PlayerSlot) => `${s.match}:${s.team}:${s.slot}`;
 
@@ -80,7 +80,11 @@ export function PlanEditor({event, rows, scores, weights, busy, isOpen, refresh,
     if (!draft || locked(slot.match)) return;
     if (ignoreClick.current) {ignoreClick.current = false; return;}
     if (selected) {if (slotKey(selected) === slotKey(slot)) setSelected(null); else swap(selected, slot);}
-    else if (draft[slot.match].teams[slot.team][slot.slot] !== null) setSelected(slot);
+    else setSelected(slot);
+  }
+  function replaceSelected(playerId: number | null) {
+    if (!draft || !selected || locked(selected.match)) return;
+    setDraft(setPlayerSlot(draft,selected,playerId)); setReview(null); setSelected(null); setOver(null); setError('');
   }
   function targetAt(x: number, y: number): PlayerSlot | null {
     const element = document.elementFromPoint(x,y)?.closest('[data-plan-slot]');
@@ -103,6 +107,17 @@ export function PlanEditor({event, rows, scores, weights, busy, isOpen, refresh,
     {isOpen && <p className="text-sm text-slate-600">Luk tilmeldingen før redigering.</p>}
     {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
     {editing && <p className="text-sm text-slate-600">Træk en spiller hen på en anden for at bytte plads, eller hen på et tomt felt for at flytte. Du kan også trykke på spilleren og derefter på destinationen, også med tastatur. Låste kampe kan ikke flyttes. Ændringer gemmes først efter kontrol.</p>}
+    {editing && <p className="text-sm text-slate-600">Vælg en plads for at fjerne spilleren eller indsætte et medlem fra medlemslisten. Medlemmer uden tilmelding kan også vælges; der oprettes ikke en tilmelding. Helt tomme kampe fjernes ved gemning, så banen bliver ledig.</p>}
+    {editing && selected && draft && <div className="flex flex-wrap items-end gap-2 rounded border p-3">
+      <label className="grid min-w-0 flex-1 gap-1 text-sm">Indsæt medlem på bane {draft[selected.match].court}, kl. {draft[selected.match].startTime}, hold {selected.team+1}, plads {selected.slot+1}
+        <select aria-label="Indsæt medlem fra medlemslisten" className="min-w-0 rounded border bg-white p-2" value="" disabled={working} onChange={e=>{if(e.target.value)replaceSelected(Number(e.target.value));}}>
+          <option value="">Vælg medlem</option>
+          {[...(context?.players??[])].sort((a,b)=>a.name.localeCompare(b.name,'da')).map(p=><option key={p.id} value={p.id}>{p.name} ({p.memberNo}){p.registered?'':' – ikke tilmeldt'}</option>)}
+        </select>
+      </label>
+      <Button type="button" variant="outline" disabled={working || draft[selected.match].teams[selected.team][selected.slot] === null} onClick={()=>replaceSelected(null)}>Fjern spiller fra kampen</Button>
+      <Button type="button" variant="outline" disabled={working} onClick={()=>setSelected(null)}>Fravælg plads</Button>
+    </div>}
     {!draft ? <ImportedPlanTable contacts={contacts} rows={rows} scores={scores} distanceNames={distanceNames} /> : <Card className="gap-2 border-[#dce9e1] py-3">
       <CardHeader className="px-3"><CardTitle>Kampplan</CardTitle></CardHeader>
       <CardContent className="px-2 sm:px-3">
@@ -110,7 +125,7 @@ export function PlanEditor({event, rows, scores, weights, busy, isOpen, refresh,
           <colgroup><col className="w-10"/><col className="w-12 sm:w-16"/><col/><col/><col className="w-12"/></colgroup>
           <thead><tr>{['Bane','Tid','Hold 1','Hold 2','Score'].map(label => <th key={label} className="px-1 py-2 text-xs">{label}</th>)}</tr></thead>
           <tbody>{draft.map((match, matchIndex) => <tr key={`${match.court}:${match.startTime}`} className="border-t bg-[#f5f5f3]">
-            <td className="px-1 align-middle font-semibold">#{match.court}{locked(matchIndex) && <span className="block text-[10px]">Låst</span>}</td>
+            <td className="px-1 align-middle font-semibold">#{match.court}{locked(matchIndex) && <span className="block text-[10px]">Låst</span>}{match.teams.every(team=>team.every(id=>id===null)) && <span className="block text-[10px]">Ledig efter gemning</span>}</td>
             <td className="px-1 text-xs">{match.startTime}</td>
             {match.teams.map((team, teamIndex) => <td key={teamIndex} className="px-1 py-2 align-top">
               {team.map((id, slotIndex) => {
