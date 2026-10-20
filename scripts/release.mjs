@@ -62,6 +62,7 @@ try {
   // --check remains entirely local.
   if (!check) {
     await run('scripts/setup-mfa.mjs', ['--check-remote']);
+    await run('scripts/check-email-config.mjs');
     await run('scripts/deploy-superadmin.mjs', ['check', ...adminArgs]);
   }
   await run('scripts/optimizer-service.mjs', ['test']);

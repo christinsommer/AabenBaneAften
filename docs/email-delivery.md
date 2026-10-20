@@ -1,5 +1,20 @@
 # PIN reset email investigation
 
+## Confirmed production configuration failure — 2026-10-20
+
+Read-only `wrangler secret list` for the production `aabenbaneaften` Worker confirmed that `RESEND_API_KEY` is absent. The local `.dev.vars` also has no Resend key. `sendEmail` therefore throws before contacting Resend, and the PIN reset endpoint returns the reported generic 502 message. This establishes a current configuration failure; historical request logs were not retrieved.
+
+Restore sending by creating or obtaining a Resend sending API key authorized for the verified `aabenbaneaften.dk` sender domain, then enter it at Wrangler's secret prompt:
+
+```powershell
+node node_modules/wrangler/bin/wrangler.js secret put RESEND_API_KEY --config wrangler.jsonc
+node scripts/check-email-config.mjs
+```
+
+Do not put the key in chat, source code or command arguments. After configuration, request a reset for an authorized test member and verify acceptance and inbox delivery. A secret-name check alone does not validate the key or domain.
+
+The release preflight now blocks production releases when this secret is absent. Missing runtime configuration now emits `email_configuration_missing` without recipient information or credentials.
+
 Reviewed 2026-10-16. Production Resend usage, domain settings and delivery logs have not been inspected. Code findings alone do not establish the cause of reported missing emails.
 
 ## Current flow

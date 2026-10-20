@@ -13,6 +13,7 @@ export async function sendEmail(message: EmailMessage) {
   const apiKey = (getCloudflareContext().env as CloudflareEnv & { RESEND_API_KEY?: string }).RESEND_API_KEY;
 
   if (!apiKey) {
+    console.error('email_configuration_missing', {binding: 'RESEND_API_KEY'});
     throw new Error("E-mail er ikke konfigureret i dette miljø (RESEND_API_KEY mangler).");
   }
 

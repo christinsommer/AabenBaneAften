@@ -216,7 +216,7 @@ export async function POST(request:Request){
       }catch(error){
         // A timeout or 5xx may happen after acceptance. Keep that link usable until expiry.
         if (!(error instanceof EmailDeliveryError && error.uncertain)) await db.delete(pinResetTokens).where(eq(pinResetTokens.tokenHash,tokenHash));
-        return Response.json({error:"E-mailen kunne ikke sendes. Prøv igen senere, eller kontakt administratoren."},{status:502});
+        return Response.json({error:"E-mailen kunne ikke sendes. Prøv igen senere eller kontakt aabenbaneaften@hik.dk"},{status:502});
       }
       return Response.json({ok:true});
     }else if(action==="reset_pin"){

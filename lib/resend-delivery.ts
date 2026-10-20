@@ -1,7 +1,7 @@
 export class EmailDeliveryError extends Error {
   uncertain: boolean;
   constructor(uncertain: boolean) {
-    super('E-mailen kunne ikke sendes. Prøv igen senere, eller kontakt administratoren.');
+    super('E-mailen kunne ikke sendes. Prøv igen senere eller kontakt aabenbaneaften@hik.dk');
     this.uncertain = uncertain;
   }
 }
