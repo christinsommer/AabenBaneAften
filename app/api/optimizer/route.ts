@@ -1,25 +1,60 @@
+import {isSuperAdmin} from '../../../lib/superadmin';
+import {sameOrigin} from '../../../lib/privacy-request';
 import { getCloudflareContext } from '@opennextjs/cloudflare';
 import { and, eq, sql } from 'drizzle-orm';
 import { currentPlayer } from '../../../lib/auth';
 import { getDb } from '../../../db';
 import { events, matches, feedback, substitutions } from '../../../db/schema';
 import { loadOptimizerInput, optimizerRevisionSql } from '../../../lib/optimizer-server';
-import { proposalRows, scoreMatch, validateProposal } from '../../../lib/optimizer';
+import {loadEventOptimizerWeights} from '../../../lib/optimizer-defaults-server';
+import { withoutEmptyMatches, proposalRows, scoreMatch, validateProposal } from '../../../lib/optimizer';
+import {normalizeKampplanRows} from '../../../lib/kampplan-rows';
+import {reviewPlan} from '../../../lib/plan-review';
+import {applyCourtOrder} from '../../../lib/court-order';
 
 export async function POST(request: Request) {
+  if(!sameOrigin(request))return Response.json({error:'Ugyldigt kald.'},{status:403});
   try {
-    const user = await currentPlayer();
+    const user = await currentPlayer({touch:true});
     if (!user) return Response.json({error: 'Log ind først.'}, {status: 401});
     if (user.role !== 'admin') return Response.json({error: 'Kun administratorer kan foreslå kampe.'}, {status: 403});
-    const body = await request.json() as {action: string; eventId: number; weights: unknown; fingerprint?: string; matches?: unknown} | null;
-    if (!body || !['solve', 'save'].includes(body.action) || !Number.isSafeInteger(body.eventId)) return Response.json({error: 'Ugyldig anmodning.'}, {status: 400});
-    const loaded = await loadOptimizerInput(body.eventId, body.weights);
+    const body = await request.json() as {action: string; eventId: number; weights?: unknown; fingerprint?: string; matches?: unknown} | null;
+    if (!body || !['solve', 'save', 'save_edit', 'edit_context', 'review_edit'].includes(body.action) || !Number.isSafeInteger(body.eventId)) return Response.json({error: 'Ugyldig anmodning.'}, {status: 400});
+    if(!isSuperAdmin(user)&&body.weights&&Object.keys(body.weights as object).length)return Response.json({error:'Kun SuperAdmin kan ændre optimeringsfaktorer.'},{status:403});
+    let requestedWeights=isSuperAdmin(user)&&body.weights&&Object.keys(body.weights as object).length?body.weights:await loadEventOptimizerWeights(body.eventId);
+    if(!isSuperAdmin(user)&&['edit_context','review_edit','save_edit'].includes(body.action)) {
+      const [stored]=await getDb().select({plan:events.importedKampplan}).from(events).where(eq(events.id,body.eventId)).limit(1);
+      try{requestedWeights=JSON.parse(stored?.plan||'[]')[0]?._optimizerWeights;}catch{/* Legacy plan: use current server defaults. */}
+    }
+    const loaded = await loadOptimizerInput(body.eventId, requestedWeights, false, ['edit_context','review_edit','save_edit'].includes(body.action));
     const {input, names} = loaded;
-    if (body.action === 'save') {
+    if (body.action === 'edit_context') {
+      const normalize = (value: string) => value.normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('da-DK');
+      const resolve = (name: string) => {
+        const ids = [...names].filter(([, value]) => normalize(value) === normalize(name)).map(([id]) => id);
+        if (ids.length !== 1 || !input.players.some(p => p.id === ids[0])) throw new Error(`“${name}” kan ikke knyttes entydigt til et aktivt medlem.`);
+        return ids[0];
+      };
+      const rows = normalizeKampplanRows(JSON.parse(loaded.event.importedKampplan || '[]'));
+      if (!rows.length) throw new Error('Der er ingen kampplan at redigere.');
+      const plan = JSON.parse(loaded.event.importedKampplan || '[]')[0]?._optimizerRevision ? loaded.storedPlan : rows.map(row => ({court: Number(row.C.replace(/\D/g, '')), startTime: row.A.replace('.', ':'),
+        team1: [row.D, row.E].filter(Boolean).map(resolve), team2: [row.F, row.G].filter(Boolean).map(resolve)}));
+      return Response.json({matches: plan, players: input.players.map(p => ({id:p.id, name:names.get(p.id),memberNo:p.memberNo,registered:!p.manualCandidate})), locked: input.locked,
+        weights: isSuperAdmin(user)?input.weights:undefined, fingerprint: loaded.fingerprint, ...reviewPlan(plan, input)});
+    }
+    if (body.action === 'review_edit') {
+      if (body.fingerprint !== loaded.fingerprint) return Response.json({error: 'Tilmeldinger, medlemmer eller kampplan er ændret. Annuller redigeringen og indlæs den nyeste plan.'}, {status:409});
+      return Response.json(reviewPlan(body.matches as Parameters<typeof reviewPlan>[0], input));
+    }
+    if (body.action === 'save' || body.action === 'save_edit') {
       if (body.fingerprint !== loaded.fingerprint) return Response.json({error: 'Tilmeldinger, medlemmer eller kampplan er ændret. Lav et nyt forslag.'}, {status: 409});
-      const plan = validateProposal(body.matches, input);
+      const plan = validateProposal(body.action === 'save_edit' ? withoutEmptyMatches(body.matches) : body.matches, input, {manualEdit: body.action === 'save_edit'});
+      const exceptions = body.action === 'save_edit' ? reviewPlan(plan, input).exceptions : [];
       if (!plan.length) return Response.json({error: 'Et tomt forslag kan ikke gemmes.'}, {status: 400});
-      const rows = proposalRows(plan, names).map((row, index) => index === 0 ? {...row, _optimizerRevision: crypto.randomUUID()} : row);
+      const rows = proposalRows(plan, names).map((row, index) => ({...row, _optimizerScore: scoreMatch(plan[index], input, plan).score,
+        _manualDistanceNames: exceptions.filter(issue => issue.matchIndex === index).flatMap(issue => issue.playerIds.map(id => names.get(id))),
+        ...(index === 0 ? {_optimizerRevision: crypto.randomUUID(), _optimizerWeights: input.weights} : {}),
+      }));
       const serialized = JSON.stringify(rows);
       const db = getDb();
       const savedGuard = sql`EXISTS (SELECT 1 FROM events WHERE id = ${body.eventId} AND imported_kampplan = ${serialized})`;
@@ -44,24 +79,33 @@ export async function POST(request: Request) {
     if (!env.OPTIMIZER_URL || !env.OPTIMIZER_API_KEY) return Response.json({error: 'Beregningstjenesten er ikke tilsluttet i dette miljø.'}, {status: 503});
     const url = new URL('/solve', env.OPTIMIZER_URL);
     if (url.protocol !== 'https:' && !['localhost', '127.0.0.1'].includes(url.hostname)) throw new Error('Beregningstjenesten skal bruge HTTPS.');
-    const response = await fetch(url, {
+    let response: Response;
+    try { response = await fetch(url, {
       method: 'POST', headers: {'Content-Type': 'application/json', Authorization: `Bearer ${env.OPTIMIZER_API_KEY}`},
-      body: JSON.stringify(input), signal: AbortSignal.any([request.signal, AbortSignal.timeout(160_000)]),
-    });
+      body: JSON.stringify(input), signal: AbortSignal.any([request.signal, AbortSignal.timeout(960_000)]),
+    }); } catch (error) {
+      const timeout = error instanceof Error && ['TimeoutError', 'AbortError'].includes(error.name);
+      return Response.json({error: timeout
+        ? 'Beregningstjenesten svarede ikke inden tidsgrænsen. Prøv igen.'
+        : ['localhost', '127.0.0.1'].includes(url.hostname)
+          ? 'Den lokale beregningstjeneste kan ikke kontaktes. Start den med npm run optimizer:start, og prøv igen.'
+          : 'Beregningstjenesten kan ikke kontaktes. Prøv igen om lidt.'}, {status: timeout ? 504 : 503});
+    }
     if (!response.ok) {
       const failure = await response.json().catch(() => ({})) as {error?: string};
       return Response.json({error: failure.error || 'Beregningstjenesten kunne ikke lave forslaget.'}, {status: 502});
     }
     const result = await response.json() as {matches: unknown; status: string; score: number; stages: unknown[]};
     if (!['OPTIMAL', 'FEASIBLE'].includes(result.status)) throw new Error('Beregningstjenesten returnerede ingen gyldig løsning.');
-    const plan = validateProposal(result.matches, input);
-    const scores = plan.map(m => scoreMatch(m, input));
+    const validated = validateProposal(result.matches, input);
+    const plan = validateProposal(applyCourtOrder(validated, input, loaded.courtOrder), input);
+    const scores = plan.map(m => scoreMatch(m, input, plan));
     const score = scores.reduce((sum, s) => sum + s.score, 0);
     if (result.score !== score) throw new Error('Kontrol af kampscore fejlede. Forslaget blev afvist.');
     const reloaded = await loadOptimizerInput(body.eventId, input.weights);
     if (reloaded.fingerprint !== loaded.fingerprint) return Response.json({error: 'Data blev ændret under beregningen. Lav et nyt forslag.'}, {status: 409});
     return Response.json({matches: plan, rows: proposalRows(plan, names), scores, score, status: result.status,
-      stages: result.stages, fingerprint: loaded.fingerprint, weights: input.weights, historyDates: input.history.map(r => r.date),
+      stages: isSuperAdmin(user)?result.stages:undefined, fingerprint: loaded.fingerprint, weights: isSuperAdmin(user)?input.weights:undefined, historyDates: input.history.map(r => r.date),
       allocation: input.players.map(p => ({id: p.id, name: names.get(p.id), memberNo: p.memberNo, status: p.status, signupOrder: p.signupOrder,
         requested: p.requestedHours, assigned: plan.filter(m => [...m.team1, ...m.team2].includes(p.id)).length})),
     });

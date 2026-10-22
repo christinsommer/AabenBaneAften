@@ -6,7 +6,11 @@ import { join } from "node:path";
 import { pbkdf2Sync } from "node:crypto";
 import { getPlatformProxy, unstable_dev } from "wrangler";
 import { hashToken } from "../lib/credentials.ts";
+import { PRIVACY_VERSION } from '../lib/privacy-text.ts';
 import { migrationStatements } from '../scripts/migration-statements.mjs';
+import {enrollMfa,testMfaKey} from './mfa-helper.mjs';
+
+const responseCookie=(response,name='aaben_bane_session')=>response.headers.getSetCookie().find(value=>value.startsWith(name+'='))?.split(';')[0];
 
 test("Cloudflare Worker renders and authenticates against isolated D1", { timeout: 180000 }, async () => {
   const directory = mkdtempSync(join(tmpdir(), "aabenbane-worker-"));
@@ -38,15 +42,27 @@ test("Cloudflare Worker renders and authenticates against isolated D1", { timeou
 
     worker = await unstable_dev(".open-next/worker.js", {
       config: "wrangler.jsonc", local: true, port: 0, persist: true, persistTo: directory,
-      vars: { RESEND_API_KEY: "" },
+      vars: { RESEND_API_KEY: "", SUPERADMIN_PLAYER_ID: "1", MFA_ENCRYPTION_KEY:testMfaKey },
       logLevel: "error", experimental: { disableExperimentalWarning: true, watch: false },
     });
     const page = await worker.fetch("/");
     assert.equal(page.status, 200);
+    assert.equal(page.headers.get('x-content-type-options'),'nosniff');
+    assert.equal(page.headers.get('x-frame-options'),'DENY');
+    const policy=page.headers.get('content-security-policy');
+    assert.match(policy,/frame-ancestors 'none'/);
+    const nonce=policy.match(/'nonce-([^']+)'/)?.[1];
+    assert.ok(nonce,'HTML receives a nonce policy');
+    const nextPage=await worker.fetch('/');
+    assert.notEqual(nextPage.headers.get('content-security-policy').match(/'nonce-([^']+)'/)?.[1],nonce);
+    await nextPage.text();
     const health = await worker.fetch('/api/health');
     assert.equal(health.status, 200);
     assert.deepEqual(await health.json(), { ok: true, release: JSON.parse(readFileSync('lib/release-info.json', 'utf8')).id });
     const html=await page.text();
+    const scripts=[...html.matchAll(/<script\b([^>]*)>/g)];
+    assert.ok(scripts.length>0);
+    for(const [,attributes] of scripts)assert.ok(attributes.includes(`nonce="${nonce}"`),'framework scripts carry the response nonce');
     assert.match(html, /name="codex-preview" content="development"/);
     assert.match(html,/rel="manifest"/);
     assert.match(html,/apple-touch-icon/);
@@ -55,26 +71,37 @@ test("Cloudflare Worker renders and authenticates against isolated D1", { timeou
     assert.equal(manifest.start_url,'/');
     for(const icon of manifest.icons)assert.equal((await worker.fetch(icon.src)).status,200);
     const anonymous = await worker.fetch("/api/app");
+    assert.equal(anonymous.headers.get('x-content-type-options'),'nosniff');
+    assert.equal(anonymous.headers.get('x-frame-options'),'DENY');
     assert.equal(anonymous.status, 200, await anonymous.clone().text());
     assert.equal((await anonymous.json()).authenticated, false);
     const post = (body, cookie) => worker.fetch("/api/app", {
       method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) },
       body: JSON.stringify(body),
     });
+    for(const path of ['/api/app','/api/optimizer','/api/plan-email','/api/privacy','/api/admin/privacy','/api/newsletter']) {
+      for(const headers of [{origin:'https://evil.test'},{'sec-fetch-site':'same-site'},{'content-type':'text/plain'},{'content-type':'application/jsonp'}]) {
+        const denied=await worker.fetch(path,{method:'POST',headers:{'content-type':'application/json',...headers},body:'{}'});
+        assert.equal(denied.status,403,`${path} rejects cross-origin/non-JSON calls before processing`);
+      }
+    }
     const badLogin = await post({ action: "login", memberNo: "13993", pin: "111111" });
     assert.equal(badLogin.status, 401);
-    const login = await post({ action: "login", memberNo: "13993", pin: "987654" });
+    const firstFactor = await post({ action: "login", memberNo: "13993", pin: "987654" });
+    const login = await enrollMfa(body=>post(body,responseCookie(firstFactor,'aaben_bane_mfa')),await firstFactor.json());
+    const recoveryCodes=(await login.clone().json()).recoveryCodes;
     assert.equal(login.status, 200);
-    let cookie = login.headers.get("set-cookie")?.split(";")[0];
+    let cookie = responseCookie(login);
     assert.ok(cookie);
     const resetLink = await post({ action: "request_pin_reset", memberNo: "13993" });
     assert.equal(resetLink.status, 502); // Mail is deliberately disabled in this isolated Worker.
     const pinReset = await post({ action: "reset_pin", token: resetToken, pin: "4321", confirmPin: "4321" });
     assert.equal(pinReset.status, 200);
-    const loginWithNewPin = await post({ action: "login", memberNo: "13993", pin: "4321" });
+    const newFirstFactor = await post({ action: "login", memberNo: "13993", pin: "4321" });
+    const loginWithNewPin = await post({action:'mfa_verify',code:recoveryCodes[0]},responseCookie(newFirstFactor,'aaben_bane_mfa'));
     assert.equal(loginWithNewPin.status, 200);
     assert.equal((await (await worker.fetch('/api/app', { headers: { cookie } })).json()).authenticated, false);
-    cookie = loginWithNewPin.headers.get("set-cookie")?.split(";")[0];
+    cookie = responseCookie(loginWithNewPin);
     assert.ok(cookie);
     const state = await login.json();
     assert.equal(state.calendarDates.length,34);
@@ -84,7 +111,7 @@ test("Cloudflare Worker renders and authenticates against isolated D1", { timeou
     assert.equal((await post({action:'remove_date',eventId:state.event.id},cookie)).status,409);
     assert.equal(state.user.role, "admin");
     assert.equal(state.user.christinRanking,null);
-    assert.equal((await post({action:'delete_member',playerId:state.user.id,confirmMemberNo:'13993'},cookie)).status,400);
+    assert.equal((await post({action:'delete_member',playerId:state.user.id,confirmMemberNo:'13993'},cookie)).status,409);
     assert.equal(state.user.memberNo, "13993");
     assert.equal(state.user.pinHash, undefined);
     assert.equal(state.players.length, 1);
@@ -97,7 +124,7 @@ test("Cloudflare Worker renders and authenticates against isolated D1", { timeou
     assert.equal(state.isOpen,true);
     const current = await worker.fetch("/api/app", { headers: { cookie } });
     assert.equal((await current.json()).user.role, "admin");
-    const registration = await post({ action: "register", memberNo: "test-player", pin: "123456", firstName: "D1", lastName: "Player", email: "player@example.com", gender: "M", level: "B", christinRanking:9, role:"admin" });
+    const registration = await post({ action: "register", privacyRead:true,privacyVersion:PRIVACY_VERSION, memberNo: "test-player", pin: "123456", firstName: "D1", lastName: "Player", email: "player@example.com", gender: "M", level: "B", christinRanking:9, role:"admin" });
     assert.equal(registration.status, 200);
     const registered=await registration.json();
     assert.equal(registered.user.role,"player");
@@ -107,13 +134,14 @@ test("Cloudflare Worker renders and authenticates against isolated D1", { timeou
     assert.equal(registered.signup.nPossible,0);
     assert.equal(registered.signup.nHours,0);
     assert.equal('christinRanking' in registered.user,false);
-    const playerCookie = registration.headers.get("set-cookie")?.split(";")[0];
+    let playerCookie = responseCookie(registration);
     assert.equal((await post({action:'delete_member',playerId:state.user.id,confirmMemberNo:'13993'},playerCookie)).status,403);
     assert.equal((await post({action:'add_date',date:'2099-06-01'},playerCookie)).status,403);
     assert.equal((await post({action:'remove_date',eventId:state.event.id},playerCookie)).status,403);
     const forbidden = await post({ action: "set_admin", playerId: 1, makeAdmin: true }, playerCookie);
     assert.equal(forbidden.status, 403);
-    const profile=await post({action:"update_profile",firstName:"Updated",lastName:"Player",email:"updated@example.com",level:"AB",memberNo:"13993",playerId:1,role:"admin",christinRanking:9},playerCookie);
+    const profile=await post({action:"update_profile",currentPin:'123456',firstName:"Updated",lastName:"Player",email:"updated@example.com",level:"AB",memberNo:"13993",playerId:1,role:"admin",christinRanking:9},playerCookie);
+    playerCookie=responseCookie(profile);
     assert.equal(profile.status,200);
     const updated=await profile.json();
     assert.equal(updated.user.name,"Updated Player");
@@ -137,7 +165,7 @@ test("Cloudflare Worker renders and authenticates against isolated D1", { timeou
     assert.equal(JSON.stringify(memberState).includes('christinRanking'),false);
     const adminState=await (await worker.fetch('/api/app',{headers:{cookie}})).json();
     assert.equal(adminState.players.find(p=>p.id===updated.user.id).christinRanking,8);
-    const editMember={action:'update_member',playerId:updated.user.id,memberNo:'must-not-change',firstName:'Admin Edited',lastName:'Member',email:'edited@example.com',gender:'M',phone:'12345678',level:'BC',christinRanking:7,role:'admin',pin:'999999'};
+    const editMember={action:'update_member',currentPin:'4321',playerId:updated.user.id,memberNo:'must-not-change',firstName:'Admin Edited',lastName:'Member',email:'edited@example.com',gender:'M',phone:'12345678',level:'BC',christinRanking:7,role:'admin',pin:'999999'};
     assert.equal((await post(editMember,playerCookie)).status,403);
     assert.equal((await post({...editMember,christinRanking:10},cookie)).status,400);
     assert.equal((await post({...editMember,level:'b niveau'},cookie)).status,400);
@@ -151,12 +179,16 @@ test("Cloudflare Worker renders and authenticates against isolated D1", { timeou
     assert.equal(editedPlayer.selfLevel,'BC');
     assert.equal(editedPlayer.christinRanking,7);
     assert.equal(editedPlayer.role,'player');
-    assert.equal((await post({action:'login',memberNo:'test-player',pin:'123456'})).status,200);
+    const playerLogin=await post({action:'login',memberNo:'test-player',pin:'123456'});
+    assert.equal(playerLogin.status,200);
+    playerCookie=responseCookie(playerLogin);
     assert.equal((await post({action:"set_cr",playerId:updated.user.id,christinRanking:null},cookie)).status,200);
     assert.equal((await post({action:"set_registration",mode:"closed"},playerCookie)).status,403);
     assert.equal((await post({action:"end_test"},playerCookie)).status,403);
-    const signupBody={action:"signup",availability:["18:00"],requestedHours:1};
-    const example={action:'signup',nHours:2,nPossible:3,szPossible:['18:30','19:30','20:30']};
+    assert.equal((await post({action:'signup',availability:['18:00'],requestedHours:1},playerCookie)).status,400);
+    assert.equal((await post({action:'signup',availability:['18:00','18:30'],requestedHours:2},playerCookie)).status,400);
+    const signupBody={action:"signup",availability:["18:00","19:00"],requestedHours:1};
+    const example={action:'signup',nHours:2,nPossible:4,szPossible:['18:00','18:30','19:00','19:30']};
     const saved=await (await post(example,playerCookie)).json();
     assert.equal(saved.signup.nHours,2);
     assert.ok(Number.isInteger(saved.signup.signupOrder) && saved.signup.signupOrder > 0);
@@ -169,24 +201,33 @@ test("Cloudflare Worker renders and authenticates against isolated D1", { timeou
     assert.equal(changedSignup.status,'waitlist');
     assert.equal(changedSignup.signupOrder,saved.signup.signupOrder);
     assert.equal(changedSignup.nHours,saved.signup.nHours);
+    assert.deepEqual((await (await worker.fetch('/api/app',{headers:{cookie:playerCookie}})).json()).registeredMembers,[]);
     assert.equal((await post({action:'set_signup_status',signupId:saved.signup.id,status:'active'},cookie)).status,200);
-    const editedSignup = await (await post({...example,nHours:3,signupOrder:-100},playerCookie)).json();
+    const editedSignup = await (await post({...example,nHours:3,nPossible:6,szPossible:['18:00','18:30','19:00','19:30','20:00','20:30'],signupOrder:-100},playerCookie)).json();
     assert.equal(editedSignup.signup.signupOrder,saved.signup.signupOrder);
     await post(example,playerCookie);
-    assert.equal(saved.signup.nPossible,3);
+    assert.equal(saved.signup.nPossible,4);
     assert.deepEqual(saved.signup.szPossible,example.szPossible);
     const roster=await (await worker.fetch('/api/app',{headers:{cookie}})).json();
     assert.equal(roster.signups.length,2);
     assert.equal(roster.signups.find(row=>row.player.memberNo==='13993').signup.nHours,0);
     assert.equal(roster.signups.find(row=>row.player.memberNo==='test-player').signup.nHours,2);
     assert.equal(roster.signups[0].signup.signupOrder,saved.signup.signupOrder);
+    const publicRoster = await (await worker.fetch('/api/app',{headers:{cookie:playerCookie}})).json();
+    assert.deepEqual(publicRoster.registeredMembers,[{id:updated.user.id,name:'Admin Edited Member'}]);
+    assert.deepEqual(roster.registeredMembers,publicRoster.registeredMembers);
+    assert.deepEqual(publicRoster.players,[]);
     const cancelled=await (await post({action:'cancel_signup'},playerCookie)).json();
     assert.equal(cancelled.signup.nHours,0);
+    assert.equal(cancelled.signup.status,'cancelled');
+    assert.deepEqual(cancelled.registeredMembers,[]);
+    assert.deepEqual(cancelled.signup.szPossible,[]);
+    assert.equal(cancelled.signup.availability,'[]');
     const cancelledRoster=await (await worker.fetch('/api/app',{headers:{cookie}})).json();
     assert.equal(cancelledRoster.signups.find(row=>row.player.memberNo==='test-player').signup.nHours,0);
     assert.equal((await post({...example,nPossible:2},playerCookie)).status,400);
     assert.equal((await post({...example,nHours:4},playerCookie)).status,400);
-    const rejoined = await (await post({...example,nHours:3},playerCookie)).json();
+    const rejoined = await (await post({...example,nHours:3,nPossible:6,szPossible:['18:00','18:30','19:00','19:30','20:00','20:30']},playerCookie)).json();
     assert.equal(rejoined.signup.nHours,3);
     assert.ok(rejoined.signup.signupOrder > saved.signup.signupOrder);
     assert.equal((await (await post({...example,nHours:0,nPossible:0,szPossible:[]},playerCookie)).json()).signup.nHours,0);
@@ -199,6 +240,7 @@ test("Cloudflare Worker renders and authenticates against isolated D1", { timeou
     const optedOut=await (await worker.fetch('/api/app',{headers:{cookie:playerCookie}})).json();
     assert.equal(optedOut.signup.status,'active');
     assert.equal(optedOut.signup.nHours,0);
+    assert.deepEqual(optedOut.registeredMembers,[]);
     assert.deepEqual(optedOut.matches,[]);
     assert.equal((await post(signupBody,playerCookie)).status,200);
     assert.equal((await post({action:"set_registration",mode:"closed"},cookie)).status,200);
@@ -225,7 +267,9 @@ test("Cloudflare Worker renders and authenticates against isolated D1", { timeou
     assert.deepEqual(empty.calendarDates,[]);
     const emptyMember=await (await worker.fetch('/api/app',{headers:{cookie:playerCookie}})).json();
     assert.equal('christinRanking' in emptyMember.user,false);
-    assert.equal((await post({action:'update_profile',firstName:'Updated',lastName:'Player',email:'updated@example.com',level:'AB'},playerCookie)).status,200);
+    const emptyProfile=await post({action:'update_profile',currentPin:'123456',firstName:'Updated',lastName:'Player',email:'updated@example.com',level:'AB'},playerCookie);
+    assert.equal(emptyProfile.status,200);
+    playerCookie=responseCookie(emptyProfile);
     const restored=await (await post({action:'add_date',date:'2026-09-11'},cookie)).json();
     assert.equal(restored.calendarDates[0].id,state.event.id);
     const future=await (await post({action:'add_date',date:'2099-05-04'},cookie)).json();
@@ -240,21 +284,32 @@ test("Cloudflare Worker renders and authenticates against isolated D1", { timeou
     assert.deepEqual(privateDraft.importedMatches,[]);
     assert.equal(privateDraft.event.importedKampplan,'');
     assert.equal((await post({action:'remove_kampplan'},playerCookie)).status,403);
+    assert.equal((await post({action:'set_optimizer_defaults',weights:{FactorSingle:22}},playerCookie)).status,403);
+    assert.equal((await post({action:'set_optimizer_defaults',weights:{FactorSingle:1.5}},cookie)).status,400);
+    const savedDefaults = await post({action:'set_optimizer_defaults',weights:{FactorSingle:22,FactorDoubleSameSex:8,Factor3OfAKind:44}},cookie);
+    assert.equal(savedDefaults.status,200);
+    assert.equal((await savedDefaults.json()).optimizerDefaults.FactorSingle,22);
+    const reloadedDefaults = await (await worker.fetch('/api/app',{headers:{cookie}})).json();
+    assert.equal(reloadedDefaults.optimizerDefaults.FactorDoubleSameSex,8);
+    assert.equal(reloadedDefaults.optimizerDefaults.Factor3OfAKind,44);
+    assert.equal((await post({action:'remove_kampplan',eventId:-1},cookie)).status,409);
+
     assert.equal((await post({action:'publish'},cookie)).status,200);
     assert.deepEqual((await (await worker.fetch('/api/app')).json()).importedMatches,imported);
     const clearedResponse = await post({action:'remove_kampplan'},cookie);
     assert.equal(clearedResponse.status,200);
     const cleared = await clearedResponse.json();
+    assert.equal(cleared.optimizerWeights.FactorSingle,22);
     assert.deepEqual(cleared.importedMatches,[]);
     assert.deepEqual(cleared.adminMatches,[]);
     assert.equal(cleared.event.status,'draft');
     assert.equal(cleared.event.publishedAt,null);
     assert.ok(cleared.signupHistory.length > 0);
     for(const level of ['B+','A-','ukendt','a ukendt','']) {
-      assert.equal((await post({action:'register',memberNo:'invalid-ranking-'+level,pin:'123456',firstName:'Ranking',lastName:'Test',email:'ranking@example.com',gender:'K',level})).status,400);
+      assert.equal((await post({action:'register',privacyRead:true,privacyVersion:PRIVACY_VERSION,memberNo:'invalid-ranking-'+level,pin:'123456',firstName:'Ranking',lastName:'Test',email:'ranking@example.com',gender:'K',level})).status,400);
     }
     for(const [level,cr] of Object.entries({A:2,AB:4,B:5,BC:7,C:8,Begynder:9})) {
-      const newMember=await post({action:'register',memberNo:'ranking-'+level,pin:'123456',firstName:'Ranking',lastName:'Test',email:'ranking@example.com',gender:'K',level,christinRanking:1});
+      const newMember=await post({action:'register',privacyRead:true,privacyVersion:PRIVACY_VERSION,memberNo:'ranking-'+level,pin:'123456',firstName:'Ranking',lastName:'Test',email:'ranking@example.com',gender:'K',level,christinRanking:1});
       assert.equal(newMember.status,200);
       const newState=await newMember.json();
       assert.equal(newState.user.selfLevel,level);
@@ -262,29 +317,18 @@ test("Cloudflare Worker renders and authenticates against isolated D1", { timeou
       const adminRankingState=await (await worker.fetch('/api/app',{headers:{cookie}})).json();
       assert.equal(adminRankingState.players.find(p=>p.id===newState.user.id).christinRanking,cr);
     }
-    assert.equal((await post({action:'delete_member',playerId:updated.user.id,confirmMemberNo:'wrong'},cookie)).status,400);
-    const deletion=await post({action:'delete_member',playerId:updated.user.id,confirmMemberNo:'test-player'},cookie);
-    assert.equal(deletion.status,200);
-    const afterDelete=await deletion.json();
-    assert.equal(afterDelete.players.some(p=>p.id===updated.user.id),false);
-    assert.equal(afterDelete.signupHistory.some(row=>row.player.id===updated.user.id),false);
-    assert.equal((await (await worker.fetch('/api/app',{headers:{cookie:playerCookie}})).json()).authenticated,false);
-    assert.equal((await post({action:'login',memberNo:'test-player',pin:'123456'})).status,401);
-    assert.equal((await post({action:'delete_member',playerId:updated.user.id,confirmMemberNo:'test-player'},cookie)).status,404);
+    // The legacy destructive route is closed; historical relations and login are preserved.
+    assert.equal((await post({action:'delete_member',playerId:updated.user.id,confirmMemberNo:'test-player'},cookie)).status,409);
+    assert.equal((await (await worker.fetch('/api/app',{headers:{cookie:playerCookie}})).json()).authenticated,true);
     const logout = await post({ action: "logout" }, cookie);
     assert.equal(logout.status, 200);
     const loggedOut = await worker.fetch("/api/app", { headers: { cookie } });
     assert.equal((await loggedOut.json()).authenticated, false);
     await worker.stop(); worker=undefined;
     proxy=await getPlatformProxy({configPath:'wrangler.jsonc',persist:{path:join(directory,'v3')}});
-    assert.equal((await proxy.env.DB.prepare('SELECT count(*) AS n FROM sessions WHERE player_id=?').bind(updated.user.id).first()).n,0);
-    assert.equal((await proxy.env.DB.prepare('SELECT count(*) AS n FROM signups WHERE player_id=?').bind(updated.user.id).first()).n,0);
-    assert.equal((await proxy.env.DB.prepare('SELECT count(*) AS n FROM match_requests').first()).n,0);
-    assert.equal((await proxy.env.DB.prepare('SELECT count(*) AS n FROM feedback').first()).n,0);
+    assert.ok((await proxy.env.DB.prepare('SELECT count(*) AS n FROM sessions WHERE player_id=?').bind(updated.user.id).first()).n>0);
+    assert.ok((await proxy.env.DB.prepare('SELECT count(*) AS n FROM signups WHERE player_id=?').bind(updated.user.id).first()).n>0);
     assert.equal((await proxy.env.DB.prepare('SELECT count(*) AS n FROM matches').first()).n,1);
-    const replacement=await proxy.env.DB.prepare('SELECT replacement_player_id,status FROM substitutions LIMIT 1').first();
-    assert.equal(replacement.replacement_player_id,null);
-    assert.equal(replacement.status,'unresolved');
   } finally {
     await worker?.stop();
     await proxy?.dispose();

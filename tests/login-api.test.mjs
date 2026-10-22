@@ -8,6 +8,7 @@ import { getPlatformProxy } from 'wrangler';
 import { migrationStatements } from '../scripts/migration-statements.mjs';
 import { hashPin } from '../lib/credentials.ts';
 import { appRequest, requireLoginSession } from '../lib/app-request.ts';
+import {enrollMfa,testMfaKey} from './mfa-helper.mjs';
 
 test('client helper logs in through real API and D1 with leading-zero PIN and session round trip', { timeout: 120000 }, async () => {
   const directory = mkdtempSync(join(process.cwd(), '.login-test-'));
@@ -24,7 +25,7 @@ test('client helper logs in through real API and D1 with leading-zero PIN and se
     const jar = new Map();
     let cookieOptions;
     globalThis.__loginTest = {
-      env: { DB: db },
+      env: { DB: db, MFA_ENCRYPTION_KEY:testMfaKey },
       cookies: {
         get: name => jar.has(name) ? { value: jar.get(name) } : undefined,
         set: (name, value, options) => { jar.set(name, value); cookieOptions = options; },
@@ -51,11 +52,17 @@ test('client helper logs in through real API and D1 with leading-zero PIN and se
     const state = await appRequest();
     requireLoginSession(state);
     assert.equal(state.user.memberNo, 'login-test');
+    const birthYearState = await appRequest({ action: 'update_birth_year', birthYear: '1986' });
+    assert.equal(birthYearState.user.birthYear, 1986, 'prompt response immediately includes the saved year');
+    assert.equal((await appRequest()).user.birthYear, 1986, 'saved year survives a reload');
     assert.equal('crReviewedAt' in state.user, false);
     await assert.rejects(appRequest({action:'approve_cr',playerId:state.user.id,christinRanking:5}), /Kun administratorer/);
     const schedule = {action:'set_registration_schedule',eventId:state.event.id,opensDate:'2026-09-16',opensHour:'09',closesDate:'2026-09-17',closesHour:'18'};
     await assert.rejects(appRequest(schedule), /Kun administratorer/);
     await db.prepare("UPDATE players SET role='admin' WHERE member_no='login-test'").run();
+    assert.equal((await appRequest()).authenticated,false,'promotion revokes the member session');
+    const setup=await appRequest({action:'login',memberNo:'login-test',pin:'0123'});
+    await enrollMfa(body=>POST(new Request('https://example.test/api/app',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)})),setup);
     const pending = await appRequest();
     assert.equal(pending.players.find(p=>p.id===state.user.id).crReviewedAt, null);
     for (const cr of [null,0,10,1.5,'5']) {
@@ -102,8 +109,9 @@ test('client helper logs in through real API and D1 with leading-zero PIN and se
     jar.clear();
     assert.throws(() => requireLoginSession({ authenticated: false }), /Login kunne ikke bevares/);
     assert.equal((await appRequest()).authenticated, false);
-    await assert.rejects(appRequest({ action: 'login', memberNo: 'login-test', pin: '9999' }), /Medlemsnummer eller kode er forkert/);
-    await assert.rejects(appRequest({ action: 'login', memberNo: 'missing', pin: '0123' }), /Medlemsnummer eller kode er forkert/);
+    const loginError = { message: 'Medlemsnummer eller pinkode er forkert eller også mangler du at oprette din profil på aabenbaneaften.dk.' };
+    await assert.rejects(appRequest({ action: 'login', memberNo: 'login-test', pin: '9999' }), loginError);
+    await assert.rejects(appRequest({ action: 'login', memberNo: 'missing', pin: '0123' }), loginError);
     assert.equal(jar.size, 0);
   } finally {
     globalThis.fetch = originalFetch;

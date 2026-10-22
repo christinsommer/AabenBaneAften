@@ -19,3 +19,6 @@ frigøres; den skifter ikke automatisk til port 3001.
 
 Node.js skal være mindst 22.13. Installer afhængigheder med `npm ci` ved første opsætning.
 Lokale data ligger i `.wrangler/local-dev/v3`. Den oprindelige `.data/app.db` bevares.
+
+## Privatliv og nyhedsmails
+Se [slutrapporten](./GDPR_SLUTRAPPORT.md), [administratorvejledningen](./GDPR_ADMIN.md) og [backup/gendannelse](./GDPR_BACKUP.md). Migration 0016 skal anvendes før udgivelse. Nyhedsbrevsafsendelse kræver særskilt aktivering; der sendes intet under test.

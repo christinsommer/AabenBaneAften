@@ -57,6 +57,18 @@ test("forwards progress semantics to the primitive", async () => {
   assert.match(html, /data-state="loading"/);
 });
 
+test('plan contact controls handle missing details and ambiguous imported names', async () => {
+  const {PlayerContact, contactByName} = await vite.ssrLoadModule('/components/player-contact.tsx');
+  const person = {id: 1, name: 'Anne Jensen', phone: '12345678', phoneCountryCode: '+45'};
+  assert.equal(contactByName(' ANNE  JENSEN ', [person]), person);
+  assert.equal(contactByName(person.name, [person, {...person,id:2}]), undefined);
+  const render = contact => renderToStaticMarkup(React.createElement(PlayerContact, {name: person.name, contact}));
+  assert.match(render(person), /aria-label="Kontakt Anne Jensen"/);
+  assert.doesNotMatch(render(undefined), /<button/);
+  assert.doesNotMatch(render({...person,phone:''}), /<button/);
+  assert.match(render({...person,phone:'',email:'anne@example.com'}), /<button/);
+});
+
 test("emits chart themes for the starter's media dark mode", async () => {
   const { ChartStyle } = await vite.ssrLoadModule("/components/ui/chart.tsx");
   const html = renderToStaticMarkup(

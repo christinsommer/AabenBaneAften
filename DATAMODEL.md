@@ -10,7 +10,7 @@ Medlemmer ligger i D1-tabellen `players`.
 | E-mailadresse | `email` | Valideret tekst ved oprettelse og profilændring |
 | Køn | `gender` | Påkrævet tekst: M (mand) eller K (kvinde); kan ændres på profilen |
 | Egen ranking | `self_level` | Fri tekst, 1–100 tegn; forslag: A, A-, AB, B+, B, B-, BC, C+, C eller C- |
-| Christin Ranking (CR) | `christin_ranking` | Udfyldes automatisk ved oprettelse; heltal 1–9 eller NULL; kun administratorer kan se og ændre |
+| CR | `christin_ranking` | Udfyldes automatisk ved oprettelse; heltal 1–9 eller NULL; kun administratorer kan se og ændre |
 
 `id` er den interne nøgle, som tilmeldinger, kampe og sessioner refererer til.
 `name` bevares af hensyn til eksisterende visninger og opdateres sammen med
@@ -134,3 +134,6 @@ En aktiv testrunde skal afsluttes, før den kan fjernes.
 Forsiden viser den aktive testrunde eller den næste ikke-arkiverede, ikke-aflyste
 dato fra og med dags dato i Danmark. Når listen er udløbet, vises en tom kalender,
 og administratoren kan tilføje flere spilledage. Profilen er stadig tilgængelig.
+
+## Privatliv og nyhedsmails
+Migration 0016 er en additiv custom SQL-migration. Tabeller, relationer, tekniske restposter og begrænsninger er beskrevet i [GDPR_SLUTRAPPORT.md](./GDPR_SLUTRAPPORT.md). Privatlivstabeller vedligeholdes via nye custom SQL-migrationer; brug ikke drizzle-kit push.

@@ -2,7 +2,7 @@
     {
         "title":  "Tilmelding",
         "paragraphs":  [
-                           "Tilmeldingen åbner normalt to dage før spilledagen kl. 12.00 og kan ændres indtil dagen før kl. 12.00.",
+                           "Tilmeldingen åbner normalt to dage før spilledagen kl. 12:00 og kan ændres indtil dagen før kl. 12:00.",
                            "I indendørssæsonen er åben bane fredag aften fra 18:00. I udendørssæsonen onsdag aften fra kl. 17:30.",
                            "Vælg om du ønsker at spille 1, 2 eller 3 timer. Vælg derefter ALLE de tider, du kan spille. Jo flere tider du vælger jo større chance, er der for at du kan være med."
                        ]
@@ -26,7 +26,7 @@
     {
         "title":  "Baner og tider",
         "paragraphs":  [
-                           "Bane 1–4: 18.00–19.00, 19.00–20.00, 20.00–21.00 og 21.00–22.00.\nBane 5–7: 18.30–19.30, 19.30–20.30 og 20.30–21.30."
+                           "Bane 1–4: 18:00–19:00, 19:00–20:00, 20:00–21:00 og 21:00–22:00.\nBane 5–7: 18:30–19:30, 19:30–20:30 og 20:30–21:30."
                        ]
     },
     {
@@ -38,7 +38,7 @@
                            "1) Giv dine banemedspillere besked, så kan de måske hjælpe dig.",
                            "2) Hvis stadig ikke muligt, kan du give administratoren besked direkte i appen. Afløseren kræver ikke administratorens godkendelse.",
                            "Ved glemt afbud kan spilleren blive sprunget over én gang ved en senere tilmelding.",
-                           "Kampplanen offentliggøres senest på spilledagen kl. 12.00. Den skal ikke bekræftes."
+                           "Kampplanen offentliggøres senest på spilledagen kl. 12:00. Den skal ikke bekræftes."
                        ]
     },
     {

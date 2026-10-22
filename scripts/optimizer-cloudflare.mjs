@@ -36,22 +36,45 @@ if (mode === 'deploy') {
   console.log('Container deployed. Run check after Cloudflare finishes provisioning.');
 } else {
   const headers = {authorization:`Bearer ${key}`, 'content-type':'application/json'};
-  const health = await fetch(`${url}/health`, {headers,signal:AbortSignal.timeout(160000)});
+  const jobsHealth = await fetch(`${url}/jobs-health`,{headers,signal:AbortSignal.timeout(15000)});
+  assert.equal(jobsHealth.status,200,'Background job workflow must be deployed');
+  assert.equal((await jobsHealth.json()).jobProtocol,1);
+  const health = await fetch(`${url}/health`, {headers,signal:AbortSignal.timeout(660000)});
   assert.equal(health.status,200,`Container health returned ${health.status}`);
-  assert.equal((await health.json()).scoringVersion,'match-and-same-team-v1');
+  assert.equal((await health.json()).scoringVersion,'optional-ages-v8');
   const match = {court:1,startTime:'18:00',team1:[1,2],team2:[3,4]};
   const input = {
     players:[2,5,3,4].map((cr,i)=>({id:i+1,memberNo:`smoke-${i+1}`,cr,gender:'M',age:40,availability:['18:00'],requestedHours:1,signupOrder:i+1,status:'active'})),
-    slots:[{court:1,startTime:'18:00'}],history:[],locked:[match],weights:algorithmWeightDefaults,
+    slots:[{court:1,startTime:'18:00'}],history:[],locked:[match],weights:{...algorithmWeightDefaults,FactorDistanceSameTeamA:3},
   };
-  const reply = await fetch(`${url}/solve`,{method:'POST',headers,body:JSON.stringify(input),signal:AbortSignal.timeout(160000)});
+  const reply = await fetch(`${url}/solve`,{method:'POST',headers,body:JSON.stringify(input),signal:AbortSignal.timeout(660000)});
   assert.equal(reply.status,200,`Container solve returned ${reply.status}`);
   const result = await reply.json();
   validateProposal(result.matches,input);
   assert.equal(result.score,scoreMatch(match,input).score);
-  assert.equal(result.score,30);
+  assert.equal(result.score,35);
+  const spouseInput = {...input, players: input.players.map((p,i) => ({...p,memberNo:String(i+1),cr:[1,5,3,3][i],
+    ...(i === 0 ? {spouseNo:2,spouseMode:2} : {})}))};
+  const spouseReply = await fetch(`${url}/solve`,{method:'POST',headers,body:JSON.stringify(spouseInput),signal:AbortSignal.timeout(660000)});
+  assert.equal(spouseReply.status,200,`Container spouse check returned ${spouseReply.status}`);
+  const spouseResult = await spouseReply.json();
+  validateProposal(spouseResult.matches,spouseInput);
+  assert.equal(spouseResult.score,scoreMatch(match,spouseInput).score);
+  assert.equal(spouseResult.score,95);
+  const repeatedInput = {...input,
+    players: input.players.map((p,i)=>({...p,memberNo:String(i+1),cr:5,requestedHours:2,availability:['18:00','19:00']})),
+    slots:[{court:1,startTime:'18:00'},{court:1,startTime:'19:00'}],
+    locked:[match,{court:1,startTime:'19:00',team1:[1,3],team2:[2,4]}],
+    weights:{...algorithmWeightDefaults,FactorOpponentThisWeek:7},
+  };
+  const repeatedReply = await fetch(`${url}/solve`,{method:'POST',headers,body:JSON.stringify(repeatedInput),signal:AbortSignal.timeout(660000)});
+  assert.equal(repeatedReply.status,200,`Container repeated-opponent check returned ${repeatedReply.status}`);
+  const repeatedResult = await repeatedReply.json();
+  const repeatedPlan = validateProposal(repeatedResult.matches,repeatedInput);
+  assert.equal(repeatedResult.score,176);
+  assert.equal(repeatedResult.score,repeatedPlan.reduce((total,m)=>total+scoreMatch(m,repeatedInput,repeatedPlan).score,0));
   assert.equal((await fetch(`${url}/health`)).status,401);
-  console.log('Production optimizer verified: authenticated Linux solver, both CR factors, score 30, unauthorized access rejected. No database changes.');
+  console.log('Production optimizer verified: authenticated Linux solver, CR factors, spouse constraints and score exception, unauthorized access rejected. No database changes.');
   if (mode === 'connect') {
     wrangler(['secret','bulk','--config','wrangler.jsonc'],JSON.stringify({OPTIMIZER_URL:url,OPTIMIZER_API_KEY:key}));
     console.log('aabenbaneaften connected to the verified optimizer.');

@@ -13,8 +13,14 @@ function registrationInstant(date: unknown, hour: unknown) {
 }
 
 export function registrationSchedule(input: Record<string, unknown>) {
-  const registrationOpensAt = registrationInstant(input.opensDate, input.opensHour);
-  const registrationClosesAt = registrationInstant(input.closesDate, input.closesHour);
+  const instant = (kind: 'opens' | 'closes') => {
+    const time = input[`${kind}Time`];
+    if (time === undefined) return registrationInstant(input[`${kind}Date`],input[`${kind}Hour`]);
+    if (typeof time !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) throw new Error('Angiv tidspunkt som hh:mm.');
+    return new Date(Date.parse(registrationInstant(input[`${kind}Date`],time.slice(0,2))) + Number(time.slice(3)) * 60000).toISOString();
+  };
+  const registrationOpensAt = instant('opens');
+  const registrationClosesAt = instant('closes');
   if (registrationOpensAt >= registrationClosesAt) throw new Error('Sluttidspunktet skal være efter starttidspunktet.');
   return { registrationOpensAt, registrationClosesAt };
 }
@@ -31,4 +37,17 @@ export function registrationIsOpen(event: RegistrationWindow, now = Date.now()) 
   if (event.registrationOverride === "open") return true;
   if (event.registrationOverride === "closed") return false;
   return now >= Date.parse(event.registrationOpensAt) && now <= Date.parse(event.registrationClosesAt);
+}
+
+export function firstMatchInstant(date: string, starts: readonly string[]) {
+  const first = starts.map(time => time.replace('.', ':')).filter(time => /^\d{2}:\d{2}$/.test(time)).sort()[0];
+  if (!first) throw new Error('Første kamptid mangler.');
+  const [hour, minute] = first.split(':');
+  if (Number(minute) > 59) throw new Error('Ugyldig kamptid.');
+  return new Date(Date.parse(registrationInstant(date, hour)) + Number(minute) * 60000).toISOString();
+}
+
+export function waitlistIsOpen(event: RegistrationWindow, firstMatchAt: string, now = Date.now()) {
+  return event.status !== 'cancelled' && !registrationIsOpen(event, now)
+    && now > Date.parse(event.registrationClosesAt) && now < Date.parse(firstMatchAt);
 }

@@ -1,0 +1,1 @@
+ALTER TABLE `events` ADD `registration_schedule_custom` integer DEFAULT false NOT NULL;

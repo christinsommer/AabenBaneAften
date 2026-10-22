@@ -1,0 +1,1 @@
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Deploy.ps1 -SuperAdminMemberNo 13993

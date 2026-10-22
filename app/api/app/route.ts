@@ -1,22 +1,64 @@
-import { and, asc, count, desc, eq, gt, ne, or, sql } from "drizzle-orm";
+import {optimizerHelp} from '../../../lib/optimizer-settings';
+import {authRateLimit} from '../../../lib/auth-rate-limit';
+import {parseForbiddenPairs} from '../../../lib/forbidden-pairs';
+import {isSuperAdmin,superAdminPlayerId} from '../../../lib/superadmin';
+import {PRIVACY_VERSION,CONSENT_VERSION} from '../../../lib/privacy-text';
+import {registerWithPrivacy,activity,closed} from '../../../lib/privacy-service';
+import {sameOrigin} from '../../../lib/privacy-request';
+import {recordSecurityEvent} from '../../../lib/security-events';
+import { and, asc, count, desc, eq, gt, ne, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getDb } from "../../../db";
-import { events, feedback, matches, matchRequests, pinResetTokens, players, sessions, signups, substitutions } from "../../../db/schema";
-import { createSession, currentPlayer, destroySession, hashPin, hashToken, verifyPin, verifyToken } from "../../../lib/auth";
-import { ensureEvent, TIMES } from "../../../lib/schedule";
+import { optimizerDefaults, registrationDefaults, events, feedback, matches, matchRequests, pinResetTokens, players, sessions, signups, substitutions } from "../../../db/schema";
+import { createSession, currentPlayer, destroySession, destroyAllSessions, hashPin, hashToken, verifyPin, verifyToken } from "../../../lib/auth";
+import {beginMfa,finishMfa,trustedMfaVersion,mfaCredential,forgetTrustedDevices,verifyCurrentMfa,resetOtherAdminMfa,MfaError} from '../../../lib/admin-mfa';
+import { ensureEvent } from "../../../lib/schedule";
 import { sendEmail } from "../../../lib/email";
+import { EmailDeliveryError } from '../../../lib/resend-delivery';
 import { sendWelcomeEmail } from "../../../lib/welcome-email";
-import { registrationIsOpen, registrationSchedule } from "../../../lib/registration";
+import { firstMatchInstant, waitlistIsOpen, registrationIsOpen, registrationSchedule } from "../../../lib/registration";
+import { spouseSettings } from '../../../lib/spouse-settings';
+import {findSpouses,selectedSpouse,currentSpouse} from '../../../lib/member-spouse';
 import { profileValues } from "../../../lib/profile";
+import {initialRegistrationDefaults,parseRegistrationDefaults} from '../../../lib/registration-defaults';
 import { calendarEvent, validDate } from "../../../lib/calendar";
 import { signupInput, signupFields, noSignup } from "../../../lib/signup";
+import { visiblePlanContact } from '../../../lib/contact-visibility';
 import { visibleMember } from "../../../lib/member-visibility";
 import { initialCr } from '../../../lib/initial-cr';
+import {birthYearOptions} from '../../../lib/birth-year';
 import { levelScore } from '../../../lib/ranking';
 import { buildSignupExportRows } from "../../../lib/export-signups";
 import { normalizeKampplanRows } from "../../../lib/kampplan-rows";
+import {parseAlgorithmWeights, scoreMatch} from '../../../lib/optimizer';
+import {loadOptimizerInput} from '../../../lib/optimizer-server';
+
+import {saveForbiddenPairs, loadForbiddenPairs, loadOptimizerDefaults, loadEventOptimizerWeights, loadPlaySchedule, loadOptimizerResources} from '../../../lib/optimizer-defaults-server';
+import {parseOptimizerResources} from '../../../lib/optimizer-resources';
+import {parseCourtOrder} from '../../../lib/court-order';
+import {parsePlayTimes,buildPlaySchedule} from '../../../lib/play-schedule';
 
 export const dynamic = "force-dynamic";
+
+async function saveMemberProfile(request:Request, actor:typeof players.$inferSelect, target:typeof players.$inferSelect, values:Partial<typeof players.$inferInsert>, currentPin:unknown) {
+  const db=getDb();
+  const emailChanged=values.email!==undefined && values.email!==target.email.trim().toLowerCase();
+  if(!emailChanged) {
+    await db.update(players).set(values).where(eq(players.id,target.id));
+    return null;
+  }
+  const limited=await authRateLimit(request,'login',actor.memberNo);
+  if(limited)return limited;
+  if(!await verifyPin(String(currentPin??''),actor.pinHash))return Response.json({error:'Bekræft ændringen af e-mail med din egen kode.'},{status:403});
+  await db.batch([
+    db.update(players).set(values).where(eq(players.id,target.id)),
+    db.delete(sessions).where(eq(sessions.playerId,target.id)),
+    db.delete(pinResetTokens).where(eq(pinResetTokens.playerId,target.id)),
+  ]);
+  // Fresh authentication rotates this device's session; other devices must log in again.
+  if(target.id===actor.id)await createSession(actor.id,actor.role==='admin'?(await mfaCredential(actor.id))?.version:undefined);
+  return null;
+}
 
 function parseImportedKampplan(raw: unknown) {
   if (typeof raw !== "string" || !raw.trim()) return [];
@@ -40,16 +82,71 @@ function resetLinkEmail(to: string, token: string) {
   };
 }
 
+async function eventFirstMatchAt(event: typeof events.$inferSelect) {
+  const stored = await getDb().select({startTime:matches.startTime}).from(matches).where(eq(matches.eventId,event.id));
+  const imported = parseImportedKampplan(event.importedKampplan);
+  const starts = imported.length ? imported.map(row => String(row.A)) : stored.map(row => row.startTime);
+  return firstMatchInstant(event.date, starts.length ? starts : (await loadPlaySchedule()).times);
+}
+
+async function loadRegistrationDefaults() {
+  const [stored] = await getDb().select().from(registrationDefaults).where(eq(registrationDefaults.id,1)).limit(1);
+  return stored ? parseRegistrationDefaults(stored) : initialRegistrationDefaults;
+}
+
 async function state() {
   const db = getDb(); const storedEvent = await ensureEvent(); const user = await currentPlayer();
+  const profileUser=user?{...visibleMember(user),spouse:await currentSpouse(user.spouseNo)}:null;
   const event = storedEvent ? {...storedEvent, importedKampplan: user?.role === 'admin' || storedEvent.status === 'published' ? storedEvent.importedKampplan : ''} : null;
   const isOpen = event ? registrationIsOpen(event) : false;
   const importedMatches = event && (user?.role === 'admin' || event.status === 'published') ? parseImportedKampplan(event.importedKampplan) : [];
-  if (!user) return { authenticated: false, event, isOpen, times: TIMES, importedMatches };
+  const forbiddenMemberPairs = isSuperAdmin(user) ? await loadForbiddenPairs() : undefined;
+  const defaultWeights = isSuperAdmin(user) ? await loadOptimizerDefaults() : undefined;
+  const {courtOrder,playTimes,timeGroups,times,slots} = await loadPlaySchedule();
+  let optimizerWeights = isSuperAdmin(user) && event ? await loadEventOptimizerWeights(event.id) : undefined;
+  let adminPlanScores: (number | null)[] | undefined;
+  if (isSuperAdmin(user) && importedMatches.length && event) {
+    const raw = JSON.parse(event.importedKampplan);
+    try { if (raw[0]?._optimizerWeights) optimizerWeights = parseAlgorithmWeights(raw[0]._optimizerWeights); } catch { /* Older plan metadata. */ }
+    if (raw[0]?._optimizerWeights?.FactorOpponentThisWeek !== undefined && raw.length === importedMatches.length && raw.every((row: Record<string, unknown>) => Number.isSafeInteger(row._optimizerScore))) {
+      adminPlanScores = raw.map((row: {_optimizerScore: number}) => row._optimizerScore);
+    } else {
+      adminPlanScores = importedMatches.map(() => null);
+      try {
+        const {input, names} = await loadOptimizerInput(event.id, optimizerWeights ?? {}, true);
+        const resolveName = (name: string) => {
+          const normalized = (s: string) => s.normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('da-DK');
+          const ids = [...names].filter(([, value]) => normalized(value) === normalized(name)).map(([id]) => id);
+          if (ids.length !== 1 || !input.players.some(p => p.id === ids[0])) throw new Error('Ukendt spiller');
+          return ids[0];
+        };
+        const resolvedPlan = importedMatches.map(row => {
+          try { return {court: Number(row.C.replace(/\D/g, '')), startTime: row.A.replace('.', ':'),
+            team1: [row.D, row.E].filter(Boolean).map(resolveName), team2: [row.F, row.G].filter(Boolean).map(resolveName)}; }
+          catch { return null; }
+        });
+        const completePlan = resolvedPlan.filter(row => row !== null);
+        adminPlanScores = resolvedPlan.map(row => {
+          try { return row ? scoreMatch(row, input, completePlan).score : null; }
+          catch { return null; }
+        });
+      } catch { /* Missing CR/history: show an unavailable score rather than a made-up number. */ }
+    }
+  }
+  // Per-match scores and factors belong only in the administrator's view.
+  if (event && !isSuperAdmin(user) && event.importedKampplan) event.importedKampplan = JSON.stringify(importedMatches);
+  if (!user) return { authenticated: false, event, isOpen, times,timeGroups,slots,playTimes,courtOrder, importedMatches };
+  const defaults = user.role === 'admin' ? await loadRegistrationDefaults() : undefined;
+  const optimizerResources = isSuperAdmin(user) ? await loadOptimizerResources() : undefined;
   const calendarDates = await db.select({id:events.id,date:events.date,status:events.status,isTest:events.isTest,testActive:events.testActive}).from(events).where(eq(events.archived,false)).orderBy(asc(events.date));
-  const allPlayers = user.role === "admin" ? await db.select({id:players.id,memberNo:players.memberNo,name:players.name,firstName:players.firstName,lastName:players.lastName,email:players.email,phone:players.phone,phoneCountryCode:players.phoneCountryCode,christinRanking:players.christinRanking,crReviewedAt:players.crReviewedAt,createdAt:players.createdAt,birthYear:players.birthYear,gender:players.gender,selfLevel:players.selfLevel,adminLevel:players.adminLevel,role:players.role,suspendedEventId:players.suspendedEventId}).from(players).orderBy(asc(players.name)) : [];
-  if (!event) return {authenticated:true,user:visibleMember(user),event:null,isOpen:false,times:TIMES,calendarDates,importedMatches: [],players:allPlayers};
-  const signup = (await db.select().from(signups).where(and(eq(signups.eventId,event.id),eq(signups.playerId,user.id),ne(signups.status,"cancelled"))).limit(1))[0] ?? null;
+  const allPlayers = user.role === "admin" ? await db.select({id:players.id,memberNo:players.memberNo,name:players.name,firstName:players.firstName,lastName:players.lastName,email:players.email,phone:players.phone,phoneCountryCode:players.phoneCountryCode,emailVisible:players.emailVisible,phoneVisible:players.phoneVisible,christinRanking:players.christinRanking,crReviewedAt:players.crReviewedAt,spouseNo:players.spouseNo,spouseMode:players.spouseMode,createdAt:players.createdAt,birthYear:players.birthYear,gender:players.gender,selfLevel:players.selfLevel,adminLevel:players.adminLevel,role:players.role,suspendedEventId:players.suspendedEventId}).from(players).where(sql`EXISTS (SELECT 1 FROM profile_privacy WHERE player_id = ${players.id} AND closed_at IS NULL)`).orderBy(asc(players.name)) : [];
+  if (!event) return {authenticated:true,user:profileUser,event:null,isOpen:false,times,timeGroups,slots,playTimes,courtOrder,calendarDates,registeredMembers:[],importedMatches: [],players:allPlayers.map(p=>({...p,isSuperAdmin:isSuperAdmin(p)})),optimizerDescriptions:isSuperAdmin(user)?optimizerHelp:undefined,forbiddenMemberPairs,optimizerDefaults:defaultWeights,optimizerResources,registrationDefaults:defaults};
+  const registeredMembers = await db.select({id:players.id,name:players.name}).from(signups)
+    .innerJoin(players,eq(players.id,signups.playerId))
+    .where(and(eq(signups.eventId,event.id),eq(signups.status,'active'),gt(signups.requestedHours,0)))
+    .orderBy(asc(players.name));
+  const firstMatchAt = await eventFirstMatchAt(storedEvent!);
+  const signup = (await db.select().from(signups).where(and(eq(signups.eventId,event.id),eq(signups.playerId,user.id))).limit(1))[0] ?? null;
   const eventMatches = user.role === "admin" || event.status === "published" ? await db.select().from(matches).where(eq(matches.eventId,event.id)).orderBy(asc(matches.startTime),asc(matches.court)) : [];
   const eventSignups = user.role === "admin" ? await db.select({signup:signups,player:{id:players.id,name:players.name,memberNo:players.memberNo,gender:players.gender,selfLevel:players.selfLevel,adminLevel:players.adminLevel}}).from(signups).innerJoin(players,eq(players.id,signups.playerId)).where(eq(signups.eventId,event.id)).orderBy(asc(signups.createdAt)) : [];
   const signupByPlayer = new Map(eventSignups.map(row=>[row.player.id,row.signup]));
@@ -65,12 +162,19 @@ async function state() {
   const waitlist = await db.select({
     id:players.id,
     name:players.name,
-    email:players.email,
+    email:sql<string>`CASE WHEN ${players.emailVisible} = 1 THEN ${players.email} ELSE '' END`,
     level:players.selfLevel,
     availability:signups.availability,
   }).from(signups).innerJoin(players,eq(players.id,signups.playerId)).where(and(eq(signups.eventId,event.id),eq(signups.status,"waitlist"))).orderBy(asc(signups.createdAt));
-  const names = await db.select({id:players.id,name:players.name,firstName:players.firstName}).from(players);
-  const namesById = new Map(names.map(player => [player.id, player.name]));
+  const memberNames = await db.select({id:players.id,name:players.name,firstName:players.firstName}).from(players);
+  const normalizeContactName = (name: string) => name.normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('da-DK');
+  const planNames = new Set(importedMatches.flatMap(row => ['D','E','F','G'].map(key => normalizeContactName(String(row[key] ?? '')))).filter(Boolean));
+  const planIds = new Set<number>(eventMatches.flatMap(match => JSON.parse(match.playerIds)));
+  const contactRows = user.role === 'admin' || event.status === 'published'
+    ? await db.select({id:players.id,name:players.name,email:players.email,phone:players.phone,phoneCountryCode:players.phoneCountryCode,emailVisible:players.emailVisible,phoneVisible:players.phoneVisible}).from(players) : [];
+  const planContacts = contactRows.filter(player => planIds.has(player.id) || planNames.has(normalizeContactName(player.name))).map(visiblePlanContact);
+  const names = user.role === 'admin' ? memberNames : memberNames.filter(player => player.id === user.id || planIds.has(player.id) || planNames.has(normalizeContactName(player.name)));
+  const namesById = new Map(memberNames.map(player => [player.id, player.name]));
   const substitutionRows = await db.select().from(substitutions).where(eq(substitutions.eventId,event.id)).orderBy(desc(substitutions.updatedAt));
   const substitutionsForUser = substitutionRows.filter((item)=>user.role==="admin"||item.outgoingPlayerId===user.id).map((item)=>({
     ...item,
@@ -79,20 +183,27 @@ async function state() {
   }));
   const requestRows = await db.select({request:matchRequests,creatorName:players.name}).from(matchRequests).innerJoin(players,eq(players.id,matchRequests.creatorPlayerId)).where(eq(matchRequests.eventId,event.id));
   const requests = requestRows.filter(({request})=>request.creatorPlayerId===user.id||JSON.parse(request.invitedMemberNos).includes(user.memberNo)).map(({request,creatorName})=>({id:request.id,creatorName,status:request.status,isCreator:request.creatorPlayerId===user.id,isInvited:JSON.parse(request.invitedMemberNos).includes(user.memberNo),accepted:JSON.parse(request.acceptedPlayerIds).includes(user.id),acceptedCount:JSON.parse(request.acceptedPlayerIds).length}));
-  return { authenticated:true,user:visibleMember(user),event,isOpen,times:TIMES,calendarDates,importedMatches,signup:signup?{...signup,...signupFields(signup)}:noSignup(event.id,user.id),matches:event.status==="published"?eventMatches:[],adminMatches:user.role==="admin"?eventMatches:[],players:allPlayers,signups:memberSignups,signupHistory:signupHistory.map(row=>({...row,signup:{...row.signup,...signupFields(row.signup)}})),waitlist,names,requests,substitutions:substitutionsForUser };
+  return { authenticated:true,user:profileUser,event,isOpen,firstMatchAt,times,timeGroups,slots,playTimes,courtOrder,calendarDates,registeredMembers,importedMatches,optimizerWeights,adminPlanScores,signup:signup?{...signup,...signupFields(signup)}:noSignup(event.id,user.id),matches:event.status==="published"?eventMatches:[],adminMatches:user.role==="admin"?eventMatches:[],players:allPlayers.map(p=>({...p,isSuperAdmin:isSuperAdmin(p)})),signups:memberSignups,signupHistory:signupHistory.map(row=>({...row,signup:{...row.signup,...signupFields(row.signup)}})),waitlist,names,planContacts,requests,optimizerDescriptions:isSuperAdmin(user)?optimizerHelp:undefined,forbiddenMemberPairs,optimizerDefaults:defaultWeights,optimizerResources,registrationDefaults:defaults,substitutions:substitutionsForUser };
 }
 
 export async function GET(){try{return Response.json(await state());}catch(error){return Response.json({error:error instanceof Error?error.message:"Appen kunne ikke indlæses"},{status:500});}}
 
 export async function POST(request:Request){
+  if(!sameOrigin(request))return Response.json({error:"Ugyldigt kald."},{status:403});
   try{
     const db=getDb(); const body=await request.json() as Record<string,any>; const action=String(body.action??"");
+    // Disabled until the feedback workflow and its authorization rules are defined.
+    if(action==='feedback')return Response.json({error:'Feedback er ikke tilgængelig endnu.'},{status:403,headers:{'Cache-Control':'no-store'}});
+    if(action==='login'||action==='request_pin_reset'||action==='reset_pin') {
+      const limited = await authRateLimit(request, action, String(body.memberNo??''));
+      if(limited)return limited;
+    }
     if(action==="request_pin_reset"){
       const memberNo=String(body.memberNo??"").trim();
       if(!memberNo)return Response.json({error:"Angiv dit medlemsnummer."},{status:400});
       const [player]=await db.select().from(players).where(eq(players.memberNo,memberNo)).limit(1);
       // Do not reveal whether a membership number exists.
-      if(!player || !player.email.trim())return Response.json({ok:true});
+      if(!player || await closed(player.id) || !player.email.trim())return Response.json({ok:true});
       const token=Array.from(crypto.getRandomValues(new Uint8Array(32)),b=>b.toString(16).padStart(2,"0")).join("");
       const tokenHash=await hashToken(token);
       await db.insert(pinResetTokens).values({playerId:player.id,tokenHash,expiresAt:new Date(Date.now()+30*60*1000).toISOString()});
@@ -102,9 +213,10 @@ export async function POST(request:Request){
         await sendEmail({to:player.email,subject:"Vælg en ny PIN-kode til Åben Bane Aften",
           text:`Du har bedt om en ny PIN-kode. Åbn dette link for at vælge en ny kode: ${link}\nLinket kan bruges én gang og udløber om 30 minutter. Hvis du ikke har bedt om dette, kan du ignorere e-mailen.`,
           html:`<p>Du har bedt om en ny PIN-kode til Åben Bane Aften.</p><p><a href="${link}">Vælg en ny PIN-kode</a></p><p>Linket kan bruges én gang og udløber om 30 minutter. Hvis du ikke har bedt om dette, kan du ignorere e-mailen.</p>`});
-      }catch{
-        await db.delete(pinResetTokens).where(eq(pinResetTokens.tokenHash,tokenHash));
-        return Response.json({error:"E-mailen kunne ikke sendes. Prøv igen senere, eller kontakt administratoren."},{status:502});
+      }catch(error){
+        // A timeout or 5xx may happen after acceptance. Keep that link usable until expiry.
+        if (!(error instanceof EmailDeliveryError && error.uncertain)) await db.delete(pinResetTokens).where(eq(pinResetTokens.tokenHash,tokenHash));
+        return Response.json({error:"E-mailen kunne ikke sendes. Prøv igen senere eller kontakt aabenbaneaften@hik.dk"},{status:502});
       }
       return Response.json({ok:true});
     }else if(action==="reset_pin"){
@@ -124,22 +236,97 @@ export async function POST(request:Request){
       if(!changed.length)return Response.json({error:"Reset-linket er ugyldigt eller udløbet. Bestil et nyt link."},{status:400});
       return Response.json({ok:true});
     }else if(action==="register"){
+      if(body.privacyRead!==true && body.privacyRead!=="on")return Response.json({error:"Kvittér for læst privatlivsinformation."},{status:400});
+      if(body.privacyVersion!==PRIVACY_VERSION || ((body.newsletter===true || body.newsletter==="on") && body.consentVersion!==CONSENT_VERSION))return Response.json({error:"Informationen er opdateret. Genindlæs siden."},{status:409});
       const memberNo=String(body.memberNo??"").trim(),pin=String(body.pin??"");
       let profile;
       try { profile=profileValues(body); } catch(error) { return Response.json({error:error instanceof Error?error.message:"Kontrollér profilen."},{status:400}); }
       if(!["M","K"].includes(body.gender)||!/^\d{4,8}$/.test(pin))return Response.json({error:"Vælg køn og en kode på 4–8 cifre."},{status:400});
       const [existing]=await db.select({id:players.id}).from(players).where(eq(players.memberNo,memberNo)).limit(1);
       if(existing)return Response.json({error:"Medlemsnummeret er allerede oprettet. Vælg “Log ind” og brug din personlige kode."},{status:409});
-      const [{value}]=await db.select({value:count()}).from(players);
-      const [created]=await db.insert(players).values({...profile,christinRanking:initialCr(profile.selfLevel),gender:body.gender,role:value===0?"admin":"player",pinHash:await hashPin(pin)}).returning(); await createSession(created.id);
+      await registerWithPrivacy(db.insert(players).values({...profile,christinRanking:initialCr(profile.selfLevel),gender:body.gender,role:"player",pinHash:await hashPin(pin)}).toSQL(),memberNo,body.newsletter===true||body.newsletter==="on");
+      const [created]=await db.select().from(players).where(eq(players.memberNo,memberNo)); await createSession(created.id);
       const warning = await sendWelcomeEmail(created.email, sendEmail);
       return NextResponse.json({...await state(), ...(warning ? {warning} : {})});
+    }else if(action==='mfa_verify') {
+      const result=await finishMfa(request,String(body.code??'').trim(),body.remember===true);
+      if(result.limited)return result.limited;
+      await createSession(result.playerId!,result.version);
+      return Response.json({...await state(),recoveryCodes:result.recoveryCodes},{headers:{'Cache-Control':'no-store'}});
     }else if(action==="login"){
       const [player]=await db.select().from(players).where(eq(players.memberNo,String(body.memberNo??"").trim())).limit(1);
-      if(!player||!(await verifyPin(String(body.pin??""),player.pinHash)))return Response.json({error:"Medlemsnummer eller kode er forkert."},{status:401}); await createSession(player.id);
+      if(!player||await closed(player.id)||!(await verifyPin(String(body.pin??""),player.pinHash))){await recordSecurityEvent('login_failed');return Response.json({error:"Medlemsnummer eller pinkode er forkert eller også mangler du at oprette din profil på aabenbaneaften.dk."},{status:401});}
+      await destroySession();
+      if(player.role==='admin') {
+        const version=await trustedMfaVersion(player.id);
+        if(!version)return Response.json(await beginMfa(player),{headers:{'Cache-Control':'no-store'}});
+        await createSession(player.id,version);
+      }else await createSession(player.id);
     }else if(action==="logout"){await destroySession();return Response.json({ok:true});}
     else{
-      const user=await currentPlayer(); if(!user)return Response.json({error:"Log ind igen."},{status:401});
+      const user=await currentPlayer({touch:true}); if(!user)return Response.json({error:"Din session er udløbet. Log ind igen."},{status:401});
+      if(action==='logout_all') {
+        await destroyAllSessions(user.id);
+        return Response.json({ok:true});
+      }
+      if(action==='mfa_forget_devices') {
+        await forgetTrustedDevices(user.id);
+        return Response.json({ok:true});
+      }
+      if(action==='mfa_reset_admin') {
+        if(!isSuperAdmin(user))return Response.json({error:'Kun SuperAdmin kan nulstille en anden Admins 2FA.'},{status:403});
+        if(!Number.isSafeInteger(body.playerId)||body.playerId<1||body.playerId===user.id)return Response.json({error:'Vælg en anden administrator.'},{status:400});
+        if(body.identityConfirmed!==true)return Response.json({error:'Bekræft, at du har kontrolleret administratorens identitet.'},{status:400});
+        const [target]=await db.select().from(players).where(eq(players.id,body.playerId)).limit(1);
+        if(!target||target.role!=='admin'||await closed(target.id))return Response.json({error:'Vælg en aktiv administrator.'},{status:400});
+        const limited=await authRateLimit(request,'login',user.memberNo);if(limited)return limited;
+        if(!await verifyPin(String(body.currentPin??''),user.pinHash))return Response.json({error:'Din PIN-kode er forkert.'},{status:403});
+        const denied=await resetOtherAdminMfa(request,user,target.id,String(body.code??'').trim());if(denied)return denied;
+        return Response.json({ok:true},{headers:{'Cache-Control':'no-store'}});
+      }
+      if(action==='mfa_replace') {
+        if(user.role!=='admin')return Response.json({error:'Kun administratorer bruger 2FA.'},{status:403});
+        const limited=await authRateLimit(request,'login',user.memberNo);if(limited)return limited;
+        if(!await verifyPin(String(body.currentPin??''),user.pinHash))return Response.json({error:'Din PIN-kode er forkert.'},{status:403});
+        const denied=await verifyCurrentMfa(request,user.id,String(body.code??'').trim());if(denied)return denied;
+        const setup=await beginMfa(user,true);
+        return Response.json(setup,{headers:{'Cache-Control':'no-store'}});
+      }
+      if(action==='update_birth_year') {
+        const year=Number(body.birthYear);
+        if(!/^\d{4}$/.test(String(body.birthYear))||!birthYearOptions().includes(year))return Response.json({error:'Vælg et gyldigt fødselsår.'},{status:400});
+        await db.update(players).set({birthYear:year}).where(eq(players.id,user.id));
+        return NextResponse.json(await state());
+      }
+      if(action==='lookup_spouse')return Response.json({members:await findSpouses(body.query,user.id)},{headers:{'Cache-Control':'no-store'}});
+      if(action==='set_admin') {
+        if(!isSuperAdmin(user))return Response.json({error:'Kun SuperAdmin kan ændre administratoradgang.'},{status:403});
+        const limited=await authRateLimit(request,'login',user.memberNo);
+        if(limited)return limited;
+        if(!await verifyPin(String(body.adminPin??''),user.pinHash))return Response.json({error:'Bekræft ændringen med din egen kode.'},{status:403});
+        if(typeof body.makeAdmin!=='boolean'||!Number.isSafeInteger(body.playerId)||body.playerId<1)return Response.json({error:'Ugyldig rolleændring.'},{status:400});
+      }
+      if(action==='admin_update_signup') {
+        if(user.role!=='admin')return Response.json({error:'Kun administratorer kan rette andres tilmeldinger.'},{status:403});
+        if(!Number.isSafeInteger(body.eventId)||!Number.isSafeInteger(body.signupId)||body.signupId<1)return Response.json({error:'Ugyldig tilmelding.'},{status:400});
+        const event=await ensureEvent();
+        if(!event||event.id!==body.eventId)return Response.json({error:'Spillerunden er ændret. Genindlæs siden.'},{status:409});
+        const [signup]=await db.select().from(signups).where(and(eq(signups.id,body.signupId),eq(signups.eventId,event.id))).limit(1);
+        if(!signup)return Response.json({error:'Tilmeldingen findes ikke i denne runde.'},{status:404});
+        const expected=body.expected;
+        if(!expected||expected.requestedHours!==signup.requestedHours||expected.availability!==signup.availability||expected.status!==signup.status)
+          return Response.json({error:'Tilmeldingen er ændret, siden vinduet blev åbnet. Genindlæs siden og åbn den igen.'},{status:409});
+        let input;
+        try {
+          input=signupInput(body,(await loadPlaySchedule()).times);
+          if(input.nHours<1)throw new Error('Vælg 1–3 timer. Brug Status i listen til afbud.');
+        } catch(error){return Response.json({error:error instanceof Error?error.message:'Kontrollér spilleønskerne.'},{status:400});}
+        const updated=await db.update(signups).set({requestedHours:input.nHours,availability:JSON.stringify(input.szPossible)})
+          .where(and(eq(signups.id,signup.id),eq(signups.eventId,event.id),eq(signups.requestedHours,signup.requestedHours),eq(signups.availability,signup.availability),eq(signups.status,signup.status),
+            sql`EXISTS (SELECT 1 FROM events WHERE id=${event.id} AND status=${event.status})`)).returning({id:signups.id});
+        if(!updated.length)return Response.json({error:'Tilmeldingen eller runden blev ændret. Genindlæs siden og prøv igen.'},{status:409});
+        return NextResponse.json(await state());
+      }
       if(action==="set_signup_status"){
         if(user.role!=="admin")return Response.json({error:"Kun administratorer kan ændre tilmeldingsstatus."},{status:403});
         if(!["active","waitlist","cancelled"].includes(body.status))return Response.json({error:"Vælg en gyldig status."},{status:400});
@@ -151,47 +338,112 @@ export async function POST(request:Request){
         await db.update(signups).set({status:body.status}).where(eq(signups.id,signupId));
         return NextResponse.json(await state());
       }
-      if(action==="delete_member"){
-        if(user.role!=="admin")return Response.json({error:"Kun administratorer kan slette medlemmer."},{status:403});
-        const playerId=Number(body.playerId);
-        if(!Number.isSafeInteger(playerId)||playerId<1)return Response.json({error:"Vælg et medlem."},{status:400});
-        if(playerId===user.id)return Response.json({error:"Du kan ikke slette din egen konto."},{status:400});
-        const [target]=await db.select().from(players).where(eq(players.id,playerId)).limit(1);
-        if(!target)return Response.json({error:"Medlemmet findes ikke længere."},{status:404});
-        if(body.confirmMemberNo!==target.memberNo)return Response.json({error:"Bekræft medlemsnummeret for det medlem, du vil slette."},{status:400});
-        const authorized=sql`EXISTS (SELECT 1 FROM players AS actor WHERE actor.id = ${user.id} AND actor.role = 'admin')`;
-
-        const results = await db.batch([
-          db.delete(pinResetTokens).where(and(authorized,eq(pinResetTokens.playerId,playerId))),
-          db.delete(sessions).where(and(authorized,eq(sessions.playerId,playerId))),
-          db.delete(signups).where(and(authorized,eq(signups.playerId,playerId))),
-          db.delete(feedback).where(and(authorized,or(eq(feedback.authorPlayerId,playerId),eq(feedback.subjectPlayerId,playerId)))),
-          db.delete(matchRequests).where(and(authorized,or(eq(matchRequests.creatorPlayerId,playerId),sql`EXISTS (SELECT 1 FROM json_each(${matchRequests.invitedMemberNos}) WHERE value = ${target.memberNo})`,sql`EXISTS (SELECT 1 FROM json_each(${matchRequests.acceptedPlayerIds}) WHERE value = ${playerId})`))),
-          db.delete(substitutions).where(and(authorized,eq(substitutions.outgoingPlayerId,playerId))),
-          db.update(substitutions).set({replacementPlayerId:null,status:'unresolved',updatedAt:new Date().toISOString()}).where(and(authorized,eq(substitutions.replacementPlayerId,playerId))),
-          db.delete(players).where(and(authorized,eq(players.id,playerId))).returning({id:players.id}),
-        ]);
-        const deleted = results[7];
-        if(!deleted.length)return Response.json({error:"Medlemmet blev ikke slettet. Genindlæs og kontrollér administratoradgangen."},{status:409});
-        return NextResponse.json(await state());
-      }
+      if(action==="delete_member"&&user.role!=="admin")return Response.json({error:"Kun administratorer har adgang."},{status:403});
+      if(action==="delete_member")return Response.json({error:"Brug Privatliv & inaktive profiler til kontrolleret sletning."},{status:409});
       if(action==="update_member"){
         if(user.role!=="admin")return Response.json({error:"Kun administratorer kan rette medlemmer."},{status:403});
         const [target]=await db.select().from(players).where(eq(players.id,Number(body.playerId))).limit(1);
-        if(!target)return Response.json({error:"Medlemmet findes ikke."},{status:404});
+        if(!target||await closed(target.id))return Response.json({error:"Medlemmet findes ikke eller er lukket."},{status:404});
+        if(target.id===superAdminPlayerId()&&!isSuperAdmin(user))return Response.json({error:'Kun SuperAdmin kan ændre denne profil.'},{status:403});
         let profile;
         try{profile=profileValues({...body,memberNo:target.memberNo});}catch(error){return Response.json({error:error instanceof Error?error.message:"Kontrollér medlemsoplysningerne."},{status:400});}
         const cr=body.christinRanking;
         if(cr!==null&&(typeof cr!=="number"||!Number.isInteger(cr)||cr<1||cr>9))return Response.json({error:"CR skal være et heltal fra 1 til 9 eller ikke vurderet."},{status:400});
 
 
-        await db.update(players).set({...profile,christinRanking:cr,...(cr !== target.christinRanking ? {crReviewedAt:null} : {})}).where(eq(players.id,target.id));
+        let spouse;
+        try { spouse = spouseSettings(body, target, target.memberNo, await db.select({memberNo:players.memberNo}).from(players)); }
+        catch(error) { return Response.json({error:error instanceof Error ? error.message : 'Ugyldig partner.'},{status:400}); }
+        const denied=await saveMemberProfile(request,user,target,{...profile,...spouse,christinRanking:cr,...(cr !== target.christinRanking ? {crReviewedAt:null} : {})},body.currentPin);
+        if(denied)return denied;
         return NextResponse.json(await state());
       }
       if(action==="update_profile"){
+        if(body.spouseMode!==undefined||body.spouseNo!==undefined)return Response.json({error:'Spillebetingelsen kan kun ændres under Admin.'},{status:403});
         let profile;
         try { profile=profileValues({...body,memberNo:user.memberNo,gender:body.gender===undefined?user.gender:body.gender}); } catch(error) { return Response.json({error:error instanceof Error?error.message:"Kontrollér profilen."},{status:400}); }
-        await db.update(players).set(profile).where(eq(players.id,user.id));
+        let spouse={};
+        if(body.spousePlayerId!==undefined) {
+          try{spouse=await selectedSpouse(body.spousePlayerId,user);}catch(error){return Response.json({error:error instanceof Error?error.message:'Vælg en gyldig spiller.'},{status:400});}
+        }
+        const denied=await saveMemberProfile(request,user,user,{...profile,...spouse},body.currentPin);
+        if(denied)return denied;
+        return NextResponse.json(await state());
+      }
+      if(action==="send_test_email"){
+          if(!isSuperAdmin(user))return Response.json({error:"Kun SuperAdmin kan sende testmail."},{status:403});
+          const recipient=user.email.trim().toLowerCase();
+          if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient))return Response.json({error:"Indtast en gyldig e-mailadresse."},{status:400});
+          await sendEmail({
+            to:recipient,
+            subject:"Test fra Åben Bane Aften",
+            text:"Dette er en testmail fra Åben Bane Aften-appen. E-mailfunktionen virker.\n\nDette er ikke en officiel HIK-app, men et hjælpemiddel lavet af administratoren for Åben Bane Aften. Kommentarer kan sendes til aabenbaneaften@hik.dk.",
+            html:"<div style=\"font-family:Arial,sans-serif;line-height:1.6;color:#17345c\"><h1 style=\"font-size:22px\">Test fra Åben Bane Aften</h1><p>Dette er en testmail fra Åben Bane Aften-appen.</p><p><strong>E-mailfunktionen virker.</strong></p><hr style=\"border:0;border-top:1px solid #d8e1ec;margin:24px 0\"><p style=\"font-size:13px;color:#5b677a\">Dette er ikke en officiel HIK-app, men et hjælpemiddel lavet af administratoren for Åben Bane Aften. Kommentarer kan sendes til <a href=\"mailto:aabenbaneaften@hik.dk\">aabenbaneaften@hik.dk</a>.</p></div>",
+          });
+          return NextResponse.json(await state());
+      }
+      if(action==='set_forbidden_pairs') {
+        if(!isSuperAdmin(user))return Response.json({error:'Kun SuperAdmin har adgang.'},{status:403});
+        let pairs;
+        try { pairs = parseForbiddenPairs(body.pairs); }
+        catch(error) {return Response.json({error:error instanceof Error?error.message:'Ugyldige spillerpar.'},{status:400});}
+        const members = await db.select({memberNo:players.memberNo}).from(players);
+        const existing = await loadForbiddenPairs();
+        const known = new Set(members.map(p=>p.memberNo));
+        const retained = new Set(existing.map(pair=>JSON.stringify(pair)));
+        if(pairs.some(pair=>!retained.has(JSON.stringify(pair)) && pair.some(no=>!known.has(no))))
+          return Response.json({error:'Vælg eksisterende medlemmer.'},{status:400});
+        await saveForbiddenPairs(pairs);
+        return NextResponse.json(await state());
+      }
+      if(action==='set_optimizer_resources') {
+        if(!isSuperAdmin(user))return Response.json({error:'Kun SuperAdmin har adgang.'},{status:403});
+        let weights:string;
+        try {weights=JSON.stringify({optimizerResources:parseOptimizerResources(body.optimizerResources)});}
+        catch(error){return Response.json({error:error instanceof Error?error.message:'Kontrollér CPU og tid.'},{status:400});}
+        await db.insert(optimizerDefaults).values({id:1,weights}).onConflictDoUpdate({target:optimizerDefaults.id,set:{weights:sql`json_patch(${optimizerDefaults.weights}, ${weights})`}});
+        return NextResponse.json(await state());
+      }
+      if(action==='set_optimizer_defaults') {
+        if(!isSuperAdmin(user))return Response.json({error:'Kun SuperAdmin har adgang.'},{status:403});
+        let weights: string;
+        try { weights = JSON.stringify(parseAlgorithmWeights(body.weights)); }
+        catch(error) { return Response.json({error:error instanceof Error ? error.message : 'Kontrollér faktorerne.'},{status:400}); }
+        await db.insert(optimizerDefaults).values({id:1,weights}).onConflictDoUpdate({target:optimizerDefaults.id,set:{weights:sql`json_patch(${optimizerDefaults.weights}, ${weights})`}});
+        return NextResponse.json(await state());
+      }
+      if(action==='set_event_optimizer_weights') {
+        if(!isSuperAdmin(user))return Response.json({error:'Kun SuperAdmin har adgang.'},{status:403});
+        const eventId=Number(body.eventId);
+        if(!Number.isSafeInteger(eventId)||eventId<1)return Response.json({error:'Ugyldig spillerunde.'},{status:400});
+        const [target]=await db.select({id:events.id}).from(events).where(eq(events.id,eventId)).limit(1);
+        if(!target)return Response.json({error:'Spillerunden findes ikke.'},{status:404});
+        let parsed;
+        try {parsed=parseAlgorithmWeights(body.weights);}
+        catch(error){return Response.json({error:error instanceof Error?error.message:'Kontrollér faktorerne.'},{status:400});}
+        const path=`$.eventOptimizerWeights."${eventId}"`,weights=JSON.stringify(parsed);
+        await db.insert(optimizerDefaults).values({id:1,weights:JSON.stringify({eventOptimizerWeights:{[eventId]:parsed}})}).onConflictDoUpdate({target:optimizerDefaults.id,set:{weights:sql`json_set(${optimizerDefaults.weights}, ${path}, json(${weights}))`}});
+        return NextResponse.json(await state());
+      }
+      if(action==='set_court_order' || action==='set_play_times') {
+        if(user.role!=='admin')return Response.json({error:'Kun administratorer har adgang.'},{status:403});
+        let weights: string;
+        try {
+          const current=await loadPlaySchedule();
+          const courtOrder=action==='set_court_order'?parseCourtOrder(body.courtOrder):current.courtOrder;
+          const playTimes=action==='set_play_times'?parsePlayTimes(body.playTimes):current.playTimes;
+          buildPlaySchedule(courtOrder,playTimes);
+          weights=JSON.stringify(action==='set_court_order'?{courtOrder}:{playTimes});
+        }
+        catch(error){return Response.json({error:error instanceof Error?error.message:'Kontrollér banerækkefølgen.'},{status:400});}
+        await db.insert(optimizerDefaults).values({id:1,weights}).onConflictDoUpdate({target:optimizerDefaults.id,set:{weights:sql`json_patch(${optimizerDefaults.weights}, ${weights})`}});
+        return NextResponse.json(await state());
+      }
+      if(action==='set_registration_defaults') {
+        if(user.role!=='admin')return Response.json({error:'Kun administratorer har adgang.'},{status:403});
+        let defaults;
+        try {defaults=parseRegistrationDefaults(body);} catch(error) {return Response.json({error:error instanceof Error?error.message:'Invalid settings'},{status:400});}
+        await db.insert(registrationDefaults).values({id:1,...defaults}).onConflictDoUpdate({target:registrationDefaults.id,set:defaults});
         return NextResponse.json(await state());
       }
       if(action==="add_date"||action==="remove_date"){
@@ -200,7 +452,7 @@ export async function POST(request:Request){
           if(!validDate(body.date))return Response.json({error:"Vælg en gyldig dato."},{status:400});
           const [existing]=await db.select().from(events).where(eq(events.date,body.date)).limit(1);
           if(existing&&!existing.archived)return Response.json({error:"Datoen findes allerede på listen."},{status:409});
-          await db.insert(events).values(calendarEvent(body.date)).onConflictDoUpdate({target:events.date,set:{archived:false}});
+          await db.insert(events).values(calendarEvent(body.date, await loadRegistrationDefaults())).onConflictDoUpdate({target:events.date,set:{archived:false}});
         }else{
           const [target]=await db.select().from(events).where(eq(events.id,Number(body.eventId))).limit(1);
           if(!target||target.archived)return Response.json({error:"Datoen findes ikke på listen."},{status:404});
@@ -215,7 +467,7 @@ export async function POST(request:Request){
         if((cr===null && action==="approve_cr") || (cr!==null && (typeof cr!=="number" || !Number.isInteger(cr) || cr<1 || cr>9)))return Response.json({error:"Vælg CR fra 1 til 9 for at godkende."},{status:400});
         const playerId=Number(body.playerId);
         if(!Number.isSafeInteger(playerId)||playerId<1)return Response.json({error:"Medlemmet findes ikke."},{status:404});
-        const changed=await db.update(players).set({christinRanking:cr,crReviewedAt:action==="approve_cr"?new Date().toISOString():null}).where(eq(players.id,playerId)).returning({id:players.id});
+        const changed=await db.update(players).set({christinRanking:cr,crReviewedAt:action==="approve_cr"?new Date().toISOString():null}).where(and(eq(players.id,playerId),sql`EXISTS (SELECT 1 FROM profile_privacy WHERE player_id = ${players.id} AND closed_at IS NULL)`)).returning({id:players.id});
         if(!changed.length)return Response.json({error:"Medlemmet findes ikke."},{status:404});
         return NextResponse.json(await state());
       }
@@ -276,6 +528,7 @@ export async function POST(request:Request){
         });
       }
       if(action==="remove_kampplan"){
+        if(body.eventId !== undefined && Number(body.eventId) !== event.id)return Response.json({error:"Spillerunden er ændret. Genindlæs siden."},{status:409});
         if(user.role!=="admin")return Response.json({error:"Kun administratorer kan fjerne kampplanen."},{status:403});
         await db.batch([
           db.delete(feedback).where(sql`${feedback.matchId} IN (SELECT id FROM matches WHERE event_id = ${event.id})`),
@@ -304,11 +557,24 @@ export async function POST(request:Request){
         if(Number(body.eventId) !== event.id) return Response.json({error:"Spillerunden er ændret. Genindlæs siden."},{status:409});
         let schedule;
         try { schedule = registrationSchedule(body); } catch(error) { return Response.json({error:error instanceof Error ? error.message : "Kontrollér tidsplanen."},{status:400}); }
-        await db.update(events).set(schedule).where(eq(events.id,event.id));
+        await db.update(events).set({...schedule,registrationScheduleCustom:true}).where(eq(events.id,event.id));
         return NextResponse.json(await state());
       }
       const registrationOpen=registrationIsOpen(event);
-      if(["signup","cancel_signup","request_match","accept_match_request","lookup_member"].includes(action)&&!registrationOpen)return Response.json({error:event.registrationOverride==="closed"?"Tilmeldingen er lukket af administratoren.":`Tilmeldingen er lukket. Tidsplan: ${new Date(event.registrationOpensAt).toLocaleString('da-DK',{timeZone:'Europe/Copenhagen'})} til ${new Date(event.registrationClosesAt).toLocaleString('da-DK',{timeZone:'Europe/Copenhagen'})}.`},{status:400});
+      if(["signup","cancel_signup","request_match","accept_match_request","lookup_member"].includes(action)&&!registrationOpen)return Response.json({error:event.registrationOverride==="closed"?"Tilmeldingen er lukket af administratoren.":`Tilmeldingen er lukket. Tidsplan: ${new Date(event.registrationOpensAt).toLocaleDateString('da-DK',{timeZone:'Europe/Copenhagen'}) + ' kl. ' + new Date(event.registrationOpensAt).toLocaleTimeString('en-GB',{timeZone:'Europe/Copenhagen',hour:'2-digit',minute:'2-digit',hourCycle:'h23'})} til ${new Date(event.registrationClosesAt).toLocaleDateString('da-DK',{timeZone:'Europe/Copenhagen'}) + ' kl. ' + new Date(event.registrationClosesAt).toLocaleTimeString('en-GB',{timeZone:'Europe/Copenhagen',hour:'2-digit',minute:'2-digit',hourCycle:'h23'})}.`},{status:400});
+      if(action === 'join_waitlist') {
+        if (Number(body.eventId) !== event.id) return Response.json({error:'Spillerunden er ændret. Genindlæs siden.'},{status:409});
+        const [existingSignup] = await db.select({status:signups.status}).from(signups).where(and(eq(signups.eventId,event.id),eq(signups.playerId,user.id))).limit(1);
+        if (existingSignup?.status === 'active') return Response.json({error:'Du er allerede tilmeldt og kan ikke skifte til venteliste, når tilmeldingen er lukket.'},{status:400});
+        if (!waitlistIsOpen(event, await eventFirstMatchAt(event))) return Response.json({error:'Ventelisten er kun åben efter tilmeldingsfristen, når tilmeldingen er lukket, og før første kamp.'},{status:400});
+        let input;
+        try { input = signupInput(body,(await loadPlaySchedule()).times); if (input.nHours < 1) throw new Error('Vælg mindst 1 time.'); }
+        catch(error) { return Response.json({error:error instanceof Error ? error.message : 'Kontrollér dine ønsker.'},{status:400}); }
+        await db.insert(signups).values({eventId:event.id,playerId:user.id,availability:JSON.stringify(input.szPossible),requestedHours:input.nHours,status:'waitlist'})
+          .onConflictDoUpdate({target:[signups.eventId,signups.playerId],set:{availability:JSON.stringify(input.szPossible),requestedHours:input.nHours,status:'waitlist'},setWhere:sql`${signups.status} <> 'active'`});
+        await activity(user.id,'booking');
+        return NextResponse.json(await state());
+      }
       if(action==="lookup_member"){
         const memberNo=String(body.memberNo??"").trim();
         if(!memberNo)return Response.json({found:false,error:"Indtast et medlemsnummer."},{status:400});
@@ -316,11 +582,13 @@ export async function POST(request:Request){
         const [member]=await db.select({name:players.name}).from(players).where(eq(players.memberNo,memberNo)).limit(1);
         return Response.json(member?{found:true,name:member.name}:{found:false,error:"Medlemsnummeret findes ikke i appen endnu. Spilleren skal først oprette en profil."});
       }else if(action==="signup"){
+        await activity(user.id,"booking");
         let input;
-        try {input=signupInput(body,TIMES);} catch(error) {return Response.json({error:error instanceof Error?error.message:"Kontrollér dine tidsønsker."},{status:400});}
+        try {input=signupInput(body,(await loadPlaySchedule()).times);} catch(error) {return Response.json({error:error instanceof Error?error.message:"Kontrollér dine tidsønsker."},{status:400});}
         const availability=input.szPossible,requestedHours=input.nHours;
         await db.insert(signups).values({eventId:event.id,playerId:user.id,availability:JSON.stringify(availability),requestedHours,status:"active"}).onConflictDoUpdate({target:[signups.eventId,signups.playerId],set:{availability:JSON.stringify(availability),requestedHours,status:"active"}});
-      }else if(action==="cancel_signup")await db.update(signups).set({status:"cancelled"}).where(and(eq(signups.eventId,event.id),eq(signups.playerId,user.id)));
+        await activity(user.id,"booking");
+      }else if(action==="cancel_signup")await db.insert(signups).values({eventId:event.id,playerId:user.id,status:"cancelled",requestedHours:0,availability:'[]'}).onConflictDoUpdate({target:[signups.eventId,signups.playerId],set:{status:"cancelled",requestedHours:0,availability:'[]'}});
       else if(action==="request_match"){
         const invited=Array.from(new Set((body.memberNos??[]).map((x:unknown)=>String(x).trim()).filter(Boolean))) as string[]; if(invited.length!==3||invited.includes(user.memberNo))return Response.json({error:"Angiv tre forskellige medlemsnumre."},{status:400});
         for(const memberNo of invited){
@@ -331,8 +599,6 @@ export async function POST(request:Request){
       }else if(action==="accept_match_request"){
         const [req]=await db.select().from(matchRequests).where(and(eq(matchRequests.id,Number(body.id)),eq(matchRequests.eventId,event.id))).limit(1); if(!req||!JSON.parse(req.invitedMemberNos).includes(user.memberNo))return Response.json({error:"Invitationen findes ikke."},{status:404});
         const accepted=Array.from(new Set([...JSON.parse(req.acceptedPlayerIds),user.id])); await db.update(matchRequests).set({acceptedPlayerIds:JSON.stringify(accepted),status:accepted.length===4?"ready":"pending",completedAt:accepted.length===4?new Date().toISOString():null}).where(eq(matchRequests.id,req.id));
-      }else if(action==="feedback"){
-        await db.insert(feedback).values({matchId:Number(body.matchId),authorPlayerId:user.id,balance:body.balance,subjectPlayerId:body.subjectPlayerId?Number(body.subjectPlayerId):null,direction:body.direction??null,comment:String(body.comment??"").slice(0,500)}).onConflictDoUpdate({target:[feedback.matchId,feedback.authorPlayerId],set:{balance:body.balance,subjectPlayerId:body.subjectPlayerId?Number(body.subjectPlayerId):null,direction:body.direction??null,comment:String(body.comment??"").slice(0,500)}});
       }else if(action==="begin_substitute"){
         if(event.status!=="published")return Response.json({error:"Afløserfunktionen åbner, når kampplanen er offentliggjort."},{status:400});
         const [match]=await db.select().from(matches).where(and(eq(matches.id,Number(body.matchId)),eq(matches.eventId,event.id))).limit(1);
@@ -375,35 +641,28 @@ export async function POST(request:Request){
         else if(action==="generate"){
           return Response.json({error:'Brug “Algoritme foreslå kampe” under Kampplan Admin.'},{status:400});
         }
-        else if(action==="send_test_email"){
-          const recipient=user.email.trim().toLowerCase();
-          if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient))return Response.json({error:"Indtast en gyldig e-mailadresse."},{status:400});
-          await sendEmail({
-            to:recipient,
-            subject:"Test fra Åben Bane Aften",
-            text:"Dette er en testmail fra Åben Bane Aften-appen. E-mailfunktionen virker.\n\nDette er ikke en officiel HIK-app, men et hjælpemiddel lavet af administratoren for Åben Bane Aften. Kommentarer kan sendes til aabenbaneaften@hik.dk.",
-            html:"<div style=\"font-family:Arial,sans-serif;line-height:1.6;color:#17345c\"><h1 style=\"font-size:22px\">Test fra Åben Bane Aften</h1><p>Dette er en testmail fra Åben Bane Aften-appen.</p><p><strong>E-mailfunktionen virker.</strong></p><hr style=\"border:0;border-top:1px solid #d8e1ec;margin:24px 0\"><p style=\"font-size:13px;color:#5b677a\">Dette er ikke en officiel HIK-app, men et hjælpemiddel lavet af administratoren for Åben Bane Aften. Kommentarer kan sendes til <a href=\"mailto:aabenbaneaften@hik.dk\">aabenbaneaften@hik.dk</a>.</p></div>",
-          });
-        }
         else if(action==="publish")await db.update(events).set({status:"published",publishedAt:new Date().toISOString()}).where(eq(events.id,event.id));
         else if(action==="set_level")await db.update(players).set({adminLevel:body.level||null}).where(eq(players.id,Number(body.playerId)));
         else if(action==="set_admin"){
           const playerId=Number(body.playerId),makeAdmin=Boolean(body.makeAdmin);
           const [target]=await db.select({id:players.id,role:players.role}).from(players).where(eq(players.id,playerId)).limit(1);
           if(!target)return Response.json({error:"Spilleren findes ikke."},{status:404});
+          if(target.id===superAdminPlayerId())return Response.json({error:"SuperAdmin-adgangen kan ikke ændres her."},{status:403});
           const [{value:adminCount}]=await db.select({value:count()}).from(players).where(eq(players.role,"admin"));
           if(makeAdmin&&target.role!=="admin"&&adminCount>=4)return Response.json({error:"Der kan højst være fire administratorer i alt."},{status:400});
           if(!makeAdmin&&playerId===user.id)return Response.json({error:"Du kan ikke fjerne din egen administratoradgang."},{status:400});
           if(!makeAdmin&&target.role==="admin"&&adminCount<=1)return Response.json({error:"Den sidste administrator kan ikke fjernes."},{status:400});
           await db.update(players).set({role:makeAdmin?"admin":"player"}).where(eq(players.id,playerId));
+          if(target.role!==(makeAdmin?'admin':'player'))await recordSecurityEvent('role_changed',1,{actorId:user.id,targetId:playerId,newRole:makeAdmin?'admin':'player'});
         }
-        else if(action==="update_match")await db.update(matches).set({court:Number(body.court),startTime:String(body.startTime),playerIds:JSON.stringify(body.playerIds.map(Number)),locked:Boolean(body.locked)}).where(and(eq(matches.id,Number(body.id)),eq(matches.eventId,event.id)));
+        else if(action==="update_match") {
+          const {slots}=await loadPlaySchedule();
+          if(!slots.some(s=>s.court===Number(body.court)&&s.startTime===String(body.startTime)))return Response.json({error:'Banen er ikke til rådighed på dette tidspunkt.'},{status:400});
+          await db.update(matches).set({court:Number(body.court),startTime:String(body.startTime),playerIds:JSON.stringify(body.playerIds.map(Number)),locked:Boolean(body.locked)}).where(and(eq(matches.id,Number(body.id)),eq(matches.eventId,event.id)));
+        }
         else if(action==="mark_absent")await db.update(players).set({suspendedEventId:event.id}).where(eq(players.id,Number(body.playerId)));
       }
     }
     return NextResponse.json(await state());
-  }catch(error){const message=error instanceof Error?error.message:"Noget gik galt";return Response.json({error:message.includes("UNIQUE")?"Medlemsnummeret er allerede oprettet. Vælg “Log ind” og brug din personlige kode.":message},{status:500});}
+  }catch(error){if(error instanceof MfaError)return Response.json({error:error.message},{status:error.status,headers:{'Cache-Control':'no-store'}});const message=error instanceof Error?error.message:"Noget gik galt";return Response.json({error:message.includes("UNIQUE")?"Medlemsnummeret er allerede oprettet. Vælg “Log ind” og brug din personlige kode.":message},{status:500});}
 }
-
-
-

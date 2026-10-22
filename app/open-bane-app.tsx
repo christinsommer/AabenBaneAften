@@ -1,16 +1,40 @@
 "use client";
+import {SpouseSearch} from './spouse-search';
+import {ForbiddenPairsForm} from './forbidden-pairs-form';
+import {AdminMfaReset} from './admin-mfa-reset';
+import {MfaScreen,MfaSettings,type MfaPrompt} from './mfa-screen';
+import {BirthYearPrompt,BirthYearReminder} from './birth-year-prompt';
+import {RegistrationPrivacy,PrivacyGate,NewsletterPreferences} from './privacy-ui';
+import PrivacyAdmin,{PrivacyBadge} from './privacy-admin';
+import { OptimizerDefaultsForm } from './optimizer-defaults-form';
+import { CourtOrderForm } from './court-order-form';
+import { OptimizerResourcesForm } from './optimizer-resources-form';
+import { PlayTimesForm } from './play-times-form';
+import { EditSignupButton } from './edit-signup-button';
+import { playTimeLabel } from '../lib/play-schedule';
+import { RegistrationDefaultsForm } from './registration-defaults-form';
+import { EmailPlanButton } from './email-plan-button';
+import { planLink } from '../lib/plan-link';
+import { bccMailtoHref } from '../lib/mailto';
+import { PastPlan } from './past-plan';
+import { copenhagenDate } from '../lib/calendar';
 import { unusedImportedCourts } from "../lib/unused-courts";
 import { unfulfilledWishes } from "../lib/unfulfilled-wishes";
 import rulesContent from "../lib/rules-content.json";
-import { includeIntermediateTimes } from "../lib/signup";
+import { includeIntermediateTimes, signupSelectionError } from "../lib/signup";
+import { ContactVisibilityField } from '../components/contact-visibility-field';
+import { AlertDialog, AlertDialogTrigger, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter } from '../components/ui/alert-dialog';
+import { PlayerContact } from '../components/player-contact';
 import { ImportedPlanTable } from "./imported-plan";
 import { OptimizerPanel } from "./optimizer-panel";
+import { PlanEditor } from './plan-editor';
 import {ageFromBirthYear, birthYearOptions} from '../lib/birth-year';
 import { MatchCalendarButton } from "../components/match-calendar-button";
 import { isPlayersImportedMatch } from "../lib/kampplan-filter";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { appRequest, requireLoginSession } from "../lib/app-request";
-import { registrationDateParts } from "../lib/registration";
+import { loginConfig } from "../lib/login-config";
+import { firstMatchInstant, registrationIsOpen, waitlistIsOpen, registrationDateParts } from "../lib/registration";
 import { InstallApp } from "../components/install-app";
 import { levelScore } from '../lib/ranking';
 import { RankingField } from '../components/ranking-field';
@@ -62,15 +86,7 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-const timeLabel: Record<string, string> = {
-  "18:00": "18.00–19.00",
-  "18:30": "18.30–19.30",
-  "19:00": "19.00–20.00",
-  "19:30": "19.30–20.30",
-  "20:00": "20.00–21.00",
-  "20:30": "20.30–21.30",
-  "21:00": "21.00–22.00",
-};
+
 const niceDate = (v: string) =>
   new Intl.DateTimeFormat("da-DK", {
     weekday: "long",
@@ -78,7 +94,7 @@ const niceDate = (v: string) =>
     month: "long",
   }).format(new Date(`${v}T12:00:00`));
 const fullDate = (v: string) => new Intl.DateTimeFormat("da-DK", {weekday:"long",day:"numeric",month:"long",year:"numeric"}).format(new Date(`${v}T12:00:00`));
-const deadlineLabel = (v: string) => new Intl.DateTimeFormat("da-DK", {timeZone:"Europe/Copenhagen",weekday:"long",day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}).format(new Date(v));
+const deadlineLabel = (v: string) => new Intl.DateTimeFormat("da-DK", {timeZone:"Europe/Copenhagen",weekday:"long",day:"numeric",month:"short",hour:"2-digit",minute:"2-digit",hourCycle:"h23"}).format(new Date(v)).replace(/(\d{2})[.](\d{2})(?!\d)/g, '$1:$2');
 
 const toMinutes = (time: string) => {
   const [hours, mins] = time.split(":").map(Number);
@@ -110,6 +126,8 @@ export default function OpenBaneApp() {
   const [resetToken, setResetToken] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [registrationNotice, setRegistrationNotice] = useState("");
+  const [mfaPrompt,setMfaPrompt]=useState<MfaPrompt|null>(null);
+  const [recoveryCodes,setRecoveryCodes]=useState<string[]|null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -142,27 +160,32 @@ export default function OpenBaneApp() {
       setBusy(false);
     }
   }
-  async function act(payload: Record<string, unknown>) {
+  async function act(payload: Record<string, unknown>, onError?: (message:string)=>void) {
     setBusy(true);
     setError("");
     try {
       const j = await appRequest(payload);
+      if(j.mfa){setMfaPrompt(j.mfa);setData({authenticated:false});setOpenProfile(false);return true;}
+      if(j.recoveryCodes)setRecoveryCodes(j.recoveryCodes);
+      if(payload.action==='mfa_verify'||payload.action==='logout'||payload.action==='logout_all')setMfaPrompt(null);
       if (payload.action === "register") {
         setRegistrationNotice("Du er nu oprettet. Tjek din mail om du har modtaget en bekræftelse. Hvis ikke, så kontakt administrator.");
       }
-      if (payload.action === "logout") setRegistrationNotice("");
+      if (payload.action === "logout" || payload.action === 'logout_all') setRegistrationNotice("");
       if (payload.action === "register") setOpenProfile(true);
-      if (payload.action === "logout" || payload.action === "login") setOpenProfile(false);
+      if (payload.action === "logout" || payload.action === 'logout_all' || payload.action === "login") setOpenProfile(false);
       // Login still verifies that the browser sends the newly issued cookie.
-      if (payload.action === "login" || payload.action === "register" || typeof j.authenticated !== "boolean") {
-        if (!await load(payload.action === "login" || payload.action === "register")) return false;
+      if (payload.action === "login" || payload.action === 'mfa_verify' || payload.action === "register" || typeof j.authenticated !== "boolean") {
+        if (!await load(payload.action === "login" || payload.action === 'mfa_verify' || payload.action === "register")) return false;
       } else {
         setData(j);
       }
       if (j.warning) setError(j.warning);
       return true;
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Noget gik galt");
+      const message=e instanceof Error ? e.message : "Noget gik galt";
+      setError(message);
+      onError?.(message);
       return false;
     } finally {
       setBusy(false);
@@ -170,6 +193,13 @@ export default function OpenBaneApp() {
   }
   useEffect(() => {
     load();
+    const reloadAfterPrivacyChange = () => { void load(); };
+    window.addEventListener('privacy-updated', reloadAfterPrivacyChange);
+    window.addEventListener('session-expired', reloadAfterPrivacyChange);
+    return () => {
+      window.removeEventListener('privacy-updated', reloadAfterPrivacyChange);
+      window.removeEventListener('session-expired', reloadAfterPrivacyChange);
+    };
   }, []);
   useEffect(() => {
     if (!data?.authenticated || busy) return;
@@ -190,6 +220,7 @@ export default function OpenBaneApp() {
     window.addEventListener('focus', updateSchedule);
     return () => { active = false; window.clearInterval(timer); window.removeEventListener('focus', updateSchedule); };
   }, [data?.authenticated, busy]);
+  if(mfaPrompt||recoveryCodes)return <MfaScreen prompt={mfaPrompt} recoveryCodes={recoveryCodes} act={act} busy={busy} error={error} onContinue={()=>setRecoveryCodes(null)}/>;
   if (!data)
     return (
       <main className="grid min-h-screen place-items-center bg-[#f4f6fa]">
@@ -214,7 +245,8 @@ export default function OpenBaneApp() {
       />
     );
   return <>
-    {registrationNotice && <div role="status" className="mx-auto max-w-5xl px-4 pt-4"><p className="rounded-lg border border-green-200 bg-green-50 p-4 text-green-900">{registrationNotice}</p></div>}
+    <PrivacyGate key={data.user.id} id={data.user.id}>{data.user.birthYear==null&&<BirthYearPrompt key={data.user.id} act={act} busy={busy}/>}</PrivacyGate>
+    {registrationNotice && <div role="status" className="mx-auto max-w-5xl px-2 pt-4 sm:px-4"><p className="rounded-lg border border-green-200 bg-green-50 p-4 text-green-900">{registrationNotice}</p></div>}
     {!data.event
       ? <EmptyCalendarDashboard data={data} act={act} busy={busy} error={error} openProfile={openProfile} />
       : <Dashboard data={data} act={act} busy={busy} error={error} openProfile={openProfile} refresh={refresh} refreshing={refreshing} />}
@@ -254,11 +286,12 @@ function AuthScreen({ mode, setMode, act, busy, error, event, resetToken }: any)
 
   function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (busy) return;
     act(Object.fromEntries(new FormData(e.currentTarget).entries()));
   }
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,#dfe4ee,transparent_42%),#f7f8fb] px-4 py-8 sm:py-14">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,#dfe4ee,transparent_42%),#f7f8fb] px-2 py-8 sm:px-4 sm:py-14">
       <div className="mx-auto grid max-w-5xl overflow-hidden rounded-[2rem] border border-[#cfe1d7] bg-white shadow-[0_24px_80px_rgba(19,55,94,.18)] md:grid-cols-[.9fr_1.1fr]">
         <section className="relative overflow-hidden bg-[#13375e] p-8 text-white sm:p-12">
           <div className="tennis-court-bg" aria-hidden="true">
@@ -299,21 +332,6 @@ function AuthScreen({ mode, setMode, act, busy, error, event, resetToken }: any)
           </div>
         </section>
         <section className="p-6 sm:p-12">
-          <div className="mb-7 flex rounded-xl bg-[#edf1f7] p-1">
-            <button
-              onClick={() => { setMode("login"); setNotice(""); }}
-              className={`flex-1 rounded-lg px-4 py-3 font-semibold ${mode === "login" ? "bg-white text-[#13375e] shadow-sm" : "text-slate-500"}`}
-            >
-              Log ind
-            </button>
-            <button
-              onClick={() => { setMode("register"); setNotice(""); }}
-              className={`flex-1 rounded-lg px-4 py-3 font-semibold ${mode === "register" ? "bg-white text-[#13375e] shadow-sm" : "text-slate-500"}`}
-            >
-              Opret profil
-            </button>
-          </div>
-
           {notice && (
             <p className="mb-4 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800">{notice}</p>
           )}
@@ -365,12 +383,16 @@ function AuthScreen({ mode, setMode, act, busy, error, event, resetToken }: any)
           {mode !== "forgot" && mode !== "reset" && (
             <div>
               <h2 className="text-2xl font-bold">
-                {mode === "login" ? "Velkommen tilbage" : "Opret spillerprofil"}
+                {mode === "login" ? "Log ind" : "Opret login"}
               </h2>
               <p className="mt-1 text-slate-500">
                 Brug dit HIK-medlemsnummer og en pinkode.
               </p>
-              <form onSubmit={submit} className="mt-7 grid gap-4">
+              <form onSubmit={submit} onKeyDown={e => {
+                if (mode !== 'login' || e.key !== 'Enter' || e.nativeEvent.isComposing || !(e.target instanceof HTMLInputElement)) return;
+                e.preventDefault();
+                if (!busy && !e.repeat) e.currentTarget.requestSubmit();
+              }} className="mt-7 grid gap-4">
                 <input type="hidden" name="action" value={mode} />
                 {mode === "register" && (
                   <>
@@ -388,14 +410,15 @@ function AuthScreen({ mode, setMode, act, busy, error, event, resetToken }: any)
                     </div>
                   </>
                 )}
-                <Field name="memberNo" label="HIK-medlemsnummer" autoComplete="username" />
+                <Field key={mode} name="memberNo" label="HIK-medlemsnummer" autoComplete="username" autoFocus={mode === "login"} inputMode={mode === "login" ? loginConfig.memberNoInputMode : undefined} />
                 <Field
                   name="pin"
                   label="Pinkode (4–8 cifre)"
                   type="password"
-                  inputMode="numeric"
+                  inputMode={mode === "login" ? loginConfig.pinInputMode : "numeric"}
                   autoComplete={mode === "login" ? "current-password" : "new-password"}
                 />
+                {mode === "register" && <RegistrationPrivacy/>}
                 {error && (
                   <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">
                     {error}
@@ -415,9 +438,25 @@ function AuthScreen({ mode, setMode, act, busy, error, event, resetToken }: any)
                   disabled={busy}
                   className="mt-2 h-12 bg-[#13375e] text-base hover:bg-[#0d2947]"
                 >
-                  {busy ? "Vent…" : mode === "login" ? "Log ind" : "Opret profil"}
+                  {busy ? "Vent…" : mode === "login" ? "Log ind" : "Opret login"}
                 </Button>
               </form>
+              <p className="mt-6 text-center text-sm text-slate-600">
+                {mode === "login" ? "Har du ikke en profil? " : "Har du allerede en profil? "}
+                <button
+                  type="button"
+                  disabled={busy}
+                  className="font-bold text-[#13375e] underline underline-offset-2 disabled:opacity-50"
+                  onClick={() => { setMode(mode === "login" ? "register" : "login"); setNotice(""); }}
+                >
+                  {mode === "login" ? "Opret login" : "Log ind"}
+                </button>
+              </p>
+              {mode === "login" && (
+                <p className="mt-2 text-center text-sm leading-6 text-slate-600">
+                  Du skal oprette en særskilt profil til aabenbaneaften.dk, også selvom du allerede booker baner på hik.halbooking.dk.
+                </p>
+              )}
             </div>
           )}
         </section>
@@ -473,11 +512,6 @@ function RulesDialog({ light = false }: { light?: boolean }) {
             {section.paragraphs.map((paragraph, index) => <p key={index} className="mt-2 whitespace-pre-line">{paragraph}</p>)}
           </section>)}
         </div>
-        <DialogFooter>
-          <DialogClose asChild>
-            <Button className="bg-[#13375e]">Luk reglerne</Button>
-          </DialogClose>
-        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
@@ -521,7 +555,7 @@ function WaitlistDialog({ items, matches, userMatches, userLevel }: any) {
                   className="rounded-2xl border border-[#a9c9b6] bg-[#f0f3f8] p-4"
                 >
                   <h3 className="font-bold text-[#13375e]">
-                    Mulige afløsere til kl. {timeLabel[match.startTime]} · bane{" "}
+                    Mulige afløsere til kl. {playTimeLabel(match.startTime)} · bane{" "}
                     {match.court}
                   </h3>
                   {!candidates.length ? (
@@ -550,11 +584,6 @@ function WaitlistDialog({ items, matches, userMatches, userLevel }: any) {
             </section>
           </div>
         )}
-        <DialogFooter>
-          <DialogClose asChild>
-            <Button className="bg-[#13375e]">Luk ventelisten</Button>
-          </DialogClose>
-        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
@@ -562,7 +591,7 @@ function WaitlistDialog({ items, matches, userMatches, userLevel }: any) {
 
 function WaitlistPlayer({ player, compact = false }: any) {
   const availability = JSON.parse(player.availability).map(
-    (time: string) => timeLabel[time],
+    (time: string) => playTimeLabel(time),
   );
   return (
               <div
@@ -604,7 +633,7 @@ function Dashboard({ data, act, busy, error, openProfile, refresh, refreshing }:
   return (
     <main className="min-h-screen bg-[#f4f6fa]">
       <header className="sticky top-0 z-20 border-b border-[#dce9e1] bg-white/95 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3 sm:px-6">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-2 py-3 sm:px-6">
           <div className="flex items-center gap-3">
             <img
               src="/hik-logo-clean.png"
@@ -632,7 +661,7 @@ function Dashboard({ data, act, busy, error, openProfile, refresh, refreshing }:
           </div>
         </div>
       </header>
-      <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-9">
+      <div className="mx-auto max-w-7xl px-2 py-6 sm:px-6 sm:py-9">
         {error && (
           <p className="mb-5 rounded-xl border border-red-200 bg-red-50 p-4 text-red-700">
             {error}
@@ -644,7 +673,7 @@ function Dashboard({ data, act, busy, error, openProfile, refresh, refreshing }:
             {userMatches
               .map(
                 (match: any) =>
-                  `kl. ${timeLabel[match.startTime]} på bane ${match.court}`,
+                  `kl. ${playTimeLabel(match.startTime)} på bane ${match.court}`,
               )
               .join(" og ")}
             .
@@ -661,7 +690,7 @@ function Dashboard({ data, act, busy, error, openProfile, refresh, refreshing }:
                   {niceDate(data.event.date)}
                 </h1>
                 <p className="mt-2 text-white/75">
-                  Bane 1–4 fra kl. 18 · Bane 5–7 fra kl. 18.30
+                  Starttider og baner fremgår af dine spilleønsker nedenfor.
                 </p>
                 <div className="flex flex-wrap gap-3">
                   <RulesDialog light />
@@ -708,17 +737,17 @@ function Dashboard({ data, act, busy, error, openProfile, refresh, refreshing }:
                   </p>
                 )}
                 <p className="mt-0.5 text-[11px] text-slate-500">
-                  {data.event.registrationOverride === "auto" ? `Kampplan senest ${niceDate(data.event.date)}, kl. 12.00` : "Den normale tidsplan er tilsidesat"}
+                  {data.event.registrationOverride === "auto" ? `Kampplan senest ${niceDate(data.event.date)}, kl. 12:00` : "Den normale tidsplan er tilsidesat"}
                 </p>
               </div>
             </CardContent>
           </Card>
         </section>
-        <Tabs defaultValue={openProfile ? "profile" : userMatches.length ? "plan" : "signup"}>
+        <Tabs defaultValue={typeof window !== 'undefined' && planLink(window.location.search).open ? 'plan' : openProfile ? "profile" : userMatches.length ? "plan" : "signup"}>
           <TabsList className="mb-6 h-auto w-full justify-start gap-1 overflow-x-auto rounded-2xl bg-white p-1.5 shadow-sm">
             <TabsTrigger value="signup" className="px-3 py-2">
               <CalendarDays className="mr-2 h-4 w-4" />
-              Tilmelding
+              Tilmeldinger
             </TabsTrigger>
             <TabsTrigger value="plan" className="px-3 py-2">
               <Trophy className="mr-2 h-4 w-4" />
@@ -735,9 +764,13 @@ function Dashboard({ data, act, busy, error, openProfile, refresh, refreshing }:
                 <CrReviewCount players={data.players} />
               </TabsTrigger>
             )}
+            {data.user.isSuperAdmin&&<TabsTrigger value="superadmin">SuperAdmin</TabsTrigger>}
           </TabsList>
-          <TabsContent value="signup">
-            <SignupPanel data={data} act={act} busy={busy} />
+          {data.user.isSuperAdmin&&<TabsContent value="superadmin"><SuperAdminPanel data={data} act={act} busy={busy}/></TabsContent>}
+          <TabsContent value="signup" className="space-y-4">
+            {data.user.birthYear==null&&<BirthYearReminder act={act} busy={busy}/>}
+            <SignupPanel key={`${data.event.id}:${JSON.stringify(data.times)}`} data={data} act={act} busy={busy} />
+            <CalendarList dates={data.calendarDates ?? []} currentId={data.event.id} />
           </TabsContent>
           <TabsContent value="plan">
             <PlanPanel data={data} userMatches={userMatches} act={act} busy={busy} />
@@ -751,7 +784,6 @@ function Dashboard({ data, act, busy, error, openProfile, refresh, refreshing }:
             </TabsContent>
           )}
         </Tabs>
-        <div className="mb-6"><CalendarList dates={data.calendarDates ?? []} currentId={data.event.id} /></div>
         <InstallApp />
         <Disclaimer />
       </div>
@@ -780,18 +812,21 @@ function CalendarList({dates,currentId,act,busy=false}: {dates:CalendarDate[];cu
       {act && <form onSubmit={add} className="flex flex-wrap items-end gap-3">
         <div className="grid gap-2"><Label htmlFor="new-event-date">Ny spilledag</Label><Input id="new-event-date" type="date" required value={newDate} onChange={event=>setNewDate(event.target.value)} /></div>
         <Button disabled={busy||!newDate}>Tilføj dato</Button>
-        <p className="w-full text-sm text-slate-600">Du kan også tilføje andre ugedage. Tilmeldingen åbner som standard to dage før kl. 12 og lukker dagen før kl. 12, dansk tid.</p>
+        <p className="w-full text-sm text-slate-600">Du kan også tilføje andre ugedage. Tilmeldingen åbner som standard to dage før kl. 12:00 og lukker dagen før kl. 12:00, dansk tid.</p>
       </form>}
       {message && <p role="status" className="text-sm text-[#13375e]">{message}</p>}
       <details open={Boolean(act)}>
         <summary className="cursor-pointer font-semibold text-[#13375e]">Se datolisten</summary>
         {!dates.length && <p className="mt-3 text-sm text-slate-600">Der er ingen datoer på listen.</p>}
-        <ul className="mt-3 grid gap-2 sm:grid-cols-2">
-          {dates.map(day=><li key={day.id} className="flex items-center justify-between gap-2 rounded-xl border p-3">
+        <ul className={`mt-3 grid gap-2 ${act ? '' : 'sm:grid-cols-2'}`}>
+          {dates.map(day=><li key={day.id} className="min-w-0 rounded-xl border p-3">
+            <div className="flex items-center justify-between gap-2">
             <div><p className="text-sm font-medium capitalize">{fullDate(day.date)}</p>
               <div className="mt-1 flex flex-wrap gap-1">{day.id===currentId&&<Badge>Aktuel runde</Badge>}{day.isTest&&<Badge variant="outline">Test</Badge>}{day.status==="cancelled"&&<Badge variant="outline">Aflyst</Badge>}</div>
             </div>
             {act&&<Button type="button" variant="ghost" size="sm" disabled={busy||day.testActive} title={day.testActive?"Afslut testfasen først":undefined} aria-label={`Fjern ${fullDate(day.date)}`} onClick={()=>setRemoving(day)}><Trash2 className="mr-1 h-4 w-4"/>Fjern</Button>}
+            </div>
+            {act && day.date < copenhagenDate() && !day.testActive && <PastPlan eventId={day.id}/>}
           </li>)}
         </ul>
       </details>
@@ -803,25 +838,31 @@ function CalendarList({dates,currentId,act,busy=false}: {dates:CalendarDate[];cu
 }
 
 function EmptyCalendarDashboard({data,act,busy,error,openProfile}: {
-  data:{user:MemberProfile & {id:number;role:string};calendarDates:CalendarDate[];players?:MemberProfile[]};
+  data:{user:MemberProfile & {id:number;role:string;isSuperAdmin?:boolean};calendarDates:CalendarDate[];players?:MemberProfile[]};
   act:AppAction;busy:boolean;error:string;openProfile:boolean;
 }) {
-  return <main className="min-h-screen bg-[#f4f6fa] px-4 py-8">
+  return <main className="min-h-screen bg-[#f4f6fa] px-2 py-8 sm:px-4">
     <div className="mx-auto max-w-5xl space-y-5">
       <div className="flex items-center justify-between"><h1 className="text-2xl font-bold">Åben Bane</h1><Button variant="outline" onClick={()=>act({action:"logout"})}><LogOut className="mr-2 h-4 w-4"/>Log ud</Button></div>
-      <p className="rounded-xl bg-white p-4">Der er ingen kommende spilledage på listen. {data.user.role==="admin"?"Tilføj en dato nedenfor for at åbne en ny runde.":"Administratoren skal tilføje flere datoer. Du kan stadig ændre din profil."}</p>
+      <p className="rounded-xl bg-white p-4">Der er ingen kommende spilledage på listen. Administratoren skal tilføje flere datoer. Du kan stadig ændre din profil.</p>
       {error&&<p role="alert" className="rounded-xl bg-red-50 p-4 text-red-700">{error}</p>}
       <Tabs defaultValue={openProfile?"profile":"dates"}>
-        <TabsList><TabsTrigger value="dates"><CalendarDays className="mr-2 h-4 w-4"/>Spilledage</TabsTrigger><TabsTrigger value="profile"><Settings className="mr-2 h-4 w-4"/>Profil</TabsTrigger>{data.user.role==="admin" && <TabsTrigger value="members">Admin · Medlemmer<CrReviewCount players={data.players}/></TabsTrigger>}</TabsList>
-        <TabsContent value="dates"><CalendarList dates={data.calendarDates} act={data.user.role==="admin"?act:undefined} busy={busy}/></TabsContent>
+        <TabsList><TabsTrigger value="dates"><CalendarDays className="mr-2 h-4 w-4"/>Tilmeldinger</TabsTrigger><TabsTrigger value="profile"><Settings className="mr-2 h-4 w-4"/>Profil</TabsTrigger>{data.user.role==="admin" && <TabsTrigger value="members">Admin · Medlemmer<CrReviewCount players={data.players}/></TabsTrigger>}{data.user.role==='admin'&&<><TabsTrigger value="privacy" className="h-auto flex-col gap-1 py-2"><span>Privatliv & inaktive profiler</span><PrivacyBadge/></TabsTrigger><TabsTrigger value="newsletter">Nyhedsmails</TabsTrigger></>}{data.user.isSuperAdmin&&<TabsTrigger value="superadmin">SuperAdmin</TabsTrigger>}</TabsList>{data.user.isSuperAdmin&&<TabsContent value="superadmin"><SuperAdminPanel data={data} act={act} busy={busy}/></TabsContent>}{data.user.role==='admin'&&<><TabsContent value="privacy"><PrivacyAdmin/></TabsContent><TabsContent value="newsletter"><PrivacyAdmin mode="newsletter"/></TabsContent></>}
+        <TabsContent value="dates">{data.user.birthYear==null&&<BirthYearReminder act={act} busy={busy}/>}<CalendarList dates={data.calendarDates}/></TabsContent>
         <TabsContent value="profile"><ProfilePanel user={data.user} act={act} busy={busy}/></TabsContent>
-        {data.user.role==="admin" && <TabsContent value="members"><MembersPanel data={data} act={act} busy={busy}/></TabsContent>}
+        {data.user.role==="admin" && <TabsContent value="members"><CalendarList dates={data.calendarDates} act={act} busy={busy}/><MembersPanel data={data} act={act} busy={busy}/></TabsContent>}
       </Tabs>
     </div><Disclaimer/>
   </main>;
 }
 
 type MemberProfile = {
+  role?: string;
+  spouse?: {id:number;name:string}|null;
+  spouseNo?: number | null;
+  spouseMode?: number | null;
+  emailVisible?: boolean;
+  phoneVisible?: boolean;
   birthYear?: number | null;
   phone?: string;
   phoneCountryCode?: string;
@@ -838,19 +879,35 @@ type MemberProfile = {
 
 const CR_LABELS = ["", "A+", "A", "A-", "B+", "B", "B-", "C+", "C", "C-"];
 
-function ProfilePanel({ user, act, busy, adminMode=false }: {
+function ProfilePanel({ user, act, busy, adminMode=false, members=[] }: {
   user: MemberProfile;
   act: (body: Record<string, unknown>) => Promise<boolean>;
   busy: boolean;
   adminMode?: boolean;
+  members?: MemberProfile[];
 }) {
   const [saved, setSaved] = useState(false);
   const [birthYear, setBirthYear] = useState(user.birthYear?.toString() ?? '');
+  const [savedBirthYear, setSavedBirthYear] = useState(user.birthYear);
+  // The prompt can save while this form is already mounted. Update only this
+  // field so a later profile save cannot overwrite the newly saved year.
+  if (savedBirthYear !== user.birthYear) {
+    setSavedBirthYear(user.birthYear);
+    setBirthYear(user.birthYear?.toString() ?? '');
+  }
+  const [email, setEmail] = useState(user.email);
+  const [currentPin, setCurrentPin] = useState('');
+  const [spousePlayerId, setSpousePlayerId] = useState<number | null | undefined>(undefined);
+  const emailChanged = email.trim().toLowerCase() !== user.email.trim().toLowerCase();
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSaved(false);
     const values = Object.fromEntries(new FormData(event.currentTarget).entries());
-    if (await act({ ...values, action: "update_profile" })) setSaved(true);
+    if (await act({ ...values, ...(!adminMode && spousePlayerId !== undefined ? {spousePlayerId} : {}), emailVisible: values.emailVisible === "on", phoneVisible: values.phoneVisible === "on", action: "update_profile" })) {
+      setSaved(true);
+      setCurrentPin('');
+      setSpousePlayerId(undefined);
+    }
   }
   return (
     <Card className="max-w-2xl border-[#dce9e1]">
@@ -859,17 +916,25 @@ function ProfilePanel({ user, act, busy, adminMode=false }: {
         <CardDescription>Kontrollér og opdatér dine oplysninger.</CardDescription>
       </CardHeader>
       <CardContent>
+        {!adminMode&&<NewsletterPreferences key={user.email}/>}
         <form onSubmit={submit} onChange={() => setSaved(false)} className="grid gap-4">
           <div className="grid gap-4 sm:grid-cols-2">
             <Field name="firstName" label="Fornavn" defaultValue={user.firstName} autoComplete="given-name" maxLength={100} />
             <Field name="lastName" label="Efternavn" defaultValue={user.lastName} autoComplete="family-name" maxLength={100} />
           </div>
           <Field name="memberNo" label="Medlemsnummer" defaultValue={user.memberNo} readOnly />
-          <Field name="email" label="E-mailadresse" type="email" defaultValue={user.email} autoComplete="email" maxLength={254} />
-          <div className="grid grid-cols-[7rem_1fr] gap-3">
+          <div className="grid items-end gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+            <Field name="email" label="E-mailadresse" type="email" value={email} onChange={(event:React.ChangeEvent<HTMLInputElement>)=>setEmail(event.target.value)} autoComplete="email" maxLength={254} />
+            <ContactVisibilityField name="emailVisible" label="E-mailadresse" defaultChecked={user.emailVisible ?? true} />
+          </div>
+          {emailChanged && <div className="space-y-2">
+            <Field name="currentPin" label="Bekræft med din egen kode" type="password" inputMode="numeric" autoComplete="current-password" maxLength={8} value={currentPin} onChange={(event:React.ChangeEvent<HTMLInputElement>)=>setCurrentPin(event.target.value)} />
+            <p className="text-sm text-slate-600">{adminMode ? 'Brug din egen administratorkode. Medlemmet logges ud på alle enheder.' : 'Dine andre enheder logges ud, når du ændrer e-mailadressen.'}</p>
+          </div>}
+          <div className="grid items-end gap-2 sm:grid-cols-[minmax(0,1fr)_auto]"><div className="grid grid-cols-[7rem_minmax(0,1fr)] gap-3">
             <Field name="phoneCountryCode" label="Landekode" defaultValue={user.phoneCountryCode ?? "+45"} autoComplete="tel-country-code" pattern="\+[1-9][0-9]{0,2}" maxLength={4} />
             <Field name="phone" label="Telefonnummer (valgfrit)" type="tel" inputMode="numeric" autoComplete="tel-national" defaultValue={user.phone??""} required={false} pattern="[0-9]*" maxLength={15} />
-          </div>
+          </div><ContactVisibilityField name="phoneVisible" label="Telefonnummer" defaultChecked={user.phoneVisible ?? true} /></div>
           <div className="grid gap-2">
             <Label htmlFor="profile-gender">Køn</Label>
             <select id="profile-gender" name="gender" defaultValue={user.gender} required className="h-10 rounded-md border border-input bg-transparent px-3">
@@ -887,49 +952,79 @@ function ProfilePanel({ user, act, busy, adminMode=false }: {
             {birthYear && <p className="text-sm text-slate-600">Beregnet alder: {ageFromBirthYear(Number(birthYear))} år.</p>}
           </div>
           {adminMode && <div className="grid gap-2"><Label htmlFor="edit-member-cr">CR</Label><select id="edit-member-cr" name="christinRanking" defaultValue={user.christinRanking??""} className="h-10 rounded-md border px-3"><option value="">Ikke vurderet</option>{[1,2,3,4,5,6,7,8,9].map(cr=><option key={cr} value={cr}>{`${cr}  ${CR_LABELS[cr]}`}</option>)}</select></div>}
+          {!adminMode && <SpouseSearch initial={user.spouse ?? null} disabled={busy} onChange={id => {setSpousePlayerId(id);setSaved(false);}} />}
+          {adminMode && <>
+            <div className="grid gap-2"><Label htmlFor="edit-spouse-no">Spouse No.</Label>
+              <select id="edit-spouse-no" name="spouseNo" defaultValue={user.spouseNo ?? ''} className="h-10 min-w-0 rounded-md border px-3">
+                <option value="">Ingen partner</option>
+                {members.filter(p => p.memberNo !== user.memberNo).slice().sort((a,b) => (a.firstName+' '+a.lastName).localeCompare(b.firstName+' '+b.lastName,'da')).map(p =>
+                  <option key={p.memberNo} value={p.memberNo} disabled={!/^\d+$/.test(p.memberNo) || !Number.isSafeInteger(Number(p.memberNo)) || Number(p.memberNo) <= 0}>{p.firstName} {p.lastName} ({p.memberNo})</option>)}
+              </select>
+            </div>
+            <div className="grid gap-2"><Label htmlFor="edit-spouse-mode">Spillebetingelse</Label>
+              <select id="edit-spouse-mode" name="spouseMode" defaultValue={user.spouseMode ?? ''} className="h-10 rounded-md border px-3">
+                <option value="">Ingen betingelse</option><option value="1">Spille samtidigt</option><option value="2">Spille sammen med</option>
+              </select>
+            </div>
+          </>}
           <Button disabled={busy} className="bg-[#13375e]">{busy ? "Gemmer…" : "Gem profil"}</Button>
           {saved && <p role="status" className="text-sm font-semibold text-[#13375e]">Din profil er gemt.</p>}
         </form>
+        {!adminMode && <section className="mt-6 space-y-2 border-t pt-4">
+          <h2 className="font-semibold">Login og enheder</h2>
+          <p className="text-sm text-slate-600">Log ud på alle enheder, inklusive denne.</p>
+          <Button type="button" variant="outline" disabled={busy} onClick={()=>act({action:'logout_all'})}>Log ud på alle enheder</Button>
+        </section>}
+        {!adminMode && user.role==='admin' && <MfaSettings act={act} busy={busy}/>}
       </CardContent>
     </Card>
   );
 }
 
-function EditMemberDialog({player,act,busy}:{player:MemberProfile & {id:number};act:AppAction;busy:boolean}) {
+function EditMemberDialog({player,act,busy,members}:{player:MemberProfile & {id:number};act:AppAction;busy:boolean;members:MemberProfile[]}) {
   const [open,setOpen]=useState(false);
   const [error,setError]=useState('');
   async function save(values:Record<string,unknown>) {
     setError('');
-    const success=await act({...values,action:'update_member',playerId:player.id,christinRanking:values.christinRanking===''?null:Number(values.christinRanking)});
+    const success=await act({...values,action:'update_member',playerId:player.id,spouseNo:values.spouseNo === '' ? null : Number(values.spouseNo),spouseMode:values.spouseMode === '' ? null : Number(values.spouseMode),christinRanking:values.christinRanking===''?null:Number(values.christinRanking)});
     if(success)setOpen(false);else setError('Oplysningerne blev ikke gemt. Kontrollér felterne.');
     return success;
   }
-  return <Dialog open={open} onOpenChange={setOpen}><DialogTrigger asChild><Button variant="outline" disabled={busy}><Pencil className="mr-2 h-4 w-4"/>Ret medlem</Button></DialogTrigger><DialogContent className="max-h-[90dvh] overflow-y-auto"><DialogHeader><DialogTitle>Ret {player.firstName} {player.lastName}</DialogTitle><DialogDescription>Medlemsnummeret kan ikke ændres. CR redigeres særskilt og er kun synlig for administratorer.</DialogDescription></DialogHeader><ProfilePanel user={player} act={save} busy={busy} adminMode/>{error&&<p role="alert" className="text-sm text-red-700">{error}</p>}</DialogContent></Dialog>;
-}
-
-function DeleteMemberDialog({player,currentUserId,act,busy}:{player:MemberProfile & {id:number};currentUserId:number;act:AppAction;busy:boolean}) {
-  const [open,setOpen]=useState(false);
-  const [confirmed,setConfirmed]=useState(false);
-  const [error,setError]=useState('');
-  async function remove() {
-    setError('');
-    if(await act({action:'delete_member',playerId:player.id,confirmMemberNo:player.memberNo}))setOpen(false);
-    else setError('Medlemmet blev ikke slettet. Genindlæs listen og prøv igen.');
-  }
-  return <Dialog open={open} onOpenChange={value=>{setOpen(value);setConfirmed(false);setError('');}}>
-    <DialogTrigger asChild><Button variant="destructive" disabled={busy||player.id===currentUserId} title={player.id===currentUserId?'Du kan ikke slette din egen konto':undefined}><Trash2 className="mr-2 h-4 w-4"/>Slet medlem</Button></DialogTrigger>
-    <DialogContent><DialogHeader><DialogTitle>Slet {player.firstName} {player.lastName}?</DialogTitle><DialogDescription>Medlemsnummer {player.memberNo}. Medlemsoplysninger, adgang, tilmeldinger og tilknyttede kampinvitationer slettes. Det kan ikke fortrydes. Kampene bevares med teksten “Slettet medlem”; eventuelle kampplaner skal rettes bagefter.</DialogDescription></DialogHeader>
-      <label className="flex items-center gap-3 text-sm"><Checkbox checked={confirmed} onCheckedChange={value=>setConfirmed(value===true)}/>Jeg vil slette medlem #{player.memberNo}.</label>
-      {error&&<p role="alert" className="text-sm text-red-700">{error}</p>}
-      <DialogFooter><DialogClose asChild><Button variant="outline" disabled={busy}>Annuller</Button></DialogClose><Button variant="destructive" disabled={busy||!confirmed} onClick={remove}>{busy?'Sletter…':'Slet medlem permanent'}</Button></DialogFooter>
-    </DialogContent>
-  </Dialog>;
+  return <Dialog open={open} onOpenChange={setOpen}><DialogTrigger asChild><Button variant="outline" className="size-10 p-0 sm:w-auto sm:px-3" aria-label={`Ret ${player.firstName} ${player.lastName}`} title="Ret medlem" disabled={busy}><Pencil className="size-4 sm:mr-1"/><span className="sr-only sm:not-sr-only">Ret medlem</span></Button></DialogTrigger><DialogContent className="max-h-[90dvh] overflow-y-auto"><DialogHeader><DialogTitle>Ret {player.firstName} {player.lastName}</DialogTitle><DialogDescription>Medlemsnummeret kan ikke ændres. CR redigeres særskilt og er kun synlig for administratorer.</DialogDescription></DialogHeader><ProfilePanel user={player} act={save} busy={busy} adminMode members={members}/>{error&&<p role="alert" className="text-sm text-red-700">{error}</p>}</DialogContent></Dialog>;
 }
 
 function SignupPanel({ data, act, busy }: any) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const [selectionError, setSelectionError] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmError, setConfirmError] = useState('');
+  const [confirmBusy, setConfirmBusy] = useState(false);
+  const confirmPending = useRef(false);
+  async function confirmWish(save: boolean) {
+    if (confirmPending.current || busy) return;
+    confirmPending.current = true;
+    setConfirmBusy(true);
+    setConfirmError('');
+    try {
+      const success = await (save ? saveWish() : removeSignup());
+      if (success) setConfirmOpen(false);
+      else setConfirmError(save ? 'Ønskerne blev ikke gemt. Prøv igen.' : 'Ønskerne blev ikke fjernet. Prøv igen.');
+    } catch {
+      setConfirmError('Handlingen kunne ikke gennemføres. Prøv igen.');
+    } finally {
+      confirmPending.current = false;
+      setConfirmBusy(false);
+    }
+  }
+  const registeredMembers: {id:number;name:string}[] = [...(data.registeredMembers ?? [])].sort((a,b) => a.name.localeCompare(b.name,'da'));
   const current = data.signup?.status === "not_registered" ? null : data.signup;
+  const [editingWishes, setEditingWishes] = useState(!current || current.status === 'cancelled' || !current.nHours);
   const [selected, setSelected] = useState<string[]>(
-    current?.szPossible ?? [],
+    (current?.szPossible ?? []).filter((time:string)=>data.times.includes(time)),
   );
   const [hours, setHours] = useState(current?.nHours > 0 ? current.nHours : 1);
   const [invites, setInvites] = useState(["", "", ""]);
@@ -947,8 +1042,31 @@ function SignupPanel({ data, act, busy }: any) {
   const ownRequests = (data.requests ?? []).filter(
     (request: any) => request.isCreator,
   );
-  const canEdit = data.isOpen;
+  const canEdit = registrationIsOpen(data.event, now);
+  const roundStart = data.firstMatchAt ?? firstMatchInstant(data.event.date, data.times);
+  const roundDate = new Date(`${data.event.date}T12:00:00Z`);
+  const roundTime = new Date(roundStart).toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit', hourCycle:'h23', timeZone:'Europe/Copenhagen'});
+  const confirmationText = `Du har nu ønsket at spille ${hours} ${hours === 1 ? 'time' : 'timer'} ${roundDate.toLocaleDateString('da-DK', {weekday:'long', timeZone:'Europe/Copenhagen'})} d. ${roundDate.toLocaleDateString('da-DK', {day:'2-digit', month:'long', timeZone:'Europe/Copenhagen'})}.\nRunden starter kl. ${roundTime}.`;
+  const canJoinWaitlist = current?.status !== 'active' && waitlistIsOpen(data.event, roundStart, now);
+  const canChoose = canEdit || canJoinWaitlist;
+  const canChangeWishes = canChoose && editingWishes && !busy;
+  const wishesChanged = editingWishes && (current && current.status !== 'cancelled'
+    ? hours !== current.nHours || selected.length !== (current.szPossible?.length ?? 0) || selected.some(time => !current.szPossible?.includes(time))
+    : selected.length > 0);
+  async function joinWaitlist() {
+    const error = signupSelectionError(selected, hours);
+    if (error) { setSelectionError(error); setConfirmError(''); setConfirmOpen(true); return; }
+    const expanded = includeIntermediateTimes(selected, data.times);
+    if (await act({action:'join_waitlist',eventId:data.event.id,nHours:hours,nPossible:expanded.length,szPossible:expanded})) {
+      setSelected(expanded);
+      setSaved(false);
+      setRemoved(false);
+      setEditingWishes(false);
+    }
+  }
   async function saveWish() {
+    const error = signupSelectionError(selected, hours);
+    if (error) { setSelectionError(error); return false; }
     setSaved(false);
     setRemoved(false);
     const expanded = includeIntermediateTimes(selected, data.times);
@@ -962,7 +1080,10 @@ function SignupPanel({ data, act, busy }: any) {
     ) {
       setSelected(expanded);
       setSaved(true);
+      setEditingWishes(false);
+      return true;
     }
+    return false;
   }
   async function removeSignup() {
     setSaved(false);
@@ -970,7 +1091,10 @@ function SignupPanel({ data, act, busy }: any) {
       setSelected([]);
       setHours(1);
       setRemoved(true);
+      setEditingWishes(true);
+      return true;
     }
+    return false;
   }
   async function sendInvites() {
     setInviteSent(false);
@@ -1015,7 +1139,7 @@ function SignupPanel({ data, act, busy }: any) {
         <CardHeader className="gap-1 px-4">
           <CardTitle>Dine spilleønsker</CardTitle>
           <CardDescription>
-            Vælg 1-3 timer; vælg ALLE mulige tidspunkter du kan; tryk "Gem mine ønsker"
+            Vælg 1-3 timer; vælg ALLE mulige tidspunkter du kan; tryk "Gem mine ønsker". Du skal vælge mindst 2 tider for 1 time, 4 tider for 2 timer og 6 tider for 3 timer. Der skal også være nok tider uden overlap til dine ønskede timer.
           </CardDescription>
         </CardHeader>
         <CardContent className="px-4">
@@ -1024,7 +1148,7 @@ function SignupPanel({ data, act, busy }: any) {
             <div className="mt-2 grid grid-cols-3 gap-2">
               {[1,2,3].map(value => <button
                 key={value}
-                disabled={!canEdit}
+                disabled={!canChangeWishes}
                 aria-pressed={hours === value}
                 onClick={() => {
                   setSaved(false);
@@ -1043,15 +1167,15 @@ function SignupPanel({ data, act, busy }: any) {
             {[
               {
                 title: "Start på hel time",
-                subtitle: "Bane 1–4",
+                subtitle: `Bane ${(data.courtOrder?.whole ?? []).join(', ')}`,
                 times: data.times.filter((time: string) => !time.endsWith(":30")),
               },
               {
                 title: "Start på halv time",
-                subtitle: "Bane 5–7",
+                subtitle: `Bane ${(data.courtOrder?.half ?? []).join(', ')}`,
                 times: data.times.filter((time: string) => time.endsWith(":30")),
               },
-            ].map((group) => (
+            ].filter(group=>group.times.length>0).map((group) => (
               <section key={group.title}>
                 <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-2">
                   <h3 className="text-sm font-semibold text-slate-950">{group.title}</h3>
@@ -1061,10 +1185,10 @@ function SignupPanel({ data, act, busy }: any) {
                   {group.times.map((t: string) => (
                     <label
                       key={t}
-                      className={`flex min-h-11 items-center gap-2 rounded-lg border px-3 py-2 ${canEdit ? "cursor-pointer" : "cursor-not-allowed opacity-55"} ${selected.includes(t) ? "border-[#13375e] bg-[#f0f3f8]" : "border-slate-200"}`}
+                      className={`flex min-h-11 items-center gap-2 rounded-lg border px-3 py-2 ${canChangeWishes ? "cursor-pointer" : "cursor-not-allowed"} ${selected.includes(t) ? "border-[#13375e] bg-[#f0f3f8]" : "border-slate-200"}`}
                     >
                       <Checkbox
-                        disabled={!canEdit}
+                        disabled={!canChangeWishes}
                         checked={selected.includes(t)}
                         onCheckedChange={(yes) => {
                           setSaved(false);
@@ -1076,31 +1200,45 @@ function SignupPanel({ data, act, busy }: any) {
                           );
                         }}
                       />
-                      <strong className="text-sm">{timeLabel[t]}</strong>
+                      <strong className="text-sm">{playTimeLabel(t)}</strong>
                     </label>
                   ))}
                 </div>
               </section>
             ))}
           </div>
-          <p className="mt-4 text-sm text-slate-600">Når du gemmer, vælges mellemliggende tider automatisk, hvis du har valgt to timer i træk. Fx tilføjes 18.30–19.30 ved valg af 18.00–19.00 og 19.00–20.00.</p>
+          <p className="mt-4 text-sm text-slate-600">Når du gemmer, vælges tilgængelige mellemliggende tider automatisk, hvis du har valgt to timer i træk.</p>
           <div className="mt-4 flex flex-wrap gap-2">
-            <Button
-              disabled={busy || selected.length < hours || !canEdit}
-              onClick={saveWish}
+            {!editingWishes && <Button disabled={busy || !canChoose} className="bg-[#13375e]" onClick={() => {setEditingWishes(true);setSaved(false);setSelectionError(null);}}>Ret mine ønsker</Button>}
+            <AlertDialog open={confirmOpen} onOpenChange={open => { if (!confirmPending.current) { setSelectionError(open ? signupSelectionError(selected, hours) : null); setConfirmOpen(open); setConfirmError(''); } }}>
+            {editingWishes && <AlertDialogTrigger asChild><Button
+              disabled={busy || !canEdit}
               className="bg-[#13375e]"
             >
               {busy ? "Gemmer…" : "Gem mine ønsker"}
-            </Button>
-            {current && data.event.status !== "published" && (
+            </Button></AlertDialogTrigger>}
+            <AlertDialogContent onEscapeKeyDown={event => { if (confirmPending.current) event.preventDefault(); }}>
+              <AlertDialogHeader>
+                <AlertDialogTitle>{selectionError ? 'Kontrollér dine tider' : 'Bekræft dine ønsker'}</AlertDialogTitle>
+                <AlertDialogDescription className="whitespace-pre-line">{selectionError ?? confirmationText}</AlertDialogDescription>
+              </AlertDialogHeader>
+              {confirmError && <p role="alert" className="text-sm text-red-700">{confirmError}</p>}
+              <AlertDialogFooter>
+                {!selectionError && <Button variant="outline" disabled={busy || confirmBusy} onClick={() => void confirmWish(false)}>Fortryd</Button>}
+                <Button className="bg-[#13375e]" disabled={busy || confirmBusy || (!selectionError && !canEdit)} onClick={() => selectionError ? setConfirmOpen(false) : void confirmWish(true)}>OK</Button>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+            </AlertDialog>
               <Button
                 disabled={busy || !canEdit}
                 variant="outline"
                 onClick={removeSignup}
               >
-                Fjern min tilmelding
+                Fjern mine ønsker
               </Button>
-            )}
+              {now > Date.parse(data.event.registrationClosesAt) && <Button
+                variant="outline" disabled={busy || !canJoinWaitlist} onClick={() => void joinWaitlist()}
+              >Sæt mig på venteliste</Button>}
           </div>
           {saved && (
             <p className="mt-2 flex items-center gap-2 text-sm font-semibold text-[#13375e]">
@@ -1111,16 +1249,24 @@ function SignupPanel({ data, act, busy }: any) {
           {removed && (
             <p className="mt-2 flex items-center gap-2 text-sm font-semibold text-[#13375e]">
               <Check className="h-4 w-4" />
-              Din tilmelding og dine tidsønsker er fjernet.
+              Dine ønsker er fjernet. Din status er Afbud.
             </p>
           )}
-          {!saved && current && (
+          {!saved && !removed && current && (
             <p className="mt-2 flex items-center gap-2 text-sm font-medium text-[#13375e]">
               <Check className="h-4 w-4" />
-              {current.nHours === 0 ? "Du har valgt ikke at spille." : `Du er ${current.status === "waitlist" ? "på venteliste" : "tilmeldt"}.`}
-              Dine senest gemte ønsker vises ovenfor.
+              {current.status === 'cancelled' ? 'Din status er Afbud.' : current.nHours === 0 ? "Du har valgt ikke at spille." : `Du er ${current.status === "waitlist" ? "på venteliste" : "tilmeldt"}.`}
+              {current.status !== 'cancelled' && !editingWishes && ' Dine gemte ønsker vises ovenfor.'}
             </p>
           )}
+          {wishesChanged && <p role="status" className="mt-2 text-sm font-medium text-amber-800">Dine ændringer er ikke gemt. {canEdit ? 'Tryk på “Gem mine ønsker” for at gemme dem.' : canJoinWaitlist ? 'Tryk på “Sæt mig på venteliste” for at gemme dem.' : 'Tilmeldingen er lukket.'}</p>}
+          <section className="mt-6 border-t border-slate-200 pt-4" aria-label="Tilmeldte medlemmer">
+            <h3 className="mb-1 text-base font-semibold">Tilmeldte til denne spillerunde ({registeredMembers.length})</h3>
+            <p className="mt-1 text-sm text-slate-600">Se, hvem der har tilmeldt sig. Listen opdateres automatisk.</p>
+            {registeredMembers.length ? <ul className="mt-3 grid gap-2 sm:grid-cols-2">
+              {registeredMembers.map(member => <li key={member.id} className="rounded-lg bg-slate-50 px-3 py-2 text-sm [overflow-wrap:anywhere]">{member.name}</li>)}
+            </ul> : <p className="mt-3 text-sm text-slate-600">Ingen medlemmer er tilmeldt endnu.</p>}
+          </section>
         </CardContent>
       </Card>
     </div>
@@ -1128,16 +1274,16 @@ function SignupPanel({ data, act, busy }: any) {
 }
 
 function PlanPanel({ data, userMatches, act, busy }: any) {
-  const [onlyMine, setOnlyMine] = useState(false);
+  const [onlyMine, setOnlyMine] = useState(() => typeof window !== 'undefined' && planLink(window.location.search).onlyMine);
   const calendarDate = onlyMine && data.event.status === "published" ? data.event.date : undefined;
   const filterButton = <Button variant={onlyMine ? "default" : "outline"} aria-pressed={onlyMine} onClick={() => setOnlyMine(!onlyMine)}>{onlyMine ? "Vis alle kampe" : "Vis kun mine kampe"}</Button>;
   const name = (id: number) =>
     data.names.find((p: any) => p.id === id)?.name ?? "Slettet medlem";
   const importedRows = Array.isArray(data.importedMatches) ? data.importedMatches : [];
+  const linkedDate = typeof window !== 'undefined' ? planLink(window.location.search).date : null;
+  if (linkedDate && linkedDate !== data.event.date) return <p role="status" className="rounded-xl border bg-white p-4">Linket gælder en anden spilledag end den aktuelle. <Button variant="link" onClick={() => { window.location.href = '/?view=plan&mine=1'; }}>Vis den aktuelle kampplan</Button></p>;
 
-  if (importedRows.length > 0) return <div className="space-y-2">{filterButton}<ImportedPlanTable calendarDate={calendarDate} calendarPlayers={data.names} rows={onlyMine ? importedRows.filter((row: Record<string, unknown>) => isPlayersImportedMatch(row, data.user.name)) : importedRows} /></div>;
-
-  if (!data.matches.length && !importedRows.length)
+  if (data.event.status !== 'published' || (!data.matches.length && !importedRows.length))
     return (
       <Card className="border-dashed border-[#a9c9b6] bg-white/70">
         <CardContent className="grid min-h-64 place-items-center p-8 text-center">
@@ -1147,12 +1293,13 @@ function PlanPanel({ data, userMatches, act, busy }: any) {
               Kampplanen er ikke offentliggjort endnu
             </h2>
             <p className="mt-2 text-slate-500">
-              Den kommer senest fredag kl. 12.00.
+              Den kommer senest fredag kl. 12:00.
             </p>
           </div>
         </CardContent>
       </Card>
     );
+  if (importedRows.length > 0) return <div className="space-y-2">{filterButton}<ImportedPlanTable contacts={data.planContacts} calendarDate={calendarDate} calendarPlayers={data.names} rows={onlyMine ? importedRows.filter((row: Record<string, unknown>) => isPlayersImportedMatch(row, data.user.name)) : importedRows} /></div>;
   return (
     <div className="space-y-6">
       {filterButton}
@@ -1180,7 +1327,7 @@ function PlanPanel({ data, userMatches, act, busy }: any) {
           <CardContent>
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
               {data.matches.map((m: any) => (
-                <MatchCard key={m.id} match={m} name={name} />
+                <MatchCard key={m.id} match={m} name={name} contacts={data.planContacts} />
               ))}
             </div>
           </CardContent>
@@ -1203,7 +1350,7 @@ function PlayerMatchCard({ match, name, data, act, busy, calendarDate }: any) {
   );
   return (
     <div className="space-y-3 rounded-2xl border border-[#13375e] bg-[#f0f3f8] p-3">
-      <MatchCard match={match} name={name} highlight calendarDate={calendarDate} calendarPlayers={data.names} />
+      <MatchCard match={match} name={name} contacts={data.planContacts} highlight calendarDate={calendarDate} calendarPlayers={data.names} />
       {!substitution ? (
         <Dialog>
           <DialogTrigger asChild>
@@ -1253,11 +1400,6 @@ function PlayerMatchCard({ match, name, data, act, busy, calendarDate }: any) {
                 )}
               </div>
             )}
-            <DialogFooter>
-              <DialogClose asChild>
-                <Button className="bg-[#13375e]">Luk ventelisten</Button>
-              </DialogClose>
-            </DialogFooter>
           </DialogContent>
         </Dialog>
       ) : substitution.status === "unresolved" ? (
@@ -1332,7 +1474,7 @@ function PlayerMatchCard({ match, name, data, act, busy, calendarDate }: any) {
     </div>
   );
 }
-function MatchCard({ match, name, highlight, calendarDate, calendarPlayers }: any) {
+function MatchCard({ match, name, highlight, calendarDate, calendarPlayers, contacts = [] }: any) {
   const ids = JSON.parse(match.playerIds);
   return (
     <article
@@ -1341,19 +1483,19 @@ function MatchCard({ match, name, highlight, calendarDate, calendarPlayers }: an
       <div className="flex items-center justify-between">
         <Badge variant="outline">Bane {match.court}</Badge>
         <span className="font-bold text-[#13375e]">
-          Kl. {timeLabel[match.startTime]}
+          Kl. {playTimeLabel(match.startTime)}
         </span>
         {calendarDate && <MatchCalendarButton match={{ date: calendarDate, startTime: match.startTime, court: match.court, players: ids.map((id: number) => calendarPlayers?.find((player: { id: number }) => player.id === id) ?? name(id)) }} />}
       </div>
       <div className="mt-4 grid grid-cols-[1fr_auto_1fr] items-center gap-3">
         <div>
-          <p className="font-semibold">{name(ids[0])}</p>
-          <p className="font-semibold">{name(ids[1])}</p>
+          <p className="font-semibold"><PlayerContact name={name(ids[0])} contact={contacts.find((p: {id: number}) => p.id === ids[0])} /></p>
+          <p className="font-semibold"><PlayerContact name={name(ids[1])} contact={contacts.find((p: {id: number}) => p.id === ids[1])} /></p>
         </div>
         <span className="text-xs font-black text-slate-400">VS</span>
         <div className="text-right">
-          <p className="font-semibold">{name(ids[2])}</p>
-          <p className="font-semibold">{name(ids[3])}</p>
+          <p className="font-semibold"><PlayerContact name={name(ids[2])} contact={contacts.find((p: {id: number}) => p.id === ids[2])} /></p>
+          <p className="font-semibold"><PlayerContact name={name(ids[3])} contact={contacts.find((p: {id: number}) => p.id === ids[3])} /></p>
         </div>
       </div>
     </article>
@@ -1372,9 +1514,7 @@ function RegistrationScheduleForm({ event, act, busy }: any) {
       {([{ name: 'opens', label: 'Tilmelding åbner', value: opens }, { name: 'closes', label: 'Tilmelding lukker', value: closes }]).map(({ name, label, value }) => <fieldset key={name} disabled={busy} className="space-y-2">
         <legend className="text-sm font-semibold">{label}</legend>
         <label className="grid gap-1 text-sm">Dato<Input type="date" name={`${name}Date`} defaultValue={value.date} required /></label>
-        <label className="grid gap-1 text-sm">Klokkeslæt<select name={`${name}Hour`} defaultValue={value.hour} required className="h-10 rounded-md border border-input bg-transparent px-3">
-          {Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0')).map(hour => <option key={hour} value={hour}>{hour}:00</option>)}
-        </select></label>
+        <label className="grid gap-1 text-sm">Klokkeslæt<Input type="text" pattern="([01][0-9]|2[0-3]):[0-5][0-9]" maxLength={5} placeholder="hh:mm" title="24-timers ur, fx 06:30 eller 18:00" name={`${name}Time`} defaultValue={new Date(name === 'opens' ? event.registrationOpensAt : event.registrationClosesAt).toLocaleTimeString('en-GB',{timeZone:'Europe/Copenhagen',hour:'2-digit',minute:'2-digit',hourCycle:'h23'})} required /></label>
       </fieldset>)}
     </div>
     <Button type="submit" disabled={busy}>{busy ? 'Gemmer…' : 'Gem tidsplan'}</Button>
@@ -1382,33 +1522,15 @@ function RegistrationScheduleForm({ event, act, busy }: any) {
 }
 
 function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
-  const [kampplanPrompt, setKampplanPrompt] = useState("");
-  const [promptError, setPromptError] = useState("");
-  useEffect(() => {
-    const controller = new AbortController();
-    async function loadPrompt() {
-      try {
-        const response = await fetch('/kampplan-prompt.txt', { cache: 'no-store', signal: controller.signal });
-        if (!response.ok) throw new Error('Prompten kunne ikke hentes. Genindlæs siden og prøv igen.');
-        const text = await response.text();
-        if (!text.trim()) throw new Error('Promptfilen er tom.');
-        setKampplanPrompt(text);
-      } catch (error) {
-        if (!controller.signal.aborted) setPromptError(error instanceof Error ? error.message : 'Prompten kunne ikke hentes.');
-      }
-    }
-    void loadPrompt();
-    return () => controller.abort();
-  }, []);
   const [editing, setEditing] = useState<number | null>(null);
   const [listView, setListView] = useState<"current" | "history">("current");
-  const [testEmailResult, setTestEmailResult] = useState("");
   const [uploadError, setUploadError] = useState("");
   const [isImporting, setIsImporting] = useState(false);
+  const [planEditPending, setPlanEditPending] = useState(false);
   const draftMatches = data.adminMatches ?? [];
   const importedRows = Array.isArray(data.importedMatches) ? data.importedMatches : [];
   const hasImportedPlan = importedRows.length > 0;
-  const unusedCourts = unusedImportedCourts(importedRows, data.times);
+  const unusedCourts = unusedImportedCourts(importedRows, data.times, data.slots);
   const wishes = unfulfilledWishes(importedRows, data.signups ?? []);
   const openSubstitutions = (data.substitutions ?? []).filter(
     (item: any) => item.status !== "replaced",
@@ -1416,12 +1538,13 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
   return (
     <Tabs defaultValue="signups" className="space-y-6">
       <TabsList aria-label="Admin" className="flex h-auto w-full flex-wrap justify-start gap-1 bg-[#e7f0e9] p-1 group-data-[orientation=horizontal]/tabs:h-auto [&>button]:h-auto">
+        <TabsTrigger value="privacy" className="flex-col gap-1 py-2"><span>Privatliv & inaktive profiler</span><PrivacyBadge/></TabsTrigger><TabsTrigger value="newsletter">Nyhedsmails</TabsTrigger>
         <TabsTrigger value="signups" className="min-h-9 px-2.5">Tilmeldinger</TabsTrigger>
         <TabsTrigger value="matches" className="min-h-9 px-2.5">Kampplan Admin</TabsTrigger>
         <TabsTrigger value="members" className="min-h-9 px-2.5">Medlemmer<CrReviewCount players={data.players}/></TabsTrigger>
         <TabsTrigger value="dates" className="min-h-9 px-2.5">Spilledage</TabsTrigger>
         <TabsTrigger value="settings" className="min-h-9 px-2.5">Indstillinger</TabsTrigger>
-      </TabsList>
+      </TabsList><TabsContent value="privacy"><PrivacyAdmin/></TabsContent><TabsContent value="newsletter"><PrivacyAdmin mode="newsletter"/></TabsContent>
       <TabsContent value="dates" className="space-y-6">
       <CalendarList dates={data.calendarDates ?? []} currentId={data.event.id} act={act} busy={busy} />
       </TabsContent>
@@ -1456,8 +1579,9 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
       </Card>
       <PlayerLists data={data} view={listView} setView={setListView} act={act} busy={busy} />
       </TabsContent>
-      <TabsContent value="matches" className="space-y-6">
-      <OptimizerPanel key={`${data.event.id}:${data.event.importedKampplan}`} event={data.event} rows={importedRows} wishes={wishes} isOpen={data.isOpen} busy={busy} refresh={refresh} />
+      <TabsContent value="matches" forceMount className="space-y-6 data-[state=inactive]:hidden">
+      <OptimizerPanel key={`optimizer-${data.event.id}`} event={data.event} rows={importedRows} wishes={wishes} isOpen={data.isOpen} busy={busy || planEditPending} refresh={refresh} />
+      <p className="text-sm text-slate-600">{data.signups.filter((s:any)=>s.signup.nHours>0&&s.signup.status!=='cancelled'&&data.players.find((p:any)=>p.id===s.player.id)?.birthYear==null).length} deltagere mangler fødselsår. Beregningen kan fortsætte; aldershensyn bruges kun, hvor de nødvendige aldre er kendt.</p>
       {!!openSubstitutions.length && (
         <Card className="border-amber-300 bg-amber-50">
           <CardHeader>
@@ -1473,7 +1597,7 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
                 <div key={item.id} className="rounded-xl border border-amber-200 bg-white p-4">
                   <p className="font-bold">{item.outgoingName}</p>
                   <p className="text-sm text-slate-700">
-                    {match ? `Kl. ${timeLabel[match.startTime]} · bane ${match.court}` : "Kampen kunne ikke findes"}
+                    {match ? `Kl. ${playTimeLabel(match.startTime)} · bane ${match.court}` : "Kampen kunne ikke findes"}
                   </p>
                   <Badge className={`mt-2 ${item.status === "unresolved" ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-900"}`}>
                     {item.status === "unresolved" ? "Kan ikke finde afløser" : "Søger afløser"}
@@ -1484,23 +1608,6 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
           </CardContent>
         </Card>
       )}
-      <div className="space-y-2 rounded-xl border border-slate-200 bg-white p-4">
-        {kampplanPrompt ? <Button asChild className="bg-[#13375e]">
-          <a href={`https://chatgpt.com/?q=${encodeURIComponent(kampplanPrompt)}`} target="_blank" rel="noopener noreferrer">
-            <Sparkles className="mr-2 h-4 w-4" />
-            Foreslå kampe
-          </a>
-        </Button> : <Button disabled>{promptError ? 'Foreslå kampe' : 'Henter prompt…'}</Button>}
-        {promptError && <p role="alert" className="text-sm text-red-700">{promptError}</p>}
-        <p className="text-sm text-slate-600">
-          Åbner ChatGPT i en ny fane med prompten. Vedhæft selv den eksporterede Excel-fil med tilmeldingerne i ChatGPT.
-          Download derefter KampPlan.xlsx fra ChatGPT, og brug “Importér kampplan” herunder.
-        </p>
-        <details className="text-sm text-slate-600">
-          <summary className="cursor-pointer">Hvis prompten ikke kommer med, kan du kopiere den her</summary>
-          <textarea aria-label="Prompt til kampplan" readOnly value={kampplanPrompt} onFocus={event => event.currentTarget.select()} className="mt-2 h-60 w-full rounded-md border p-3" />
-        </details>
-      </div>
       <div className="flex flex-wrap gap-3">
         <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2">
           <label htmlFor="import-kampplan" className="text-sm font-medium text-slate-700">
@@ -1509,7 +1616,7 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
           <input
             id="import-kampplan"
             type="file"
-            disabled={busy || isImporting}
+            disabled={busy || isImporting || planEditPending}
             accept=".xlsx,.xls"
             className="block max-w-[220px] text-sm text-slate-600 file:mr-2 file:rounded-md file:border-0 file:bg-[#13375e] file:px-2 file:py-1 file:text-white"
             onChange={async (event) => {
@@ -1539,7 +1646,7 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
           />
         </div>
         <Button
-          disabled={busy || (!draftMatches.length && !data.importedMatches?.length)}
+          disabled={busy || planEditPending || (!draftMatches.length && !data.importedMatches?.length)}
           variant="outline"
           onClick={() => act({ action: "publish" })}
         >
@@ -1547,7 +1654,7 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
         </Button>
         <Button
           variant="outline"
-          disabled={busy || (!draftMatches.length && !data.importedMatches?.length)}
+          disabled={busy || planEditPending || (!draftMatches.length && !data.importedMatches?.length)}
           onClick={() => {
             if (window.confirm("Fjern kampplanen for denne spilledag? Tilmeldingerne bevares."))
               void act({ action: "remove_kampplan" });
@@ -1555,6 +1662,7 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
         >
           Fjern kampplan
         </Button>
+        <EmailPlanButton key={data.event.id} eventId={data.event.id} date={data.event.date} signups={data.signups} disabled={busy || planEditPending || data.event.status !== 'published' || (!draftMatches.length && !data.importedMatches?.length)} />
       </div>
       {isImporting && (
         <p className="rounded-xl border border-[#dce9e1] bg-[#f0f3f8] p-3 text-sm font-medium text-[#13375e]">
@@ -1567,7 +1675,8 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
         </p>
       )}
       {Array.isArray(data.importedMatches) && data.importedMatches.length > 0 && (
-        <ImportedPlanTable rows={data.importedMatches} />
+        <PlanEditor contacts={data.planContacts} key={`plan-editor-${data.event.id}`} event={data.event} rows={data.importedMatches} scores={data.adminPlanScores}
+          weights={data.optimizerWeights} busy={busy} isOpen={data.isOpen} refresh={refresh} onPendingChange={setPlanEditPending} />
       )}
       <Card className="border-[#dce9e1]">
         <CardHeader>
@@ -1589,7 +1698,7 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
                   className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
                 >
                   <p className="font-bold text-[#13375e]">
-                    {timeLabel[slot.time]}
+                    {playTimeLabel(slot.time)}
                   </p>
                   <p className="mt-1 text-sm text-slate-700">
                     {slot.courts
@@ -1631,91 +1740,29 @@ function AdminPanel({ data, act, busy, refresh, refreshing }: any) {
       <MembersPanel data={data} act={act} busy={busy} />
       </TabsContent>
       <TabsContent value="settings" className="space-y-6">
-      <AdminManagers data={data} act={act} busy={busy} />
-      <Card className="border-[#dce9e1]">
-        <CardHeader>
-          <CardTitle>Eksport til Excel</CardTitle>
-          <CardDescription>
-            Downloader den aktuelle tilmeldingsliste som en Excel-fil direkte til din enhed.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <Button
-            disabled={busy}
-            className="bg-[#13375e]"
-            onClick={async () => {
-              const response = await fetch("/api/app", {
-                method: "POST",
-                headers: { "content-type": "application/json" },
-                body: JSON.stringify({ action: "export_signups" }),
-              });
-
-              if (!response.ok) {
-                const body = await response.json().catch(() => ({})) as { error?: string };
-                throw new Error(body.error || "Eksporten kunne ikke genereres.");
-              }
-
-              const blob = await response.blob();
-              const url = URL.createObjectURL(blob);
-              const link = document.createElement("a");
-              link.href = url;
-              link.download = "AabenBane.xlsx";
-              document.body.appendChild(link);
-              link.click();
-              link.remove();
-              URL.revokeObjectURL(url);
-            }}
-          >
-            <Download className="mr-2 h-4 w-4" />
-            Download Excel
-          </Button>
-        </CardContent>
-      </Card>
-      <Card className="border-[#dce9e1]">
-        <CardHeader>
-          <CardTitle>Test e-mail</CardTitle>
-          <CardDescription>
-            Kontrollér e-mailfunktionen, før kampplanen sendes til spillerne.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <p className="text-sm text-slate-700">Modtager: {data.user.email || "Ingen e-mailadresse angivet"}</p>
-          <Button
-            disabled={busy}
-            variant="outline"
-            onClick={async () => {
-              setTestEmailResult("");
-              if (await act({ action: "send_test_email" })) {
-                setTestEmailResult(`Testmailen er sendt til ${data.user.email}.`);
-              }
-            }}
-          >
-            <Mail className="mr-2 h-4 w-4" />
-            Send testmail
-          </Button>
-          {testEmailResult && (
-            <p className="rounded-xl bg-[#f0f3f8] p-3 text-sm font-semibold text-[#13375e]">
-              {testEmailResult}
-            </p>
-          )}
-        </CardContent>
-      </Card>
+      {data.user.isSuperAdmin && <AdminManagers data={data} act={act} busy={busy} />}
+      <RegistrationDefaultsForm key={JSON.stringify(data.registrationDefaults)} defaults={data.registrationDefaults} act={act} busy={busy} />
+      <CourtOrderForm key={JSON.stringify(data.courtOrder)} defaults={data.courtOrder} act={act} busy={busy} />
+      <PlayTimesForm key={JSON.stringify(data.playTimes)} defaults={data.playTimes} act={act} busy={busy} />
       </TabsContent>
     </Tabs>
   );
 }
 
 function AdminManagers({ data, act, busy }: any) {
-  const admins = data.players.filter((p: any) => p.role === "admin");
+  const admins = data.players.filter((p: any) => p.role === "admin" && !p.isSuperAdmin);
+  const adminCount = data.players.filter((p: any) => p.role === 'admin').length;
   const candidates = data.players.filter((p: any) => p.role !== "admin");
   const [selected, setSelected] = useState("");
+  const [adminPin, setAdminPin] = useState("");
+  async function changeAdmin(playerId: number, makeAdmin: boolean) {
+    const result = await act({action:'set_admin',playerId,makeAdmin,adminPin});
+    setAdminPin('');
+    return result;
+  }
   async function addAdmin() {
     if (
-      await act({
-        action: "set_admin",
-        playerId: Number(selected),
-        makeAdmin: true,
-      })
+      await changeAdmin(Number(selected), true)
     )
       setSelected("");
   }
@@ -1729,6 +1776,10 @@ function AdminManagers({ data, act, busy }: any) {
         </CardDescription>
       </CardHeader>
       <CardContent>
+        <label className="mb-4 block text-sm font-medium">
+          Bekræft rolleændringer med din egen kode
+          <Input type="password" inputMode="numeric" autoComplete="current-password" value={adminPin} onChange={event=>setAdminPin(event.target.value)} maxLength={8} className="mt-2 max-w-sm" />
+        </label>
         <div className="mb-4 space-y-2">
           {admins.map((p: any) => (
             <div
@@ -1746,15 +1797,11 @@ function AdminManagers({ data, act, busy }: any) {
               </div>
               {p.id !== data.user.id && (
                 <Button
-                  disabled={busy || admins.length <= 1}
+                  disabled={busy || !adminPin || adminCount <= 1}
                   size="sm"
                   variant="outline"
                   onClick={() =>
-                    act({
-                      action: "set_admin",
-                      playerId: p.id,
-                      makeAdmin: false,
-                    })
+                    changeAdmin(p.id, false)
                   }
                 >
                   Fjern som administrator
@@ -1764,9 +1811,9 @@ function AdminManagers({ data, act, busy }: any) {
           ))}
         </div>
         <p className="mb-3 text-sm font-medium text-slate-600">
-          {admins.length} af 4 administratorpladser er i brug.
+          {adminCount} af 4 administratorpladser er i brug.
         </p>
-        {admins.length < 4 && (
+        {adminCount < 4 && (
           <div className="flex flex-col gap-2 sm:flex-row">
             <Select value={selected} onValueChange={setSelected}>
               <SelectTrigger className="sm:max-w-sm">
@@ -1781,7 +1828,7 @@ function AdminManagers({ data, act, busy }: any) {
               </SelectContent>
             </Select>
             <Button
-              disabled={busy || !selected}
+              disabled={busy || !selected || !adminPin}
               onClick={addAdmin}
               className="bg-[#13375e]"
             >
@@ -1789,7 +1836,7 @@ function AdminManagers({ data, act, busy }: any) {
             </Button>
           </div>
         )}
-        {!candidates.length && admins.length < 4 && (
+        {!candidates.length && adminCount < 4 && (
           <p className="text-sm text-slate-500">
             Der kommer flere valgmuligheder, når andre spillere har oprettet
             deres profil.
@@ -1850,9 +1897,9 @@ function PlayerLists({ data, view, setView, act, busy }: any) {
         <table className="w-full text-left text-xs">
           <thead><tr className="border-b text-slate-500">{["Status","Navn","CR","Timer","Antal mulige tider","Ønskede tider","Tilmeldingsrækkefølge"].map(label=><th key={label} className="px-2 py-0.5 font-medium">{label}</th>)}</tr></thead>
           <tbody>{rows.map(({signup,player,event}:any)=><tr key={`${event.id}-${player.id}`} className="border-b last:border-0">
-            <td className="px-2 py-0.5"><select aria-label={`Status for ${player.name}`} title={!signup.id ? "Medlemmet skal først angive timer og mulige tider." : undefined} value={signup.status} disabled={busy || !signup.id} style={{ fontSize: "inherit" }} className="h-6 rounded border bg-white px-1 py-0 text-xs leading-tight" onChange={e=>act({action:"set_signup_status",signupId:signup.id,status:e.target.value})}>
+            <td className="px-2 py-0.5"><div className="flex items-center gap-1"><select aria-label={`Status for ${player.name}`} title={!signup.id ? "Medlemmet skal først angive timer og mulige tider." : undefined} value={signup.status} disabled={busy || !signup.id} style={{ fontSize: "inherit" }} className="h-6 rounded border bg-white px-1 py-0 text-xs leading-tight" onChange={e=>act({action:"set_signup_status",signupId:signup.id,status:e.target.value})}>
               {Object.entries(statuses).filter(([value])=>value!=="not_registered").map(([value,label])=><option key={value} value={value}>{label}</option>)}
-            </select></td>
+            </select><EditSignupButton signup={signup} eventId={event.id} name={player.name} times={data.times} busy={busy} disabled={view!=='current'||!signup.id} act={act}/></div></td>
             <td className="whitespace-nowrap px-2 py-0.5 font-semibold">{player.name}</td>
             <td className="whitespace-nowrap px-2 py-0.5">{player.christinRanking == null ? "–" : `${player.christinRanking} ${CR_LABELS[player.christinRanking]}`}</td>
             <td className="px-2 py-0.5">{signup.nHours}</td>
@@ -1891,14 +1938,14 @@ function EditMatch({ match, data, act, done }: any) {
       <div className="grid grid-cols-2 gap-3">
         <div>
           <Label>Tidspunkt</Label>
-          <Select value={time} onValueChange={setTime}>
+          <Select value={time} onValueChange={value=>{setTime(value);setCourt('');}}>
             <SelectTrigger className="mt-1">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
               {data.times.map((t: string) => (
                 <SelectItem key={t} value={t}>
-                  {timeLabel[t]}
+                  {playTimeLabel(t)}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -1906,15 +1953,10 @@ function EditMatch({ match, data, act, done }: any) {
         </div>
         <div>
           <Label htmlFor={`court-${match.id}`}>Bane</Label>
-          <Input
-            id={`court-${match.id}`}
-            className="mt-1"
-            type="number"
-            min="1"
-            max="7"
-            value={court}
-            onChange={(e) => setCourt(e.target.value)}
-          />
+          <select id={`court-${match.id}`} className="mt-1 h-10 w-full rounded-md border px-3" value={court} onChange={e=>setCourt(e.target.value)}>
+            <option value="">Vælg bane</option>
+            {(data.slots ?? []).filter((s:{startTime:string})=>s.startTime===time).map((s:{court:number})=><option key={s.court} value={String(s.court)}>Bane {s.court}</option>)}
+          </select>
         </div>
       </div>
       <p className="mb-1 mt-4 text-sm font-semibold">Spillere</p>
@@ -2017,33 +2059,129 @@ function CrReviewCount({players = []}: {players?: MemberProfile[]}) {
 function CrReviewControl({player,act,busy}: {player:MemberProfile & {id:number;name:string};act:AppAction;busy:boolean}) {
   const [cr, setCr] = useState(player.christinRanking == null ? '' : String(player.christinRanking));
   const changed = cr !== (player.christinRanking == null ? '' : String(player.christinRanking));
-  return <form className="flex flex-wrap items-center gap-2" onSubmit={event => {
+  return <form className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5" onSubmit={event => {
     event.preventDefault();
     if (cr) void act({action:'approve_cr',playerId:player.id,christinRanking:Number(cr)});
   }}>
     <Label className="text-xs" htmlFor={`cr-${player.id}`}>CR</Label>
-    <select id={`cr-${player.id}`} aria-label={`Christin Ranking for ${player.name}`} disabled={busy} value={cr} onChange={event=>setCr(event.target.value)} className="h-8 rounded-md border px-2 text-sm">
+    <select id={`cr-${player.id}`} aria-label={`CR for ${player.name}`} disabled={busy} value={cr} onChange={event=>setCr(event.target.value)} className="h-10 min-w-0 rounded-md border px-1.5 text-base sm:text-sm">
       <option value="">Vælg CR</option>{[1,2,3,4,5,6,7,8,9].map(value=><option key={value} value={value}>{`${value}  ${CR_LABELS[value]}`}</option>)}
     </select>
-    {(!player.crReviewedAt || changed) ? <Button type="submit" disabled={busy || !cr}>{changed ? 'Gem og godkend CR' : 'Godkend CR'}</Button> : <span className="text-xs text-green-800">CR godkendt</span>}
+    {(!player.crReviewedAt || changed) ? <Button type="submit" className="h-10 px-2 text-xs" aria-label={changed ? 'Gem og godkend CR' : 'Godkend CR'} disabled={busy || !cr}><span className="sm:hidden">Godkend</span><span className="hidden sm:inline">{changed ? 'Gem og godkend CR' : 'Godkend CR'}</span></Button> : <span className="text-xs text-green-800" title="CR godkendt"><Check className="size-4" aria-hidden="true"/><span className="sr-only">CR godkendt</span></span>}
   </form>;
 }
 
 function MembersPanel({data,act,busy}:any) {
-  const sortedMembers = [...(data.players ?? [])].sort((a, b) => Number(Boolean(a.crReviewedAt)) - Number(Boolean(b.crReviewedAt)) || a.name.localeCompare(b.name, 'da'));
+  const [search, setSearch] = useState('');
+  const query = search.trim().toLocaleLowerCase('da-DK');
+  const allMembersEmail = bccMailtoHref(data.players.map((player: {email?:string}) => player.email));
+  const sortedMembers = [...(data.players ?? [])].filter(player => `${player.firstName} ${player.lastName}`.toLocaleLowerCase('da-DK').includes(query)).sort((a, b) => Number(Boolean(a.crReviewedAt)) - Number(Boolean(b.crReviewedAt)) || a.name.localeCompare(b.name, 'da'));
   return (
       <Card className="border-[#dce9e1]">
-        <CardHeader><CardTitle>Medlemmer og Christin Ranking<CrReviewCount players={data.players}/></CardTitle><CardDescription>Medlemmer med CR til gennemgang står øverst. Godkend den automatiske CR, eller ret værdien og vælg “Gem og godkend CR”. Medlemmet kan tilmelde sig imens. CR er kun synlig for administratorer.</CardDescription></CardHeader>
-        <CardContent className="space-y-1.5">
-          {sortedMembers.map((player: MemberProfile & {id:number;name:string;christinRanking:number|null}) => <div key={player.id} className="flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2 [&_button]:h-8 [&_button]:px-2 [&_button]:text-xs">
-            <div className="min-w-0 flex-1 basis-full sm:basis-48"><p className="text-sm font-semibold leading-5">{player.firstName} {player.lastName}</p><p className="break-words text-xs leading-4 text-slate-600">#{player.memberNo} · Egen ranking: {player.selfLevel} · {player.email}{player.phone && <> · {player.phoneCountryCode ?? "+45"} {player.phone}</>}</p></div>
-            {!player.crReviewedAt && <Badge className="bg-amber-100 text-amber-900">CR skal gennemgås</Badge>}
-            {player.createdAt && <p className="text-xs text-slate-600">Oprettet {new Date(player.createdAt.includes('T') ? player.createdAt : player.createdAt.replace(' ', 'T') + 'Z').toLocaleDateString('da-DK', {timeZone:'Europe/Copenhagen'})}</p>}
+        <CardHeader><div className="flex flex-wrap items-center justify-between gap-3"><CardTitle>Medlemmer og CR<CrReviewCount players={data.players}/></CardTitle>
+          {allMembersEmail ? <Button asChild variant="outline"><a href={allMembersEmail}><Mail className="mr-2 size-4" aria-hidden="true"/>E-mail alle medlemmer</a></Button> : <Button variant="outline" disabled>E-mail alle medlemmer</Button>}
+        </div><CardDescription>Sletning håndteres under Privatliv &amp; inaktive profiler.</CardDescription><CardDescription>Medlemmer med CR til gennemgang står øverst. Godkend den automatiske CR, eller ret værdien og vælg “Gem og godkend CR”. Medlemmet kan tilmelde sig imens. CR er kun synlig for administratorer.</CardDescription></CardHeader>
+        <CardContent className="space-y-2 px-3 sm:px-6">
+          <Label htmlFor="member-search">Fornavn Efternavn</Label>
+          <p className="text-sm">{data.players.filter((p:any)=>p.birthYear!=null).length} af {data.players.length} medlemmer har angivet fødselsår.</p>
+          <details><summary className="cursor-pointer text-sm font-medium">Mangler fødselsår ({data.players.filter((p:any)=>p.birthYear==null).length})</summary><ul className="space-y-2 py-2">{data.players.filter((p:any)=>p.birthYear==null).map((p:any)=><li key={p.id} className="flex items-center justify-between gap-2 text-sm"><span>{p.name} · #{p.memberNo}</span><EditMemberDialog player={p} act={act} busy={busy} members={data.players}/></li>)}</ul></details>
+          <Input id="member-search" type="search" placeholder="Søg efter navn…" value={search} onChange={event => setSearch(event.target.value)} />
+          {!sortedMembers.length && <p role="status" className="text-sm text-slate-600">Ingen medlemmer matcher søgningen.</p>}
+          {sortedMembers.map((player: MemberProfile & {id:number;name:string;christinRanking:number|null}) => <div key={player.id} className="min-w-0 space-y-1.5 rounded-lg border px-2.5 py-2">
+            <div className="flex items-start justify-between gap-2"><div className="min-w-0"><p className="text-sm font-semibold leading-5 [overflow-wrap:anywhere]">{player.firstName} {player.lastName}</p><p className="text-xs leading-4 text-slate-600">#{player.memberNo} · Egen ranking: {player.selfLevel}</p></div>
+            {!player.crReviewedAt && <Badge className="shrink-0 bg-amber-100 px-1.5 text-[10px] text-amber-900">CR til gennemgang</Badge>}</div>
+            <div className="flex items-center gap-1.5">
             <CrReviewControl key={`${player.id}:${player.christinRanking}:${player.crReviewedAt}`} player={player} act={act} busy={busy}/>
-            <EditMemberDialog player={player} act={act} busy={busy}/>
-            <DeleteMemberDialog player={player} currentUserId={data.user.id} act={act} busy={busy}/>
+            <div className="flex shrink-0 gap-1">
+            <EditMemberDialog player={player} act={act} busy={busy} members={data.players}/>
+            </div></div>
+            <details className="text-xs text-slate-600"><summary className="cursor-pointer py-1 leading-5">Kontakt og oplysninger</summary>
+              <div className="space-y-1 pb-1 pt-1 [overflow-wrap:anywhere]"><p>{player.email || 'Ingen e-mailadresse'}</p>
+              {player.phone && <p>{player.phoneCountryCode ?? '+45'} {player.phone}</p>}
+              {player.createdAt && <p>Oprettet {new Date(player.createdAt.includes('T') ? player.createdAt : player.createdAt.replace(' ', 'T') + 'Z').toLocaleDateString('da-DK', {timeZone:'Europe/Copenhagen'})}</p>}
+              </div>
+            </details>
           </div>)}
         </CardContent>
       </Card>
   );
+}
+
+function SuperAdminPanel({data,act,busy}:any){
+ const [testEmailResult,setTestEmailResult]=useState('');
+ if(!data.user.isSuperAdmin)return null;
+ return <section className="space-y-6" aria-label="SuperAdmin"><h2 className="text-2xl font-bold">SuperAdmin</h2>
+      <ForbiddenPairsForm key={JSON.stringify(data.forbiddenMemberPairs)} pairs={data.forbiddenMemberPairs??[]} members={data.players??[]} act={act} busy={busy}/>
+      <AdminMfaReset members={data.players??[]} ownId={data.user.id} act={act} busy={busy}/>
+      {data.event&&<OptimizerDefaultsForm
+        action="set_event_optimizer_weights"
+        title="Optimerings-faktorer"
+        savedText="Optimerings-faktorerne er gemt."
+        description={`Faktorerne bruges af “Algoritme foreslå kampe” for spillerunden ${niceDate(data.event.date)}. Knapperne til beregning og eksport findes fortsat under Kampplan Admin.`}
+        descriptions={data.optimizerDescriptions}
+        key={`${data.event.id}:${JSON.stringify(data.optimizerWeights)}`}
+        defaults={data.optimizerWeights}
+        act={body=>act({...body,eventId:data.event.id})}
+        busy={busy}
+      />}
+      <OptimizerResourcesForm key={JSON.stringify(data.optimizerResources)} defaults={data.optimizerResources} act={act} busy={busy} />
+      {data.event&&<ChatGptProposal data={data} act={act} busy={busy}/>}
+      <OptimizerDefaultsForm descriptions={data.optimizerDescriptions} key={JSON.stringify(data.optimizerDefaults)} defaults={data.optimizerDefaults} act={act} busy={busy} />
+      <Card className="border-[#dce9e1]">
+        <CardHeader>
+          <CardTitle>Test e-mail</CardTitle>
+          <CardDescription>
+            Kontrollér e-mailfunktionen, før kampplanen sendes til spillerne.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-sm text-slate-700">Modtager: {data.user.email || "Ingen e-mailadresse angivet"}</p>
+          <Button
+            disabled={busy}
+            variant="outline"
+            onClick={async () => {
+              setTestEmailResult("");
+              if (await act({ action: "send_test_email" })) {
+                setTestEmailResult(`Testmailen er sendt til ${data.user.email}.`);
+              }
+            }}
+          >
+            <Mail className="mr-2 h-4 w-4" />
+            Send testmail
+          </Button>
+          {testEmailResult && (
+            <p className="rounded-xl bg-[#f0f3f8] p-3 text-sm font-semibold text-[#13375e]">
+              {testEmailResult}
+            </p>
+          )}
+        </CardContent>
+      </Card>
+</section>;
+}
+
+function ChatGptProposal({data,act,busy}:any){
+  const [kampplanPrompt,setKampplanPrompt]=useState('');
+  const [promptError,setPromptError]=useState('');
+  useEffect(()=>{
+    const controller=new AbortController();
+    fetch('/api/superadmin/prompt',{cache:'no-store',signal:controller.signal}).then(response=>{
+      if(!response.ok)throw Error('Prompten kunne ikke hentes. Genindlæs siden og prøv igen.');
+      return response.text();
+    }).then(text=>{if(!text.trim())throw Error('Promptfilen er tom.');setKampplanPrompt(text);}).catch(error=>{
+      if(!controller.signal.aborted)setPromptError(error instanceof Error?error.message:'Prompten kunne ikke hentes.');
+    });
+    return()=>controller.abort();
+  },[]);
+  return <Card className="border-[#dce9e1]"><CardHeader><CardTitle>ChatGPT-forslag til kampplan</CardTitle><CardDescription>Alternativ manuel arbejdsgang med den lokale promptskabelon.</CardDescription></CardHeader><CardContent className="space-y-3">
+    {kampplanPrompt?<Button disabled={busy} className="bg-[#13375e]" onClick={async()=>{
+      const tab=window.open('about:blank','_blank');if(tab)tab.opener=null;
+      try{if(await act({action:'remove_kampplan',eventId:data.event.id})){
+        const url='https://chatgpt.com/?q='+encodeURIComponent(kampplanPrompt);
+        if(tab)tab.location.href=url;else window.location.href=url;
+      }else tab?.close();}catch{tab?.close();}
+    }}><Sparkles className="mr-2 h-4 w-4"/>Foreslå kampe</Button>:<Button disabled>{promptError?'Foreslå kampe':'Henter prompt…'}</Button>}
+    {promptError&&<p role="alert" className="text-sm text-red-700">{promptError}</p>}
+    <p className="text-sm text-slate-600">Åbner ChatGPT i en ny fane med prompten. Vedhæft selv den eksporterede Excel-fil med tilmeldingerne. Download derefter KampPlan.xlsx fra ChatGPT, og importér den under Kampplan Admin.</p>
+    <details className="text-sm text-slate-600"><summary className="cursor-pointer">Hvis prompten ikke kommer med, kan du kopiere den her</summary><textarea aria-label="Prompt til kampplan" readOnly value={kampplanPrompt} onFocus={event=>event.currentTarget.select()} className="mt-2 h-60 w-full rounded-md border p-3"/></details>
+  </CardContent></Card>;
 }

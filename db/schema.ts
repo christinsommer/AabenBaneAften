@@ -1,6 +1,26 @@
 import { sql } from "drizzle-orm";
 import { check, index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
+export const authRateLimits = sqliteTable('auth_rate_limits', {
+  key: text('key').primaryKey(),
+  attempts: integer('attempts').notNull(),
+  expiresAt: integer('expires_at').notNull(),
+  blockedUntil: integer('blocked_until').notNull(),
+}, (t) => [index('idx_auth_rate_limits_expires').on(t.expiresAt)]);
+
+export const optimizerDefaults = sqliteTable('optimizer_defaults', {
+  id: integer('id').primaryKey(),
+  weights: text('weights').notNull(),
+});
+
+export const registrationDefaults = sqliteTable('registration_defaults', {
+  id: integer('id').primaryKey(),
+  openDays: integer('open_days').notNull().default(2),
+  openTime: text('open_time').notNull().default('06:00'),
+  closeDays: integer('close_days').notNull().default(1),
+  closeTime: text('close_time').notNull().default('12:00'),
+});
+
 export const players = sqliteTable("players", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   memberNo: text("member_no").notNull(),
@@ -9,9 +29,13 @@ export const players = sqliteTable("players", {
   lastName: text("last_name").notNull().default(""),
   christinRanking: integer("christin_ranking"),
   crReviewedAt: text("cr_reviewed_at"),
+  spouseNo: integer("spouse_no"),
+  spouseMode: integer("spouse_mode"),
   age: integer("age"),
   birthYear: integer("birth_year"),
   email: text("email").notNull().default(""),
+  emailVisible: integer("email_visible", { mode: "boolean" }).notNull().default(true),
+  phoneVisible: integer("phone_visible", { mode: "boolean" }).notNull().default(true),
   phone: text("phone").notNull().default(""),
   phoneCountryCode: text("phone_country_code").notNull().default("+45"),
   gender: text("gender", { enum: ["M", "K"] }).notNull(),
@@ -26,9 +50,11 @@ export const players = sqliteTable("players", {
 ]);
 
 export const sessions = sqliteTable("sessions", {
+  mfaVersion: text('mfa_version'),
   tokenHash: text("token_hash").primaryKey(),
   playerId: integer("player_id").notNull(),
   expiresAt: text("expires_at").notNull(),
+  lastSeenAt: text("last_seen_at"),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 }, (t) => [index("idx_sessions_player_id").on(t.playerId)]);
 
@@ -45,6 +71,7 @@ export const events = sqliteTable("events", {
   date: text("date").notNull(),
   registrationOpensAt: text("registration_opens_at").notNull(),
   registrationClosesAt: text("registration_closes_at").notNull(),
+  registrationScheduleCustom: integer('registration_schedule_custom', {mode:'boolean'}).notNull().default(false),
   status: text("status", { enum: ["draft", "published", "cancelled"] }).notNull().default("draft"),
   publishedAt: text("published_at"),
   registrationOverride: text("registration_override", { enum: ["auto", "open", "closed"] }).notNull().default("auto"),
@@ -106,6 +133,17 @@ export const substitutions = sqliteTable("substitutions", {
   uniqueIndex("idx_substitutions_match_outgoing").on(t.matchId, t.outgoingPlayerId),
   index("idx_substitutions_event_status").on(t.eventId, t.status),
 ]);
+
+export const optimizerJobs = sqliteTable('optimizer_jobs', {
+  id: text('id').primaryKey(),
+  eventId: integer('event_id').notNull(),
+  status: text('status').notNull().default('queued'),
+  snapshot: text('snapshot').notNull(),
+  warning: text('warning').notNull().default(''),
+  error: text('error').notNull().default(''),
+  createdAt: text('created_at').notNull(),
+  finishedAt: text('finished_at'),
+}, t => [uniqueIndex('idx_optimizer_jobs_active').on(t.eventId).where(sql`${t.status} IN ('queued','running')`)]);
 
 export const feedback = sqliteTable("feedback", {
   id: integer("id").primaryKey({ autoIncrement: true }),

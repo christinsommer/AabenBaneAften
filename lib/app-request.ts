@@ -16,8 +16,11 @@ export async function appRequest(payload?: Record<string, unknown>) {
       const ray = response.headers.get("cf-ray");
       const reference = ray ? ` Reference: ${ray}.` : "";
       throw new Error(`Serveren sendte et uventet svar (HTTP ${response.status}). Vent et øjeblik og prøv igen.${reference}`);
-    }) as { authenticated?: boolean; error?: string; warning?: string };
-    if (!response.ok) throw new Error(data?.error || "Kunne ikke kontakte serveren. Prøv igen.");
+    }) as { authenticated?: boolean; error?: string; warning?: string; mfa?:{stage:'setup'|'verify';secret?:string;uri?:string}; recoveryCodes?:string[] };
+    if (!response.ok) {
+      if(response.status===401 && payload?.action!=='login' && typeof window!=='undefined')window.dispatchEvent(new Event('session-expired'));
+      throw new Error(data?.error || "Kunne ikke kontakte serveren. Prøv igen.");
+    }
     return data;
   } catch (error) {
     if (controller.signal.aborted) throw new Error("Serveren svarede ikke i tide. Prøv igen.");

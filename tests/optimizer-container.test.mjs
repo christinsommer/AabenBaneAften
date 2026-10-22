@@ -14,6 +14,11 @@ test('container only starts for authenticated solve and health requests', async 
   assert.equal((await handleRequest(new Request('https://test/unknown'),env)).status,404);
   assert.equal((await handleRequest(new Request('https://test/health'),{...env,OPTIMIZER_API_KEY:''})).status,503);
   assert.equal(starts,0);
+  assert.equal((await handleRequest(new Request('https://test/jobs-health'),env)).status,401);
+  const jobRequest=()=>new Request('https://test/jobs-health',{headers:{authorization:`Bearer ${key}`}});
+  assert.equal((await handleRequest(jobRequest(),env)).status,503);
+  assert.deepEqual(await (await handleRequest(jobRequest(),{...env,DB:{},OPTIMIZER_JOBS:{}})).json(),{jobProtocol:1});
+  assert.equal(starts,0,'job health does not start the container');
   const response = await handleRequest(new Request('https://test/solve',{method:'POST',headers:{authorization:`Bearer ${key}`},body:JSON.stringify({players:[]})}),env);
   assert.deepEqual(await response.json(),{path:'/solve',body:{players:[]}});
   assert.equal(starts,1);

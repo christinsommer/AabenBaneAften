@@ -1,7 +1,8 @@
 import { and, asc, desc, eq, gte, lt, ne, sql } from 'drizzle-orm';
 import { getDb } from '../db';
 import { events, matches, players, signups } from '../db/schema';
-import { COURTS, ensureEvent } from './schedule';
+import {loadForbiddenPairs, loadOptimizerDefaults, loadPlaySchedule, loadOptimizerResources} from './optimizer-defaults-server';
+import { ensureEvent } from './schedule';
 import { registrationIsOpen } from './registration';
 import { copenhagenDate } from './calendar';
 import {ageFromBirthYear, currentYear} from './birth-year';
@@ -11,26 +12,31 @@ import { HISTORY_START, parseAlgorithmWeights, validateOptimizerInput, validateP
 // No credentials in the snapshot. The same SQL is used in the atomic save condition.
 export function optimizerRevisionSql(eventId: number) {
   return sql`json_array(
-    (SELECT json_group_array(json_array(id,date,status,registration_opens_at,registration_closes_at,registration_override,imported_kampplan,is_test,test_active,archived)) FROM (SELECT * FROM events ORDER BY id)),
-    (SELECT json_group_array(json_array(id,member_no,name,christin_ranking,birth_year,gender,suspended_event_id)) FROM (SELECT * FROM players ORDER BY id)),
+    (SELECT json_group_array(json_array(member_a,member_b)) FROM (SELECT * FROM forbidden_pairs ORDER BY member_a,member_b)),
+    (SELECT weights FROM optimizer_defaults WHERE id = 1),
+    (SELECT json_group_array(player_id) FROM (SELECT player_id FROM profile_privacy WHERE closed_at IS NOT NULL ORDER BY player_id)),
+    (SELECT json_group_array(json_array(id,date,status,registration_opens_at,registration_closes_at,registration_schedule_custom,registration_override,imported_kampplan,is_test,test_active,archived)) FROM (SELECT * FROM events ORDER BY id)),
+    (SELECT json_group_array(json_array(id,member_no,name,christin_ranking,birth_year,gender,spouse_no,spouse_mode,suspended_event_id)) FROM (SELECT * FROM players ORDER BY id)),
     (SELECT json_group_array(json_array(id,player_id,availability,requested_hours,signup_order,status)) FROM (SELECT * FROM signups WHERE event_id = ${eventId} ORDER BY id)),
     (SELECT json_group_array(json_array(id,event_id,court,start_time,player_ids,locked)) FROM (SELECT * FROM matches ORDER BY id))
   )`;
 }
 
-export async function loadOptimizerInput(eventId: number, weights: unknown) {
+export async function loadOptimizerInput(eventId: number, weights: unknown, forScoring = false, manualEdit = false, registrationsOnly = false) {
   const db = getDb();
+  const event = await ensureEvent();
   const revisionRows = await db.all<{revision: string}>(sql`SELECT ${optimizerRevisionSql(eventId)} AS revision`);
   const revision = revisionRows[0].revision;
-  const event = await ensureEvent();
+  const {courtOrder,slots} = await loadPlaySchedule();
   if (!event || event.id !== eventId) throw new Error('Spillerunden er ændret. Genindlæs siden.');
-  if (event.status !== 'draft') throw new Error('Der kan kun foreslås kampe for en kladde.');
-  if (registrationIsOpen(event) || event.registrationOverride === 'auto' && new Date() < new Date(event.registrationClosesAt))
+  if (!forScoring && event.status !== 'draft') throw new Error('Der kan kun foreslås kampe for en kladde.');
+  if (!forScoring && (registrationIsOpen(event) || event.registrationOverride === 'auto' && new Date() < new Date(event.registrationClosesAt)))
     throw new Error('Luk tilmeldingen, før der foreslås kampe.');
   const now = new Date();
-  const members = await db.select({id: players.id, memberNo: players.memberNo, name: players.name, cr: players.christinRanking, birthYear: players.birthYear, gender: players.gender, suspendedEventId: players.suspendedEventId}).from(players).orderBy(asc(players.id));
+  const members = await db.select({id: players.id, memberNo: players.memberNo, name: players.name, cr: players.christinRanking, spouseNo: players.spouseNo, spouseMode: players.spouseMode, birthYear: players.birthYear, gender: players.gender, suspendedEventId: players.suspendedEventId}).from(players).orderBy(asc(players.id));
   const registrations = await db.select().from(signups).where(and(eq(signups.eventId, event.id), ne(signups.status, 'cancelled'))).orderBy(asc(signups.signupOrder), asc(signups.id));
   const existing = await db.select().from(matches).where(eq(matches.eventId, event.id));
+  const closed = new Set((await db.all<{player_id:number}>(sql`SELECT player_id FROM profile_privacy WHERE closed_at IS NOT NULL`)).map(p=>p.player_id));
   const people = new Map(members.map(p => [p.id, p]));
   const nativeMatch = (m: typeof matches.$inferSelect): ProposedMatch => {
     const ids = JSON.parse(m.playerIds) as number[];
@@ -60,19 +66,31 @@ export async function loadOptimizerInput(eventId: number, weights: unknown) {
     if (history.length === 3) break;
   }
   const input: OptimizerInput = {
-    players: registrations.filter(s => s.requestedHours > 0 && people.get(s.playerId)?.suspendedEventId !== event.id).map(s => {
+    forbiddenMemberPairs: await loadForbiddenPairs(),
+    optimizerResources: await loadOptimizerResources(),
+    players: registrations.filter(s => s.requestedHours > 0 && !closed.has(s.playerId) && people.get(s.playerId)?.suspendedEventId !== event.id).map(s => {
       const p = people.get(s.playerId);
       if (!p) throw new Error('En tilmeldt spiller findes ikke længere.');
-      return {id: p.id, memberNo: p.memberNo, cr: p.cr!, age: ageFromBirthYear(p.birthYear, now), gender: p.gender, availability: JSON.parse(s.availability), requestedHours: s.requestedHours, signupOrder: s.signupOrder!, status: s.status as 'active' | 'waitlist'};
+      return {id: p.id, memberNo: p.memberNo, spouseNo: p.spouseNo, spouseMode: p.spouseMode, cr: p.cr!, age: ageFromBirthYear(p.birthYear, now), gender: p.gender, availability: JSON.parse(s.availability), requestedHours: s.requestedHours, signupOrder: s.signupOrder!, status: s.status as 'active' | 'waitlist'};
     }),
-    slots: Object.entries(COURTS).flatMap(([startTime, courts]) => courts.map(court => ({startTime, court}))),
-    locked: existing.filter(m => m.locked).map(nativeMatch), history, weights: parseAlgorithmWeights(weights),
+    slots,
+    locked: existing.filter(m => m.locked).map(nativeMatch), history, weights: parseAlgorithmWeights({...await loadOptimizerDefaults(), ...(weights as Record<string, unknown> ?? {})}),
   };
-  validateOptimizerInput(input);
-  validateProposal(input.locked, input);
+  // Background jobs may replace a published plan, but must never include the
+  // unregistered candidates used for scoring and manual editing.
+  if (!registrationsOnly && (manualEdit || forScoring)) {
+    const registered = new Set(input.players.map(p=>p.id));
+    for (const p of members) if (!registered.has(p.id) && !closed.has(p.id) && p.suspendedEventId !== event.id) {
+      input.players.push({id:p.id,memberNo:p.memberNo,cr:p.cr!,gender:p.gender,age:ageFromBirthYear(p.birthYear,now),
+        spouseNo:p.spouseNo,spouseMode:p.spouseMode,availability:[...new Set(slots.map(s=>s.startTime))],
+        requestedHours:3,signupOrder:p.id,status:'active',manualCandidate:true});
+    }
+  } else validateOptimizerInput(input);
+  if (registrationsOnly || !forScoring && !manualEdit) validateProposal(input.locked, input, {partial: true});
   const after = await db.all<{revision: string}>(sql`SELECT ${optimizerRevisionSql(eventId)} AS revision`);
   if (after[0].revision !== revision) throw new Error('Data blev ændret under indlæsningen. Prøv igen.');
   const fingerprintBytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify({revision, weights: input.weights, year: currentYear(now)})));
   const fingerprint = Array.from(new Uint8Array(fingerprintBytes), b => b.toString(16).padStart(2, '0')).join('');
-  return {input, fingerprint, revision, names: new Map(members.map(p => [p.id, p.name])), event};
+  return {input, fingerprint, revision, names: new Map(members.map(p => [p.id, p.name])), event, courtOrder,
+    storedPlan:existing.map(nativeMatch)};
 }

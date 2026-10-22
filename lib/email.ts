@@ -1,4 +1,6 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
+import { deliverEmail } from './resend-delivery';
+import {recordSecurityEvent} from './security-events';
 
 type EmailMessage = {
   to: string;
@@ -11,28 +13,17 @@ export async function sendEmail(message: EmailMessage) {
   const apiKey = (getCloudflareContext().env as CloudflareEnv & { RESEND_API_KEY?: string }).RESEND_API_KEY;
 
   if (!apiKey) {
+    console.error('email_configuration_missing', {binding: 'RESEND_API_KEY'});
     throw new Error("E-mail er ikke konfigureret i dette miljø (RESEND_API_KEY mangler).");
   }
 
-  const response = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    signal: AbortSignal.timeout(15000),
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
+  await deliverEmail(apiKey, JSON.stringify({
       from: "Åben Bane Aften <mail@aabenbaneaften.dk>",
       reply_to: "aabenbaneaften@hik.dk",
       to: [message.to],
       subject: message.subject,
       html: message.html,
       text: message.text,
-    }),
-  });
-
-  if (!response.ok) {
-    const details = await response.text();
-    throw new Error(`Resend kunne ikke sende e-mailen (${response.status}): ${details}`);
-  }
+    }));
+  await recordSecurityEvent('mail_sent');
 }

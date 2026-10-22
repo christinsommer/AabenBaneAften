@@ -3,13 +3,14 @@ using System.Diagnostics;
 
 namespace HIkOptimizer;
 
-public record Player(int Id, string MemberNo, int Cr, string Gender, int? Age, string[] Availability, int RequestedHours, int SignupOrder, string Status);
+public record Player(int Id, string MemberNo, int Cr, string Gender, int? Age, string[] Availability, int RequestedHours, int SignupOrder, string Status, long? SpouseNo = null, int? SpouseMode = null);
 public record Slot(int Court, string StartTime);
 public record Match(int Court, string StartTime, int[] Team1, int[] Team2);
 public record HistoryMatch(int[] Team1, int[] Team2);
 public record Round(string Date, HistoryMatch[] Matches);
-public record Weights(int FactorMatchDifference = 40, int FactorSameTeamLastWeek = 20, int FactorSameTeam3Weeks = 10, int FactorOpponentLastWeek = 5, int FactorMix = 10, int FactorAge = 0, int FactorSameTeamDifference = 15);
-public record Input(Player[] Players, Slot[] Slots, Round[] History, Match[] Locked, Weights Weights);
+public record Weights(int FactorMatchDifference = 40, int FactorSameTeamLastWeek = 20, int FactorSameTeam3Weeks = 10, int FactorOpponentLastWeek = 5, int FactorDoubleSameSex = 5, int FactorSingle = 10, int Factor3OfAKind = 30, int FactorAge = 0, int FactorSameTeamDifference = 15, int FactorDistanceSameTeamA = 2, int FactorOpponentThisWeek = 5);
+public record OptimizerResources(int Cpu = 4, int Seconds = 600);
+public record Input(Player[] Players, Slot[] Slots, Round[] History, Match[] Locked, Weights Weights, OptimizerResources? OptimizerResources = null, string[][]? ForbiddenMemberPairs = null);
 public record Stage(string Name, long Value, string Status);
 public record Result(Match[] Matches, string Status, Stage[] Stages, long Score, double Seconds);
 
@@ -17,9 +18,11 @@ public static class Scheduler
 {
     static int Minutes(string time) => TimeOnly.ParseExact(time, "HH:mm").Hour * 60 + TimeOnly.ParseExact(time, "HH:mm").Minute;
     static string Pair(int a, int b) => a < b ? $"{a}:{b}" : $"{b}:{a}";
-    static bool Forbidden(Player a, Player b) => Math.Abs((10 - a.Cr) - (10 - b.Cr)) > 3 ||
-        new[] { ("17108", "13993"), ("17108", "16212"), ("11822", "15722") }
-            .Any(pair => a.MemberNo == pair.Item1 && b.MemberNo == pair.Item2 || a.MemberNo == pair.Item2 && b.MemberNo == pair.Item1);
+    static bool PointsTo(Player a, Player b) => a.SpouseNo is not null && long.TryParse(b.MemberNo, out var number) && a.SpouseNo == number;
+    static bool Together(Player a, Player b) => a.SpouseMode == 2 && PointsTo(a,b) || b.SpouseMode == 2 && PointsTo(b,a);
+    static bool Forbidden(Input input, Player a, Player b) => !Together(a,b) && Math.Abs(a.Cr - b.Cr) > 3 ||
+        (input.ForbiddenMemberPairs ?? [])
+            .Any(pair => a.MemberNo == pair[0] && b.MemberNo == pair[1] || a.MemberNo == pair[1] && b.MemberNo == pair[0]);
 
     static void SetHint(CpModel model, CpSolver solver)
     {
@@ -30,23 +33,39 @@ public static class Scheduler
         model.Model.SolutionHint.Values.AddRange(solution);
     }
 
-    public static Result Solve(Input input, double seconds = 100, CancellationToken cancellation = default)
+    public static Result Solve(Input input, double? seconds = null, CancellationToken cancellation = default)
+    {
+        var resources = input.OptimizerResources ?? new OptimizerResources();
+        if (resources.Cpu is < 1 or > 32 || resources.Seconds is < 1 or > 900)
+            throw new ArgumentException("CPU skal være 1–32 og tid 1–900 sekunder.");
+        return SolveWithResources(input, seconds ?? resources.Seconds, resources.Cpu, cancellation);
+    }
+
+    static Result SolveWithResources(Input input, double seconds, int cpu, CancellationToken cancellation)
     {
         if (input.Players is null || input.Slots is null || input.History is null || input.Locked is null || input.Weights is null)
             throw new ArgumentException("Ufuldstændige beregningsdata.");
         var players = input.Players;
+        if (input.ForbiddenMemberPairs is { } pairs && (pairs.Length > 1000 || pairs.Any(pair => pair is null || pair.Length != 2 || pair.Any(string.IsNullOrWhiteSpace) || pair[0] == pair[1])))
+            throw new ArgumentException("Ugyldige spillerpar.");
         if (players.Length > 200 || input.Slots.Length > 32 || input.History.Length > 3 || players.Select(p => p.Id).Distinct().Count() != players.Length)
             throw new ArgumentException("Ugyldigt antal spillere, banetider eller historikrunder.");
         var w = input.Weights;
-        if (new[] {w.FactorMatchDifference, w.FactorSameTeamDifference, w.FactorSameTeamLastWeek, w.FactorSameTeam3Weeks, w.FactorOpponentLastWeek, w.FactorMix, w.FactorAge}.Any(v => Math.Abs((long)v) > 1_000_000))
+        if (new[] {w.FactorOpponentThisWeek, w.FactorDistanceSameTeamA, w.FactorMatchDifference, w.FactorSameTeamDifference, w.FactorSameTeamLastWeek, w.FactorSameTeam3Weeks, w.FactorOpponentLastWeek, w.FactorDoubleSameSex, w.FactorSingle, w.Factor3OfAKind, w.FactorAge}.Any(v => Math.Abs((long)v) > 1_000_000))
             throw new ArgumentException("Ugyldige vægte.");
         foreach (var p in players)
-            if (p.Cr is < 1 or > 9 || p.RequestedHours is < 1 or > 3 || p.SignupOrder < 1 || p.Gender is not ("M" or "K") || p.Status is not ("active" or "waitlist") || p.Availability is null || w.FactorAge != 0 && (p.Age is null or < 0 or > 120))
+            if (p.Cr is < 1 or > 9 || p.RequestedHours is < 1 or > 3 || p.SignupOrder < 1 || p.Gender is not ("M" or "K") || p.Status is not ("active" or "waitlist") || p.Availability is null || p.Age is < 0 or > 120)
                 throw new ArgumentException("En spiller mangler gyldige tilmeldings-, CR-, køns- eller aldersoplysninger.");
 
         var timer = Stopwatch.StartNew();
+        foreach (var p in players) {
+            if ((p.SpouseNo is not null || p.SpouseMode is not null) &&
+                (p.SpouseNo is null or <= 0 || p.SpouseMode is not (1 or 2) || PointsTo(p,p)))
+                throw new ArgumentException("Ugyldig partnerbetingelse.");
+            if (players.Count(q => PointsTo(p,q)) > 1) throw new ArgumentException("Partnerens medlemsnummer er ikke entydigt.");
+        }
         var model = new CpModel();
-        var slots = input.Slots.OrderBy(s => s.StartTime).ThenBy(s => s.Court).ToArray();
+        var slots = input.Slots.OrderBy(s => s.StartTime).ToArray();
         var byId = players.Select((p, i) => (p.Id, i)).ToDictionary(x => x.Id, x => x.i);
         var x = new BoolVar[players.Length, slots.Length, 2];
         var present = new BoolVar[players.Length, slots.Length];
@@ -74,6 +93,7 @@ public static class Scheduler
         {
             used[s] = model.NewBoolVar($"used{s}"); doubles[s] = model.NewBoolVar($"double{s}");
             model.Add(doubles[s] <= used[s]);
+            if (Minutes(slots[s].StartTime) < Minutes("20:30")) model.Add(doubles[s] == used[s]);
             for (int p = 0; p < players.Length; p++)
             {
                 present[p, s] = model.NewBoolVar($"p{p}s{s}");
@@ -88,14 +108,14 @@ public static class Scheduler
             model.AddAbsEquality(balance, TeamSum(0, p => p.Cr) - TeamSum(1, p => p.Cr));
             var women = model.NewIntVar(0, 4, $"women{s}");
             model.Add(women == TeamSum(0, p => p.Gender == "K" ? 1 : 0) + TeamSum(1, p => p.Gender == "K" ? 1 : 0));
-            var mix = model.NewIntVar(0, 5, $"mix{s}");
+            var mix = model.NewIntVar(-1_000_000, 1_000_000, $"mix{s}");
             model.AddAllowedAssignments(new IntVar[] { used[s], doubles[s], women, mix }).AddTuples(new long[,] {
-                {0,0,0,0}, {1,0,0,5}, {1,0,1,5}, {1,0,2,5}, {1,1,0,1}, {1,1,1,2}, {1,1,2,0}, {1,1,3,2}, {1,1,4,1}
+                {0,0,0,0}, {1,0,0,w.FactorSingle}, {1,0,1,w.FactorSingle}, {1,0,2,w.FactorSingle}, {1,1,0,w.FactorDoubleSameSex}, {1,1,1,w.Factor3OfAKind}, {1,1,2,0}, {1,1,3,w.Factor3OfAKind}, {1,1,4,w.FactorDoubleSameSex}
             });
             var twoWomen = model.NewBoolVar($"twoWomen{s}");
             model.Add(women == 2).OnlyEnforceIf(twoWomen); model.Add(women != 2).OnlyEnforceIf(twoWomen.Not());
             model.Add(TeamSum(0, p => p.Gender == "K" ? 1 : 0) == 1).OnlyEnforceIf(new ILiteral[] { doubles[s], twoWomen });
-            score.AddTerm(used[s], 100).AddTerm(balance, -w.FactorMatchDifference).AddTerm(mix, -w.FactorMix);
+            score.AddTerm(used[s], 100).AddTerm(balance, -w.FactorMatchDifference).AddTerm(mix, -1);
             // Swapping teams cannot change the score. Avoid searching both labels,
             // except where a locked match explicitly fixes them.
             if (!input.Locked.Any(m => m.Court == slots[s].Court && m.StartTime == slots[s].StartTime))
@@ -103,18 +123,27 @@ public static class Scheduler
             if (w.FactorAge != 0)
             {
                 var ageBalance = model.NewIntVar(0, 240, $"ageBalance{s}");
-                model.AddAbsEquality(ageBalance, TeamSum(0, p => p.Age!.Value) - TeamSum(1, p => p.Age!.Value));
+                var rawAgeBalance = model.NewIntVar(0, 240, $"rawAgeBalance{s}");
+                model.AddAbsEquality(rawAgeBalance, TeamSum(0, p => p.Age ?? 0) - TeamSum(1, p => p.Age ?? 0));
+                var unknownAge = model.NewBoolVar($"unknownAge{s}");
+                var unknownCount = TeamSum(0, p => p.Age is null ? 1 : 0) + TeamSum(1, p => p.Age is null ? 1 : 0);
+                model.Add(unknownCount > 0).OnlyEnforceIf(unknownAge);
+                model.Add(unknownCount == 0).OnlyEnforceIf(unknownAge.Not());
+                model.Add(ageBalance == 0).OnlyEnforceIf(unknownAge);
+                model.Add(ageBalance == rawAgeBalance).OnlyEnforceIf(unknownAge.Not());
                 score.AddTerm(ageBalance, -w.FactorAge);
             }
             for (int p = 0; p < players.Length; p++) for (int q = p + 1; q < players.Length; q++)
             {
-                if (Forbidden(players[p], players[q])) { model.Add(present[p, s] + present[q, s] <= 1); continue; }
+                if (Forbidden(input, players[p], players[q])) { model.Add(present[p, s] + present[q, s] <= 1); continue; }
                 if (!players[p].Availability.Contains(slots[s].StartTime) || !players[q].Availability.Contains(slots[s].StartTime)) continue;
+                if (!Together(players[p],players[q]) && Math.Min(players[p].Cr, players[q].Cr) <= 4 && Math.Abs(players[p].Cr - players[q].Cr) > w.FactorDistanceSameTeamA)
+                    for (int t = 0; t < 2; t++) model.Add(x[p, s, t] + x[q, s, t] <= 1);
                 var key = Pair(players[p].Id, players[q].Id);
                 long partnerPenalty = (lastPartners.Contains(key) ? w.FactorSameTeamLastWeek : 0L)
-                    + (long)w.FactorSameTeamDifference * Math.Abs(players[p].Cr - players[q].Cr)
+                    + (Together(players[p],players[q]) ? 0 : (long)w.FactorSameTeamDifference * Math.Abs(players[p].Cr - players[q].Cr))
                     + (recentPartners.Contains(key) ? w.FactorSameTeam3Weeks : 0L)
-                    + (w.FactorAge != 0 ? (long)w.FactorAge * Math.Abs(players[p].Age!.Value - players[q].Age!.Value) : 0);
+                    + (w.FactorAge != 0 && players[p].Age.HasValue && players[q].Age.HasValue ? (long)w.FactorAge * Math.Abs(players[p].Age!.Value - players[q].Age!.Value) : 0);
                 long opponentPenalty = lastOpponents.Contains(key) ? w.FactorOpponentLastWeek : 0;
                 if (partnerPenalty != 0 || opponentPenalty != 0)
                 {
@@ -122,6 +151,40 @@ public static class Scheduler
                     if (opponentPenalty != 0) score.AddTerm(Both(present[p, s], present[q, s], $"opponents{p}:{q}:{s}"), -opponentPenalty);
                 }
             }
+        }
+        for (int p = 0; p < players.Length; p++) for (int q = p + 1; q < players.Length; q++) {
+            if (!PointsTo(players[p],players[q]) && !PointsTo(players[q],players[p])) continue;
+            if (Together(players[p],players[q])) {
+                for (int s = 0; s < slots.Length; s++) for (int t = 0; t < 2; t++)
+                    model.Add(x[p,s,t] == x[q,s,t]);
+            } else foreach (var time in slots.Select(s => s.StartTime).Distinct()) {
+                var indices = Enumerable.Range(0,slots.Length).Where(s => slots[s].StartTime == time).ToArray();
+                model.Add(LinearExpr.Sum(indices.Select(s => present[p,s])) == LinearExpr.Sum(indices.Select(s => present[q,s])));
+            }
+        }
+        // A pair may partner only once in this plan, except mandatory spouse teams.
+        for (int p = 0; p < players.Length; p++) for (int q = p + 1; q < players.Length; q++) {
+            if (Together(players[p],players[q]) || Forbidden(input, players[p],players[q])) continue;
+            var partnerships = new List<BoolVar>();
+            for (int s = 0; s < slots.Length; s++) {
+                if (!players[p].Availability.Contains(slots[s].StartTime) || !players[q].Availability.Contains(slots[s].StartTime)) continue;
+                for (int t = 0; t < 2; t++) partnerships.Add(Both(x[p,s,t],x[q,s,t],$"uniquePartners{p}:{q}:{s}:{t}"));
+            }
+            model.Add(LinearExpr.Sum(partnerships) <= 1);
+        }
+        // Penalize each unordered opponent pair's meetings beyond the first.
+        if (w.FactorOpponentThisWeek != 0)
+        for (int p = 0; p < players.Length; p++) for (int q = p + 1; q < players.Length; q++) {
+            if (Together(players[p],players[q]) || Forbidden(input, players[p],players[q])) continue;
+            var meetings = new List<BoolVar>();
+            for (int s = 0; s < slots.Length; s++) {
+                if (!players[p].Availability.Contains(slots[s].StartTime) || !players[q].Availability.Contains(slots[s].StartTime)) continue;
+                for (int t = 0; t < 2; t++) meetings.Add(Both(x[p,s,t],x[q,s,1-t],$"weeklyOpponents{p}:{q}:{s}:{t}"));
+            }
+            if (meetings.Count == 0) continue;
+            var repeats = model.NewIntVar(0, 2, $"opponentRepeats{p}:{q}");
+            model.AddMaxEquality(repeats, new LinearExpr[] {LinearExpr.Constant(0), LinearExpr.Sum(meetings) - 1});
+            score.AddTerm(repeats, -w.FactorOpponentThisWeek);
         }
         var hours = new IntVar[players.Length];
         var reached = new BoolVar[players.Length, 3];
@@ -132,6 +195,14 @@ public static class Scheduler
             // Every 30-minute boundary is a clique of mutually overlapping one-hour matches.
             foreach (var time in slots.Select(s => Minutes(s.StartTime)).Distinct())
                 model.Add(LinearExpr.Sum(Enumerable.Range(0, slots.Length).Where(s => Minutes(slots[s].StartTime) <= time && Minutes(slots[s].StartTime) + 60 > time).Select(s => present[p, s])) <= 1);
+            // Distant selected matches require another selected match between them.
+            // This bounds consecutive starts to 90 minutes (60 play + 30 rest).
+            for (int a = 0; a < slots.Length; a++) for (int b = a + 1; b < slots.Length; b++)
+                if (Minutes(slots[b].StartTime) - Minutes(slots[a].StartTime) > 90)
+                    model.Add(present[p, a] + present[p, b] <= 1 + LinearExpr.Sum(
+                        Enumerable.Range(0, slots.Length).Where(s =>
+                            Minutes(slots[s].StartTime) > Minutes(slots[a].StartTime) &&
+                            Minutes(slots[s].StartTime) < Minutes(slots[b].StartTime)).Select(s => present[p, s])));
             for (int h = 0; h < 3; h++)
             {
                 reached[p, h] = model.NewBoolVar($"reached{p}:{h}");
@@ -169,6 +240,7 @@ public static class Scheduler
             objectives.Add(($"{status}:hours", coverage));
             objectives.Add(($"{status}:signupOrder", LinearExpr.WeightedSum(ordered.Select(p => hours[p]), Enumerable.Range(0, ordered.Length).Select(i => ordered.Length - i))));
         }
+        objectives.Add(("matches", LinearExpr.Sum(used)));
         objectives.Add(("score", score));
         // One early-time objective avoids repeating presolve seven times. Each earlier
         // player-hour outweighs all later ones. Limit the exponent for int64 safety.
@@ -183,6 +255,8 @@ public static class Scheduler
             objectives.Add(("early:all", early));
         }
         else foreach (var time in startTimes) objectives.Add(($"early:{time}", AtTime(time)));
+        // Input order within each start time is the administrator's court priority.
+        objectives.Add(("courts", LinearExpr.WeightedSum(used, Enumerable.Range(0, slots.Length).Select(s => slots.Length - s))));
         var validation = model.Validate();
         if (validation.Length > 0) throw new ArgumentException($"Ugyldig CP-SAT-model: {validation}");
         var stages = new List<Stage>();
@@ -196,6 +270,7 @@ public static class Scheduler
             if (remaining < 0.1) break;
             model.Maximize(objective.value);
             double stageSeconds = objective.name == "score" ? 40 : objective.name.EndsWith(":hours") ? 20 : objective.name == "early:all" ? 10 : objective.name.StartsWith("early:") ? 2 : 5;
+            stageSeconds *= Math.Max(1, seconds / 100);
             var stageEnd = Math.Min(seconds, timer.Elapsed.TotalSeconds + stageSeconds);
             CpSolver? solver = incumbent;
             var status = CpSolverStatus.Unknown;
@@ -207,7 +282,7 @@ public static class Scheduler
                 cancellation.ThrowIfCancellationRequested();
                 double budget = (stageEnd - timer.Elapsed.TotalSeconds) / (attempts - attempt);
                 if (budget < 0.1) break;
-                var candidate = new CpSolver { StringParameters = $"max_time_in_seconds:{budget.ToString(System.Globalization.CultureInfo.InvariantCulture)} num_search_workers:{Math.Min(4, Environment.ProcessorCount)} random_seed:{Random.Shared.Next(1, 1_000_000)} randomize_search:true" };
+                var candidate = new CpSolver { StringParameters = $"max_time_in_seconds:{budget.ToString(System.Globalization.CultureInfo.InvariantCulture)} num_search_workers:{cpu} random_seed:{Random.Shared.Next(1, 1_000_000)} randomize_search:true" };
                 using var registration = cancellation.Register(candidate.StopSearch);
                 var candidateStatus = candidate.Solve(model);
                 if (candidateStatus is CpSolverStatus.Optimal or CpSolverStatus.Feasible)
