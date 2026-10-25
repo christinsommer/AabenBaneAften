@@ -31,7 +31,7 @@ export function SpouseSearch({initial,onChange,disabled}:{initial:Person|null;on
     <Label htmlFor={id}>Spouse (valgfrit)</Label>
     {selected&&<div className="flex items-center justify-between gap-2 rounded-md border p-2"><span>{selected.name}</span><Button type="button" variant="outline" disabled={disabled} onClick={()=>{setSelected(null);onChange(null);}}>Fjern</Button></div>}
     <Input id={id} type="search" value={query} maxLength={100} disabled={disabled} autoComplete="off" placeholder="Søg på Fornavn Efternavn" aria-describedby={`${id}-help`} onChange={e=>{setQuery(e.target.value);setError('');setLoading(false);}}/>
-    <p id={`${id}-help`} className="text-sm text-slate-600">Skriv mindst tre bogstaver i navnet, og vælg en spiller. Dit valg gemmes med “Gem profil” og betyder “Spille samtidigt”. Kun Admin kan ændre spillebetingelsen.</p>
+    <p id={`${id}-help`} className="text-sm text-slate-600">Skriv mindst tre bogstaver i navnet, og vælg en spiller. Dit valg gemmes med “Gem profil” og betyder “Spille samtidigt” med højst ½ times forskydning. Kun Admin kan ændre spillebetingelsen.</p>
     {eligible&&loading&&<p role="status" className="text-sm">Søger…</p>}
     {eligible&&result?.query===query&&<ul className="space-y-1">{result.items.map(p=><li key={p.id}><button type="button" disabled={disabled} className="w-full rounded-md border p-2 text-left hover:bg-slate-50" onClick={()=>{setSelected(p);onChange(p.id);setQuery('');setResult(null);}}>{p.name}</button></li>)}{!result.items.length&&<li className="text-sm">Ingen medlemmer fundet.</li>}</ul>}
     {error&&<p role="alert" className="text-sm text-red-700">{error}</p>}

@@ -24,6 +24,7 @@ import {initialRegistrationDefaults,parseRegistrationDefaults} from '../../../li
 import { calendarEvent, validDate } from "../../../lib/calendar";
 import { signupInput, signupFields, noSignup } from "../../../lib/signup";
 import { visiblePlanContact } from '../../../lib/contact-visibility';
+import { replacementCandidates } from '../../../lib/replacement-candidates';
 import { visibleMember } from "../../../lib/member-visibility";
 import { initialCr } from '../../../lib/initial-cr';
 import {birthYearOptions} from '../../../lib/birth-year';
@@ -173,6 +174,15 @@ async function state() {
   const contactRows = user.role === 'admin' || event.status === 'published'
     ? await db.select({id:players.id,name:players.name,email:players.email,phone:players.phone,phoneCountryCode:players.phoneCountryCode,emailVisible:players.emailVisible,phoneVisible:players.phoneVisible}).from(players) : [];
   const planContacts = contactRows.filter(player => planIds.has(player.id) || planNames.has(normalizeContactName(player.name))).map(visiblePlanContact);
+  const replacementSignups = event.status === 'published'
+    ? await db.select({playerId:signups.playerId,status:signups.status,requestedHours:signups.requestedHours}).from(signups)
+      .innerJoin(players,eq(players.id,signups.playerId))
+      .where(and(eq(signups.eventId,event.id),sql`EXISTS (SELECT 1 FROM profile_privacy WHERE player_id = ${players.id} AND closed_at IS NULL)`)) : [];
+  const replacements = event.status === 'published'
+    ? replacementCandidates(user.id, memberNames, replacementSignups, importedMatches, eventMatches).flatMap(candidate => {
+      const person = contactRows.find(player => player.id === candidate.id);
+      return person ? [{...candidate,contact:visiblePlanContact(person)}] : [];
+    }) : [];
   const names = user.role === 'admin' ? memberNames : memberNames.filter(player => player.id === user.id || planIds.has(player.id) || planNames.has(normalizeContactName(player.name)));
   const namesById = new Map(memberNames.map(player => [player.id, player.name]));
   const substitutionRows = await db.select().from(substitutions).where(eq(substitutions.eventId,event.id)).orderBy(desc(substitutions.updatedAt));
@@ -183,7 +193,7 @@ async function state() {
   }));
   const requestRows = await db.select({request:matchRequests,creatorName:players.name}).from(matchRequests).innerJoin(players,eq(players.id,matchRequests.creatorPlayerId)).where(eq(matchRequests.eventId,event.id));
   const requests = requestRows.filter(({request})=>request.creatorPlayerId===user.id||JSON.parse(request.invitedMemberNos).includes(user.memberNo)).map(({request,creatorName})=>({id:request.id,creatorName,status:request.status,isCreator:request.creatorPlayerId===user.id,isInvited:JSON.parse(request.invitedMemberNos).includes(user.memberNo),accepted:JSON.parse(request.acceptedPlayerIds).includes(user.id),acceptedCount:JSON.parse(request.acceptedPlayerIds).length}));
-  return { authenticated:true,user:profileUser,event,isOpen,firstMatchAt,times,timeGroups,slots,playTimes,courtOrder,calendarDates,registeredMembers,importedMatches,optimizerWeights,adminPlanScores,signup:signup?{...signup,...signupFields(signup)}:noSignup(event.id,user.id),matches:event.status==="published"?eventMatches:[],adminMatches:user.role==="admin"?eventMatches:[],players:allPlayers.map(p=>({...p,isSuperAdmin:isSuperAdmin(p)})),signups:memberSignups,signupHistory:signupHistory.map(row=>({...row,signup:{...row.signup,...signupFields(row.signup)}})),waitlist,names,planContacts,requests,optimizerDescriptions:isSuperAdmin(user)?optimizerHelp:undefined,forbiddenMemberPairs,optimizerDefaults:defaultWeights,optimizerResources,registrationDefaults:defaults,substitutions:substitutionsForUser };
+  return { authenticated:true,user:profileUser,event,isOpen,firstMatchAt,times,timeGroups,slots,playTimes,courtOrder,calendarDates,registeredMembers,importedMatches,optimizerWeights,adminPlanScores,signup:signup?{...signup,...signupFields(signup)}:noSignup(event.id,user.id),matches:event.status==="published"?eventMatches:[],adminMatches:user.role==="admin"?eventMatches:[],players:allPlayers.map(p=>({...p,isSuperAdmin:isSuperAdmin(p)})),signups:memberSignups,signupHistory:signupHistory.map(row=>({...row,signup:{...row.signup,...signupFields(row.signup)}})),waitlist,names,planContacts,replacements,requests,optimizerDescriptions:isSuperAdmin(user)?optimizerHelp:undefined,forbiddenMemberPairs,optimizerDefaults:defaultWeights,optimizerResources,registrationDefaults:defaults,substitutions:substitutionsForUser };
 }
 
 export async function GET(){try{return Response.json(await state());}catch(error){return Response.json({error:error instanceof Error?error.message:"Appen kunne ikke indlæses"},{status:500});}}

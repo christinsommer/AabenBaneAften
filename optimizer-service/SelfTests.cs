@@ -59,9 +59,21 @@ public static class SelfTests
         var separate = Scheduler.Solve(Data(simultaneous,[new Slot(1,"18:00"),new Slot(2,"18:00")],
             locked:[new Match(1,"18:00",[1,3],[4,5]),new Match(2,"18:00",[2,6],[7,8])]),30);
         Check(separate.Matches.Length==2, "Simultaneous spouses may play on separate courts");
+        foreach (var delay in new[] {"18:29","18:30","18:31","19:00"}) foreach (var reverse in new[] {false,true}) {
+            var shiftedPlayers=simultaneous.Select(p=>p with {Availability=["18:00",delay]}).ToArray();
+            var shiftedSlots=new[] {new Slot(1,"18:00"),new Slot(2,delay)};
+            var shiftedLocks=new[] {new Match(1,"18:00",[reverse?2:1,3],[4,5]),new Match(2,delay,[reverse?1:2,6],[7,8])};
+            var accepted=true;
+            try {Check(Scheduler.Solve(Data(shiftedPlayers,shiftedSlots,locked:shiftedLocks),30).Matches.Length==2,"Both shifted matches must be retained");}
+            catch(ArgumentException e) when(e.Message.Contains("Ingen gyldig")) {accepted=false;}
+            Check(accepted == (delay is "18:29" or "18:30"),"Simultaneous spouses allow at most 30 minutes in either direction");
+        }
+        var halfHourPlayers=simultaneous.Select(p=>p with {Availability=p.Id is 1 or 3 or 4 or 5 ? ["18:00"] : ["18:30"]}).ToArray();
+        Check(Scheduler.Solve(Data(halfHourPlayers,[new Slot(1,"18:00"),new Slot(2,"18:30")]),30).Matches.Length==2,
+            "Optimizer finds shifted spouse hours without locks");
         var unequal = Scheduler.Solve(Data([P(1,2) with {SpouseNo=2,SpouseMode=1},P(2),P(3,2),P(4,2)],
             [new Slot(1,"18:00"),new Slot(1,"19:00")]),30);
-        Check(Count(unequal,1)==1 && Count(unequal,2)==1,"All spouse hours must coincide even with unequal requests");
+        Check(Count(unequal,1)==1 && Count(unequal,2)==1,"Every spouse hour needs a corresponding hour even with unequal requests");
         var absent = Scheduler.Solve(Data([P(1) with {SpouseNo=99,SpouseMode=2},P(2),P(3),P(4)],oneCourt),30);
         Check(Count(absent,1)==1,"Absent spouse must not prevent play");
         var conflictRejected=false;

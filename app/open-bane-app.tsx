@@ -1,4 +1,5 @@
 "use client";
+import { FindReplacementButton } from './find-replacement-button';
 import {SpouseSearch} from './spouse-search';
 import {ForbiddenPairsForm} from './forbidden-pairs-form';
 import {AdminMfaReset} from './admin-mfa-reset';
@@ -702,6 +703,7 @@ function Dashboard({ data, act, busy, error, openProfile, refresh, refreshing }:
                   />
                 </div>
               </div>
+              <div className="flex flex-wrap items-center gap-3">
               <Badge className="bg-white px-4 py-2 text-[#13375e]">
                 {data.event.status === "published"
                   ? "Kampplan klar"
@@ -709,6 +711,8 @@ function Dashboard({ data, act, busy, error, openProfile, refresh, refreshing }:
                     ? "Tilmelding åben"
                     : "Tilmelding lukket"}
               </Badge>
+              {data.event.status === "published" && <FindReplacementButton candidates={data.replacements ?? []} />}
+              </div>
             </div>
           </div>
           <Card className="gap-0 border-[#dce9e1] py-0 shadow-none">
@@ -963,7 +967,7 @@ function ProfilePanel({ user, act, busy, adminMode=false, members=[] }: {
             </div>
             <div className="grid gap-2"><Label htmlFor="edit-spouse-mode">Spillebetingelse</Label>
               <select id="edit-spouse-mode" name="spouseMode" defaultValue={user.spouseMode ?? ''} className="h-10 rounded-md border px-3">
-                <option value="">Ingen betingelse</option><option value="1">Spille samtidigt</option><option value="2">Spille sammen med</option>
+                <option value="">Ingen betingelse</option><option value="1">Spille samtidigt (højst ½ times forskydning)</option><option value="2">Spille sammen med</option>
               </select>
             </div>
           </>}

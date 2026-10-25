@@ -181,7 +181,9 @@ export function validateProposal(raw: unknown, input: OptimizerInput, options: {
   if (!options.partial) for (const {a,b,mode} of spousePairs(input)) {
     const aTimes = (usage.get(a.id) ?? []).slice().sort((x,y) => x-y);
     const bTimes = (usage.get(b.id) ?? []).slice().sort((x,y) => x-y);
-    if (aTimes.join() !== bTimes.join()) throw new Error(`Medlem ${a.memberNo} og ${b.memberNo} skal spille samtidigt.`);
+    const tolerance = mode === 1 ? 30 : 0;
+    if (aTimes.length !== bTimes.length || aTimes.some((time, index) => Math.abs(time - bTimes[index]) > tolerance))
+      throw new Error(`Medlem ${a.memberNo} og ${b.memberNo} skal spille samtidigt${mode === 1 ? ' med højst 30 minutters forskydning' : ''}.`);
     if (mode === 2 && result.some(m => [m.team1,m.team2].some(team => team.includes(a.id) !== team.includes(b.id))))
       throw new Error(`Medlem ${a.memberNo} og ${b.memberNo} skal spille sammen på samme hold.`);
   }

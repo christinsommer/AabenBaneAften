@@ -157,9 +157,19 @@ public static class Scheduler
             if (Together(players[p],players[q])) {
                 for (int s = 0; s < slots.Length; s++) for (int t = 0; t < 2; t++)
                     model.Add(x[p,s,t] == x[q,s,t]);
-            } else foreach (var time in slots.Select(s => s.StartTime).Distinct()) {
-                var indices = Enumerable.Range(0,slots.Length).Where(s => slots[s].StartTime == time).ToArray();
-                model.Add(LinearExpr.Sum(indices.Select(s => present[p,s])) == LinearExpr.Sum(indices.Select(s => present[q,s])));
+            } else {
+                // Match each spouse hour to exactly one hour within 30 minutes.
+                // One nearby hour cannot cover two of the other spouse's hours.
+                var times = slots.Select(s => s.StartTime).Distinct().ToArray();
+                var links = new List<(string A, string B, BoolVar Selected)>();
+                foreach (var a in times) foreach (var b in times)
+                    if (Math.Abs(Minutes(a) - Minutes(b)) <= 30)
+                        links.Add((a,b,model.NewBoolVar($"spouseHour{p}:{q}:{a}:{b}")));
+                foreach (var time in times) {
+                    var indices = Enumerable.Range(0,slots.Length).Where(s => slots[s].StartTime == time).ToArray();
+                    model.Add(LinearExpr.Sum(links.Where(l => l.A == time).Select(l => l.Selected)) == LinearExpr.Sum(indices.Select(s => present[p,s])));
+                    model.Add(LinearExpr.Sum(links.Where(l => l.B == time).Select(l => l.Selected)) == LinearExpr.Sum(indices.Select(s => present[q,s])));
+                }
             }
         }
         // A pair may partner only once in this plan, except mandatory spouse teams.

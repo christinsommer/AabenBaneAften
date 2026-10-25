@@ -36,6 +36,35 @@ test('simultaneous permits same team, opponents and separate courts but rejects 
   assert.equal(validateProposal([separate[0]],input).length,1);
 });
 
+test('simultaneous spouses accept up to 30 minutes in either direction, including plan review', () => {
+  for (const delay of ['18:29','18:30','18:31','19:00']) for (const reverse of [false,true]) {
+    const input=data(Array.from({length:8},(_,i)=>p(i+1,{availability:['18:00',delay]})));
+    input.players[0].spouseNo=2; input.players[0].spouseMode=1;
+    input.slots=[{court:1,startTime:'18:00'},{court:2,startTime:delay}];
+    const plan=[{court:1,startTime:'18:00',team1:[reverse?2:1,3],team2:[4,5]},
+      {court:2,startTime:delay,team1:[reverse?1:2,6],team2:[7,8]}];
+    if (['18:29','18:30'].includes(delay)) {
+      assert.equal(validateProposal(plan,input).length,2);
+      assert.equal(reviewPlan(plan,input).valid,true);
+    } else {
+      assert.throws(()=>validateProposal(plan,input),/30 minutters/);
+      assert.equal(reviewPlan(plan,input).valid,false);
+    }
+    input.players[0].spouseMode=2;
+    assert.throws(()=>validateProposal(plan,input),/samtidigt/);
+  }
+});
+
+test('one spouse hour cannot cover two nearby hours of the other spouse', () => {
+  const input=data(Array.from({length:12},(_,i)=>p(i+1,{availability:['18:00','18:30','19:00']})));
+  input.players[0].spouseNo=2; input.players[0].spouseMode=1;
+  input.slots.push({court:2,startTime:'18:30'});
+  const plan=[{court:1,startTime:'18:00',team1:[1,3],team2:[4,5]},
+    {court:2,startTime:'18:30',team1:[2,6],team2:[7,8]},
+    {court:1,startTime:'19:00',team1:[1,9],team2:[10,11]}];
+  assert.throws(()=>validateProposal(plan,input),/samtidigt/);
+});
+
 test('repeated partners are forbidden across courts and team labels except spouse mode 2', () => {
   const input=data([p(1),p(2),p(3),p(4)]);
   const repeated=[match,{...match,startTime:'19:00',team1:[4,3],team2:[2,1]}];
