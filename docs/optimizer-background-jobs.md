@@ -1,5 +1,8 @@
 # Durable optimizer jobs
 
+See [architecture](architecture.md) for runtime boundaries and the
+[optimizer guide](../optimizer-service/README.md) for solver setup and rules.
+
 The UI submits a short authenticated POST to `/api/optimizer/jobs`. It persists an immutable input snapshot and returns 202. At that point the browser can disconnect or log out. A unique partial index permits one queued/running job per event, including concurrent requests from different admins.
 
 The optimizer Worker's minute cron dispatches the D1 outbox to Cloudflare Workflows with the job UUID as the instance ID. A lost start response cannot lose or duplicate a job. The Workflow calculates against the stored snapshot and saves the draft in a separate retriable step. It does not use the originating browser signal or session. Transient solver errors retry twice; an infrastructure restart can cause recomputation of the same snapshot. Final saving is atomic and idempotent.
@@ -12,12 +15,12 @@ Snapshots contain member names, membership numbers and optimizer attributes, nev
 
 ## Deployment
 
-This change requires migration 0019, the optimizer Worker (Workflow + minute cron + D1 binding), and the app. Run the existing reviewed release procedure with `--with-optimizer`; migration and backup verification now precede optimizer deployment so cron cannot access a missing table. The authenticated `/jobs-health` check prevents starting jobs against the older optimizer Worker. The shared production D1 binding and existing optimizer secret are used; there is no browser callback credential.
+The job table was introduced by `0019_amused_quasimodo.sql`. Deploy the optimizer Worker (Workflow + minute cron + D1 binding) and the app with all required migrations. Use the [release procedure](../DEPLOYMENT.md) with `--with-optimizer`; migration and backup verification precede optimizer deployment so cron cannot access a missing table. The authenticated `/jobs-health` check verifies job-protocol availability. The shared production D1 binding and optimizer secret are used; there is no browser callback credential.
 
-No production migration or deployment is performed by implementing this change. Workflows and Cron must be enabled on the Cloudflare account; confirm quotas and billing in the target account before rollout. For local development, run both Workers against the same local D1 persistence and trigger scheduled events using Wrangler's local scheduled-event support. Plain `next dev` alone does not execute the cron/Workflow. The existing standalone .NET solver endpoint is not a durable job dispatcher.
+Source code does not establish live deployment status. Workflows and cron must be available in the target account. For local development, run the website and optimizer Worker against the same local D1 persistence and dispatch scheduled events through the local Wrangler setup. Plain `next dev` does not execute the cron/Workflow. The standalone .NET solver is not a durable job dispatcher. Do not copy production service URLs into local configuration to work around a missing local dispatcher.
 
 ## Verification
 
 Integration tests use an isolated D1 database and a controlled solver response: authorization, duplicate start, cron dispatch without a browser, logout before calculation, original member/signup snapshots, persistent and combined warnings, signup preservation, draft-only save, repeated completion and concurrent publication conflict. Production rollout should additionally verify a real long-running job while closing the browser, then logging back in; server/job state must finish independently. Test an actual locked smartphone as well, since local automated tests do not reproduce device OS suspension.
 
-Cloudflare references: https://developers.cloudflare.com/workflows/build/workers-api/ and https://developers.cloudflare.com/workflows/build/sleeping-and-retrying/
+Implementation: [job core](../lib/optimizer-job-core.ts), [Worker jobs](../optimizer-cloudflare/jobs.js), and [Worker configuration](../optimizer-cloudflare/wrangler.jsonc).

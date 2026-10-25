@@ -1,9 +1,17 @@
-# Spillerpar som ikke må dele bane
+# Forbidden player pairs
 
-Super Admin kan tilføje, ændre og fjerne par under SuperAdmin → Spillere som ikke må spille på samme bane. Vælg medlemmer med navn og medlemsnummer, og tryk Gem spillerpar. Samme medlem kan indgå i flere forskellige par; et par kan ikke indeholde samme medlem to gange eller gentages i omvendt rækkefølge.
+SuperAdmin manages the list under “Spillere som ikke må spille på samme bane”. Each pair contains two distinct membership numbers. The server canonicalizes order and rejects duplicate/reversed pairs. A member may appear in multiple pairs.
 
-Listen ligger i `forbidden_pairs` i installationens D1-database. Den nuværende arkitektur har én klub pr. installation/database; der er ikke indført deling af en database mellem flere klubber. En ny, tom klubdatabase får ingen HIK-regler. Migration `0023_forbidden_pairs.sql` overfører de tre eksisterende HIK-par i databaser med de berørte medlemmer, uden at ændre øvrige indstillinger.
+## Storage and behavior
 
-Reglerne sendes med beregningsinput til optimeringstjenesten og gælder som hårde betingelser for både makkere og modspillere. Webappen kontrollerer også returnerede forslag og manuelt redigerede planer. Ændres listen under en beregning, afvises det gamle resultat ved gemning; start en ny beregning. Allerede gemte kampplaner ændres ikke automatisk.
+Rules are stored in `forbidden_pairs` in the installation's D1 database. They are hard constraints for both partners and opponents: the two members cannot share a court in the same match.
 
-Udrul både webappen, databasemigrationen og den opdaterede optimeringstjeneste. De gamle medlemsnumre findes kun som migrationsdata, ikke som faste regler i beregningskoden.
+The optimizer receives the list with its input. The website independently validates solver proposals and manual edits. A change during calculation invalidates the old result's save; calculate again. Already saved plans are not rewritten automatically.
+
+[Migration 0023](../drizzle/0023_forbidden_pairs.sql) transfers the historical HIK exclusions when relevant legacy members are present. A new empty club database gets no HIK-specific rows. Those historical values remain migration data, not constants in the solver.
+
+## Deployment and tests
+
+Changes to this contract require the website and optimizer to agree, and the migration must exist before code uses the table. Use the coordinated [deployment procedure](../DEPLOYMENT.md).
+
+Relevant coverage: `tests/forbidden-pairs.test.mjs`, `tests/forbidden-pairs-api.test.mjs`, and the optimizer self-tests. This feature does not introduce multiple-club isolation within one database.

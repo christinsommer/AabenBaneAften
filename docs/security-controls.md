@@ -1,5 +1,9 @@
 # Login, administrator roles and member data
 
+This guide describes repository controls, not a live security audit. See
+[administrator MFA](admin-2fa.md), [role boundaries](../SUPERADMIN.md), and
+[operational monitoring](operations-security.md) for related procedures.
+
 ## Feedback disabled
 
 `POST /api/app` with `action: "feedback"` returns HTTP 403 for everyone, including
@@ -26,13 +30,15 @@ without browser origin metadata still require JSON and the endpoint's normal
 authentication/authorization; this is CSRF protection, not a substitute for login.
 
 `tests/rendered-html.test.mjs` checks actual Worker headers, nonce uniqueness,
-script nonces and rejection across all six POST endpoints. The Chrome check
+script nonces and request rejection for the tested POST endpoints. The Chrome check
 `scripts/check-privacy-browser.mjs` verifies normal UI flows without CSP errors
 and rejects an injected inline script.
 
 ## Database deployment
 
-Migrations `0017_dear_wallflower.sql` and `0018_shiny_eddie_brock.sql` must be applied before deploying this code.
+Session and limiter changes originated in migrations `0017_dear_wallflower.sql`
+and `0018_shiny_eddie_brock.sql`. Apply all pending migrations for the target
+checkout, including later MFA/audit changes, before deploying its code.
 The normal release script applies migrations before deploying the Worker. Local
 development applies them through `node scripts/setup-local-d1.mjs`.
 
@@ -43,7 +49,7 @@ instances. Keys are SHA-256 hashes; raw IP addresses and membership numbers are
 not stored in the limiter. Expired records are removed in bounded batches during
 authentication traffic. Blocked requests do not extend the account's waiting time.
 
-* Login: 50 attempts per IP per 15 minutes; five initial attempts per membership
+* Login and MFA each use their own buckets: 50 attempts per IP per 15 minutes; five initial attempts per account
   number, followed by waits of 30, 60, 120 seconds and so on, capped by the
   15-minute window. At most 12 attempts per account per window.
 * PIN reset emails: three requests per membership number and 20 per IP per hour.
@@ -71,8 +77,9 @@ workflow. There is deliberately no public bootstrap endpoint.
 ## Member names
 
 Ordinary players receive their own name and the names needed for the published
-current match plan. An unpublished plan does not disclose its names. The existing
-registration and waiting lists remain available for their respective functions.
+current match plan. An unpublished plan does not disclose its names. Registration,
+waiting lists, spouse search, and published-plan replacement candidates expose
+limited names for their respective functions.
 Administrators retain the member directory. Existing visibility preferences still
 control plan contact details.
 
@@ -100,6 +107,8 @@ Email changes require the acting user's current PIN, protected by the login
 limiter, in both self-service and administrator editing. The target's existing
 sessions and PIN-reset links are revoked atomically with the email update. A
 self-service email change issues a fresh session for the current device.
+MFA credential versions also bind administrator sessions; see the MFA guide for
+challenge, recovery-code, and trusted-device revocation.
 
 `tests/session-api.test.mjs` covers both roles, background polling, active renewal,
 absolute expiration, legacy sessions, role promotion, cross-device logout and

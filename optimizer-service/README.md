@@ -1,100 +1,104 @@
-# Kampoptimering med Google OR-Tools CP-SAT
+# Match optimization with OR-Tools CP-SAT
 
-Next.js/Cloudflare kalder denne .NET 10-tjeneste over HTTP. Google.OrTools 9.15.6755 bruger den native CP-SAT-motor. Ingen JavaScript-heuristik anvendes som erstatning.
+The website delegates automatic planning to a .NET 10 service using Google OR-Tools 9.15.6755. The C# solver and independent TypeScript validator must agree on match rules. There is no JavaScript heuristic fallback.
 
-## Lokal opsætning
+See [business rules](../docs/business-rules.md) for registration, spouse modes, exclusions, and manual-review exceptions. This guide covers the solver and its integration.
 
-1. Installér .NET 10 SDK (allerede tilgængelig på denne udviklingsmaskine).
-2. Kør `npm run optimizer:test` fra projektets rod. Det gendanner låste NuGet-pakker, bygger tjenesten og tester den rigtige solver.
-3. Kør `npm run db:setup` for at tilføje det valgfrie fødselsår til lokal D1.
-4. Kør `npm run optimizer:start`. Første gang opretter kommandoen en tilfældig lokal API-nøgle og tilføjer den samt `OPTIMIZER_URL=http://127.0.0.1:5117` i `.dev.vars`. Eksisterende værdier bevares. Nøglen udskrives ikke.
-5. Lad beregningstjenesten køre, og kør `npm run dev` i en anden terminal. Genstart appen, når `.dev.vars` ændres. Ved manuel opsætning skal app og tjeneste have samme `OPTIMIZER_API_KEY` på mindst 32 tegn.
-6. Log ind som administrator, luk tilmeldingen, og vælg **Kampplan Admin → Algoritme foreslå kampe**.
+## Local service
 
-**Algoritme foreslå kampe** beregner og kontrollerer et forslag og gemmer det automatisk som kladde. Tabellen og **Baner, der ikke bruges** opdateres under **Admin → Kampplan Admin**, som ved Excel-import. Offentliggørelse sker særskilt. Også gyldige løsninger uden bevist optimalitet gemmes; status fremgår tydeligt. Begge forslagsknapper fjerner den eksisterende kampplan før et nyt forslag. Ved fejl forbliver planen tom. Standardfaktorer gemmes under Admin → Indstillinger → Standard for kampplan og bruges som udgangspunkt hver uge. Vægte kan justeres for det konkrete forslag. Fødselsår kan rettes under **Min profil** eller **Admin → Medlemmer → Ret medlem**. Listen går fra indeværende år minus 16 ned til 1940. Alder beregnes som indeværende år i Danmark minus fødselsår. Tomt fødselsår er altid tilladt. Aldersforskellen mellem makkere bruges kun, når begge aldre kendes; holdenes samlede alder sammenlignes kun, når alle aldre i kampen kendes. Medlemmet får en frivillig opfordring efter login og en påmindelse under Tilmeldinger. Admin kan se manglende fødselsår under Medlemmer. Den gamle alderskolonne bruges ikke længere. Kun fiktive SB50-sandboxprofiler konverteres automatisk; øvrige medlemmer skal angive deres fødselsår.
+Run from the repository root with .NET 10 SDK installed:
 
-## Produktion
-
-Produktionen bruger Worker `aabenbane-optimizer` og en Cloudflare Container. Konfigurationen er i `optimizer-cloudflare/wrangler.jsonc`. Én `standard-4`-instans genbruges og går i dvale efter to minutters inaktivitet. Alle HTTP-kald, inklusive `/health`, kræver den hemmelige nøgle, før containeren startes. Containeren har ikke internetadgang.
-
-Hele deploymentet kan køres med `powershell -ExecutionPolicy Bypass -File .\Deploy.ps1` fra projektets rod. Scriptet bruger sin egen placering som arbejdsmappe, så det kan også startes med en absolut sti fra andre mapper. Node.js, .NET 10, projektets npm-afhængigheder, Cloudflare-login og Docker Desktop med Linux-containere skal være tilgængelige.
-
-Scriptet tester og deployer beregningscontaineren, venter på at den nye version består onlinekontrollen, forbinder hjemmesiden og kører den normale release med build, alle test, verificeret databasebackup, migrationer og sundhedskontrol. Det stopper ved fejl og forhindrer samtidige kørsler. Projektets lokale Next.js-udviklingsserver og beregningstjenesten på port 5117 stoppes midlertidigt under build og genstartes bagefter, også ved fejl. Beregningstjenesten identificeres på den indlæste DLL's fulde sti, så andre projekters .NET-processer ikke stoppes. Secrets genbruges uden at blive udskrevet. Backup og releasekvittering ligger i `.data/releases/`.
-
-`Deploy.ps1 -CheckOnly` kører kun lokale releasekontroller; `Deploy.ps1 -WhatIf` viser handlingen uden at udføre den. Containerudrulningen ventes normalt på i op til 15 minutter; det kan justeres med `-ContainerWaitMinutes`.
-
-Med Docker Desktop startet køres fra projektets rod:
-
-```sh
-npm run optimizer:deploy
-npm run optimizer:check
-npm run optimizer:connect
-npm run release
+```powershell
+npm.cmd run optimizer:test
+npm.cmd run optimizer:start
 ```
 
-Første deployment kan kræve nogle minutters provisionering, før `optimizer:check` lykkes. Kontrollen beregner en lille kampplan med fiktive spillere og efterprøver de to CR-faktorer uden at læse eller ændre D1. `optimizer:connect` gentager kontrollen og sætter derefter `OPTIMIZER_URL` og `OPTIMIZER_API_KEY` som secrets på hjemmesidens Worker. En produktionsnøgle oprettes i den git-ignorerede `.data/optimizer-production/key` og genbruges ved senere udgivelser. Den må ikke publiceres eller slettes under almindelig oprydning. Ved nøgleskift skal begge Workers opdateres.
+The test command restores locked NuGet dependencies, builds, and runs the actual solver self-tests. The start command runs on `http://127.0.0.1:5117` and creates missing `OPTIMIZER_API_KEY`/`OPTIMIZER_URL` values in local `.dev.vars`. Existing settings are preserved; inspect the URL's environment before using it. App and solver keys must match and contain at least 32 characters. Restart the app after settings change.
 
-Appen venter op til 160 sekunder på containeren; browseren op til 180 sekunder. Selve optimeringen har fortsat sin eksisterende tidsramme. Den ekstra ventetid giver plads til opstart efter dvale.
+This standalone service handles `/solve`; it does not dispatch durable jobs. The UI calculation button uses the [background-job workflow](../docs/optimizer-background-jobs.md), which also needs the optimizer Worker, shared local D1 persistence, and cron dispatch. Plain `next dev` plus this service is insufficient for that queue.
 
-Tjenesten kræver en separat vært med .NET/native biblioteker, fx en container-vært. Den indgår ikke automatisk i Worker-deploymentet.
+For an offline calculation with an already built binary:
 
-```sh
-docker build -t hik-optimizer optimizer-service
-docker run --rm -p 8080:8080 -e OPTIMIZER_API_KEY hik-optimizer
+```powershell
+dotnet optimizer-service/bin/Debug/net10.0/OptimizerService.dll --solve-file input.json result.json
 ```
 
-Brug HTTPS foran tjenesten. Sæt `OPTIMIZER_URL` og `OPTIMIZER_API_KEY` i Cloudflare Workers-miljøet og samme nøgle hos tjenesten. API-nøglen skal være en secret, aldrig en `NEXT_PUBLIC_*`-variabel. `/health` er offentlig; `/solve` kræver Bearer-nøglen. Tjenesten behandler én beregning ad gangen og svarer 429, når den er optaget. Sørg for mindst 960 sekunders HTTP-timeout hos proxyen. Computation er begrænset til 900 sekunder plus indlæsning/modelopbygning og højst 200 deltagere; der afskæres ikke en vilkårlig del af deltagerlisten.
+Use the service input JSON format. Keep real member snapshots in protected, Git-ignored storage such as `work/`; do not commit them as test fixtures.
 
-Der sendes kun interne spiller-ID'er, medlemsnumre (til forbudsregler), CR, køn, alder, tilmeldingsrækkefølge, status og tilmeldingstider samt hold-ID'er fra historikken. Navne, e-mailadresser, telefonnumre og loginoplysninger sendes ikke til beregningstjenesten.
+## Service and production boundary
 
-## Regler og mål
+The raw .NET service exposes a public `/health` and authenticated `/solve`. It accepts one solve at a time and returns 429 while occupied. Production wraps it with `aabenbane-optimizer`, whose Worker authenticates all supported endpoints, including `/health` and `/jobs-health`, before starting/accessing the container.
 
-- Styrke = 10 − CR. Alle deltagere i samme kamp må højst have 3 i CR-forskel.
-- Kun tilmeldte starttider og de eksisterende banereservationer anvendes. En kamp varer 60 minutter. Både spillere og baner kontrolleres for overlap.
-- Låste kampe bevares, men ugyldige låste kampe afvises; andre kladdeversioner erstattes ved gemning.
-- Alle tre forbudte medlemspar kontrolleres, uanset hold.
-- Single er kun tilladt fra kl. 20:30, både med samme køn og på tværs af køn. FactorDoubleSameSex, FactorSingle og Factor3OfAKind giver selvstændige fradrag med standardværdier 5, 10 og 30. Mixed double har intet fradrag for kønsfordelingen. Timeønsker og antal kampe prioriteres før score, også når ekstra kampe giver negativ score. Ved to mænd og to kvinder i double fordeles kønnene ligeligt mellem holdene.
-- FactorDistanceSameTeamA er en fast maksimal CR-forskel mellem makkere, når mindst én har CR 1–4. Værdien er et heltal, standard 2. Den almindelige maksimale CR-forskel på 3 i hele kampen gælder fortsat.
-- Score følger de seks vægte. Hvert gentaget makkerpar giver straf én gang pr. historikregel; sidste rundes makkere giver begge makkerstraffe. Hver gentaget modstanderrelation giver separat straf. Flere kampe med samme relation i en historikrunde tælles som TRUE én gang.
-- balanceAge = abs(A−B) + abs(C−D) + abs(A+B−C−D). Ved single bruges kun forskellen mellem de to spilleres alder.
-- Historikken er de seneste tre **afholdte, offentliggjorte runder** fra og med 2026-09-18, før den valgte runde og før dags dato. Test- og aflyste runder og runder uden kampe udelades; arkiverede spillede runder tæller med. “Sidste uge” betyder den seneste af disse runder. Algoritmens egne planer gemmer stabile spiller-ID'er; ældre Excel-historik matches entydigt på fulde navne. Ukendte eller tvetydige navne stopper beregningen med besked.
+[Cloudflare configuration](../optimizer-cloudflare/wrangler.jsonc) defines one `standard-4` container instance and the Workflow/cron bindings. The container sleeps after two minutes of inactivity and has outbound internet disabled. The Worker shares production D1 with the website; the raw solver does not directly read D1.
 
-CP-SAT løser følgende mål i rækkefølge. Det opnåede resultat for hvert trin er en nedre grænse: senere trin må forbedre det, men aldrig forringe det. Tidspunkter og hold må omarrangeres:
+Solver input contains internal IDs, membership numbers, CR, gender, optional derived age, spouse settings, availability, requests, queue order, status, historical team IDs, exclusions, and configuration. Display names and contact/login credentials are not sent to the raw solver. The durable job snapshot stored by the application also contains names used for saving the plan; do not confuse these two payloads.
 
-1. Maksimér antallet af aktive spillere med mindst 1 time.
-2. Maksimér antallet med mindst 2 timer, derefter mindst 3 timer, uden at overskride ønsker.
-3. Prioritér tilmeldingsrækkefølgen blandt de aktive: hver tildelt time vægtes med omvendt placering i køen. En tidligere tilmeldt har dermed højere prioritet, når opfyldelsen af trin 1–2 er ens.
-4. Udfør samme tre time-trin og køprioritet for ventelisten. Ventelistedeltagere må allerede indgå som medspillere, hvis det hjælper de aktive; deres egne ønsker prioriteres først her.
-5. Maksimér antallet af kampe uden at forringe timeopfyldelse eller tilmeldingsprioritet.
-6. Maksimér summen af kampscorer.
-7. Maksimér spiller-timer ved den tidligste start, derefter ved hver senere start, uden at forringe tidligere mål.
+Resources are configurable: 1–32 search workers, default 4; 1–900 seconds, default 600. CPU threads share the host's resources. Inputs are limited to 200 players and 32 court/time slots. Cold start, transport, and model construction add overhead beyond the search budget.
 
-De tre time-trin optimeres samlet pr. status med heltalsvægte: ved n spillere er første time vægtet (n+1)², anden time n+1 og tredje time 1. Dermed kan alle senere timer tilsammen ikke opveje én mistet første time. Timefordelingen får op til 120 sekunder, køprioritet 30 sekunder, score 240 sekunder og tidlige tider samlet 60 sekunder inden for de 600 sekunder. De almindelige syv starttider vægtes tilsvarende leksikografisk i ét trin, så modelbehandlingen ikke skal gentages for hver starttid.
+## Objectives, in priority order
 
-Time-, kø-, antal-kampe- og scoretrin har op til to søgestarter med forskellige tilfældige seeds. Antal-kampe-trinnet får op til 5 sekunder. Den bedste komplette løsning genbruges som startforslag og kan ikke tabes ved genstart. Antallet af solvertråde styres fra Admin → Indstillinger → CPU og tid for optimering (1–32, standard 4). Tidsgrænsen kan sættes til 1–900 sekunder (standard 600). Trådene deler de CPU-ressourcer, som tjenesten har til rådighed. Ved tidsgrænsen bevares den bedste fundne gyldige løsning, og UI viser **optimalitet er ikke bevist**. Kun når alle trin er bevist optimale, bruges **Optimal løsning fundet**. Flere søgestarter giver ikke garanti for et globalt optimum.
+Later stages may improve an earlier stage's achieved value but may not reduce it. They can rearrange times and teams while preserving those bounds.
 
-De anvendte faktorværdier og score pr. kamp gemmes sammen med kampplanen. Formularen gendanner disse værdier efter genindlæsning; browseren husker også senest anvendte værdier til nye planer. Faktorhjælp kan åbnes ved hvert felt. Score pr. kamp vises kun i Admin → Kampplan Admin → Kampplan og eksporteres ikke. Ældre eller importerede planer uden gemt score beregnes med standardfaktorer og tilgængelige medlems-/historikdata; manglende oplysninger vises som “–”.
+1. Maximize active members receiving a first hour, then a second, then a third, within requests.
+2. Favor earlier active signup positions when hour coverage is equal.
+3. Apply the same hour-coverage and queue priorities to waitlisted members. They may already be used as partners to help active members.
+4. Maximize match count.
+5. Maximize total score.
+6. Favor player-hours at earlier start times.
+7. Apply configured court preference order as a final tie-break.
 
-**Ikke opfyldte ønsker** beregnes fra den aktuelt viste kampplan og de aktuelle tilmeldinger. Listen viser ønskede, tildelte og manglende timer, mulige og tildelte starttider samt status. Den tilføjes efter en tom række under kampene i Kampplan.xlsx; importen læser fortsat kun kampene. Ens medlemsnavne markeres til manuel kontrol.
+For each status group, first/second/third-hour weights use `(n+1)^2`, `n+1`, and `1`; lower-priority hours cannot compensate for losing a first hour. Up to seven start times use one weighted early-time objective; larger sets use separate objectives to avoid integer overflow.
 
-En lokal analyse uden databaseændringer kan køres med `dotnet optimizer-service/bin/Debug/net10.0/OptimizerService.dll --solve-file input.json result.json`. Input følger `/solve`-formatet. Gem virkelige medlemsdata under den git-ignorerede mappe `work/`.
+Search stages share the total budget, can use multiple randomized starts, and retain a complete incumbent. Only a result with all stages proven optimal is labeled `OPTIMAL`; a valid unproven result is `FEASIBLE`. Repeated search is not a guarantee of global optimality. See [Scheduler.cs](Scheduler.cs) for exact budget allocation.
 
-## Kontrol og test
+## Scoring factors
 
-### Manuel redigering
+The starting score is 100 per match. Factors apply penalties unless a configured value changes their sign. Parsing accepts bounded integers; do not infer validation solely from the word “penalty”.
 
-Under Admin → Kampplan Admin → Kampplan åbner **Redigér kampplan** en redigeringstilstand for kladder med lukket tilmelding. Træk en spiller til en anden spiller for at bytte plads, eller til et tomt felt for at flytte. Mus og touch understøttes; man kan også vælge spiller og destination med klik, tryk eller tastatur. Låste kampe kan ikke flyttes. Flytningerne bevarer spillernes samlede antal kampe og dermed den opnåede timefordeling.
+| Factor | Default | Role |
+| --- | ---: | --- |
+| `FactorMatchDifference` | 40 | Difference between team strength totals |
+| `FactorSameTeamDifference` | 15 | Sum of partner CR differences in doubles |
+| `FactorDistanceSameTeamA` | 2 | Hard partner-distance limit for CR 1–4; not a score term |
+| `FactorSameTeamLastWeek` | 20 | Partnership repeated from the latest qualifying round |
+| `FactorSameTeam3Weeks` | 10 | Partnership present in any of the last three qualifying rounds |
+| `FactorOpponentLastWeek` | 5 | Opponent pair repeated from the latest qualifying round |
+| `FactorOpponentThisWeek` | 5 | Each opponent-pair meeting after the first in this plan |
+| `FactorDoubleSameSex` | 5 | Four players of one gender in doubles |
+| `FactorSingle` | 10 | Singles match |
+| `Factor3OfAKind` | 30 | Three players of one gender in doubles |
+| `FactorAge` | 0 | Known-age partner and team-total differences |
 
-**Afslut redigering og kontrollér** kontrollerer på serveren alle faste kampregler og beregner score med kampplanens gemte faktorer. Berørte spillere vises med rød tekst og forklaringer ved regelbrud. En ugyldig redigering gemmes ikke; **Ret kampplanen igen** eller **Annuller ændringer** kan bruges. Gyldige ændringer gemmes atomisk med de nye scorer. Et ændret datagrundlag siden redigeringens start afviser gemning. Beregningscontaineren kaldes ikke ved manuel redigering.
+History penalties can accumulate: a partnership from the last round can incur both partner-history penalties. An unordered relationship counts once per historical condition. Within-plan opponent penalties apply once per additional pair meeting, including singles.
 
-Eksport, import, automatisk optimering, offentliggørelse og fjernelse er deaktiveret, mens manuelle ændringer afventer kontrol. Redigeringen bevares ved skift mellem administratorfaner; siden advarer før genindlæsning med ugemte ændringer.
+For doubles, the known-age expression is `abs(A-B) + abs(C-D) + abs(A+B-C-D)`. A partner term requires both ages; the team-total term requires all four. Singles use the two known ages. Missing age never prevents participation.
 
-`node scripts/check-plan-editor.mjs` tester mus, touch, bytte med klik, røde regelmarkeringer og gyldig/ugyldig gemning i en skjult Edge-browser på Windows. Der bruges fiktive data og en isoleret lokal side uden database- eller produktionsadgang.
+Spouse mode 2 exempts only that pair from CR-distance constraints and the partner CR-difference term; other constraints and penalties remain. Mode 1 allows a one-to-one correspondence of assigned starts within 30 minutes. See [spouse rules](../docs/business-rules.md#spouse-choices).
 
-`FactorSameTeamDifference` har standardværdien 15 og kan ændres sammen med de andre faktorer i Kampplan Admin. Fra kampscoren trækkes `FactorSameTeamDifference * (abs(CR1_hold1 - CR2_hold1) + abs(CR1_hold2 - CR2_hold2))`. For single er dette fradrag 0. Faktoren supplerer `FactorMatchDifference`, som vægter forskellen mellem holdenes samlede CR. Værdien 0 deaktiverer det nye fradrag. Ved udgivelse skal både denne .NET-tjeneste og appen opdateres, så solver og scorekontrol bruger samme formel.
+Default values and score formulas are defined in [lib/optimizer.ts](../lib/optimizer.ts), with help text in [lib/optimizer-settings.ts](../lib/optimizer-settings.ts). SuperAdmin manages factors/resources; ordinary administrators calculate with stored settings.
 
-`npm run optimizer:test` tester CP-SAT. `node --test tests/optimizer.test.mjs tests/optimizer-api.test.mjs` tester den uafhængige TypeScript-validator og hele forløbet fra API gennem den rigtige .NET-tjeneste til en isoleret D1.
+## Saving and editing
 
-API'et kontrollerer rettigheder, lukket tilmelding, datagyldighed, kampscore og alle hårde kampregler. Forslagets fingeraftryk omfatter medlemmer, tilmeldinger, banekampe, historik og vægte. Gemning bruger en atomisk D1-batch med en betinget opdatering: samtidige ændringer betyder, at hverken den gamle kladde eller kamprækkerne overskrives.
+A successful durable result replaces the existing plan with a draft. Failed calculations retain the previous plan. Publication remains explicit. Revision checks prevent stale plan/settings from being overwritten; some signup/member changes produce persisted warnings instead. See [background jobs](../docs/optimizer-background-jobs.md).
 
-Referencer: [Google OR-Tools CP-SAT](https://developers.google.com/optimization/cp/cp_solver), [OR-Tools til .NET](https://developers.google.com/optimization/install/dotnet/).
+Manual editing calls the TypeScript reviewer, not the solver. It can permit the specific partner-distance exception while still enforcing other constraints. Scores and saved factor metadata are recalculated consistently. Missing inputs for older/imported score calculation are shown as unavailable rather than invented.
+
+The unfulfilled-wishes report is calculated from the displayed plan and current registrations. Excel export places it after the match rows; import reads only the matches. Duplicate names require review.
+
+## Deployment
+
+Use the coordinated [deployment workflow](../DEPLOYMENT.md), which migrates/verifies D1 before deploying the optimizer and then the website. Updating only one side of a rule change can make solver proposals fail application validation.
+
+The lower-level `optimizer:deploy`, `optimizer:check`, and `optimizer:connect` commands are operational tools, not local tests. Connect sets website Worker secrets after checking the service. Production key material is kept in ignored `.data/optimizer-production/key`; do not delete or disclose it during ordinary cleanup.
+
+The current health compatibility marker is `optional-ages-v8` in both the service and checker. It is a compatibility assertion, not a unique build identifier or proof that every recent rule edit is deployed.
+
+## Tests
+
+- `npm.cmd run optimizer:test`: real C# solver, including shifted spouse starts and invalid locked plans.
+- `node --test tests/optimizer.test.mjs tests/spouse.test.mjs tests/plan-review.test.mjs`: independent TypeScript validation/review.
+- `tests/optimizer-api.test.mjs`: API-to-solver integration with isolated D1; requires its build prerequisites.
+- `tests/optimizer-jobs.test.mjs`: durable lifecycle and persistence scenarios.
+- `node scripts/check-plan-editor.mjs`: Windows Edge interaction checks using isolated fake data.
+
+Do not interpret local test success as a completed production rollout.

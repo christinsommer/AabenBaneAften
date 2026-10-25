@@ -1,54 +1,47 @@
-# Admin og SuperAdmin
+# Admin and SuperAdmin
 
-Admin er klubbens lokale administrator og beholder medlemsadministration,
-tilmeldinger, kampplaner, privatlivsopgaver og nyhedsmails.
+The stored roles are `player` and `admin`. SuperAdmin is an additional server-derived capability for one configured administrator, not a third database role.
 
-SuperAdmin har derudover sin egen fane med **Standard for kampplan**,
-**Optimerings-faktorer** for den aktuelle spillerunde, **CPU og tid for
-optimering**, **ChatGPT-forslag til kampplan** og **Test e-mail**. En lokal Admin
-kan stadig beregne, eksportere, gemme og redigere kampplaner med serverens gemte
-faktorer. Knapperne “Algoritme foreslå kampe” og “Eksporter kampplan” forbliver
-under Kampplan Admin.
+## Permissions
 
-## Kontobinding
+| Capability | Member | Admin | SuperAdmin |
+| --- | --- | --- | --- |
+| Own profile and signup | Yes | Yes | Yes |
+| Published plans and permitted contacts | Yes | Yes | Yes |
+| Member administration, registration management, plans | No | Yes | Yes |
+| Privacy review and newsletter administration | No | Yes | Yes |
+| Calculate, edit, export, and publish plans | No | Yes | Yes |
+| Optimizer factors, defaults, and resources | No | No | Yes |
+| Forbidden pairs and protected prompt | No | No | Yes |
+| Grant/revoke administrator roles | No | No | Yes, with current PIN |
+| Reset another administrator's MFA | No | No | Yes, with identity confirmation and authentication proof |
 
-Adgangen er en ekstra serverkontrolleret rettighed oven på den eksisterende
-adminrolle. `SUPERADMIN_PLAYER_ID` i servermiljøet skal være profilens stabile
-interne ID, ikke medlemsnummer eller navn. Navneændring giver aldrig denne adgang.
-Den lokale konto med medlemsnummer 13993 er verificeret som profil-ID 2.
-Andre installationer skal kontrollere deres egen konto og deres eget ID.
+Check action-specific server guards for exact requirements. Hiding a UI control is not the authorization mechanism.
 
-Den eksisterende databaserolle bevares for kompatibilitet med booking, login,
-privatliv og mail. Den beregnede `isSuperAdmin`-rettighed kommer fra serveren og
-accepteres aldrig fra en klientanmodning. En manglende eller ugyldig konfiguration
-giver ingen SuperAdmin. Kontoen skal være åben og have adminrollen.
+## Account binding
 
-Lokale administratorer kan ikke ændre SuperAdmins profiloplysninger eller fjerne
-adgangen. SuperAdmin kan heller ikke fjerne sin egen adgang via den almindelige
-administratorliste; kontobinding ændres af driftsansvarlig i servermiljøet.
+`SUPERADMIN_PLAYER_ID` must contain the stable internal `players.id` of an open administrator. It must not contain a membership number or display name. A missing/invalid setting grants nobody this capability. Names and client-supplied `isSuperAdmin` values cannot grant it.
 
-## Beskyttede oplysninger
+Ordinary administrators cannot alter the bound SuperAdmin's profile or remove its access. The bound administrator cannot remove their own access through the normal role list; the operator changes the environment binding when ownership changes.
 
-Faktorer og ressourceindstillinger returneres ikke til lokal Admin fra app-API'et.
-Faktormetadata fjernes fra kampplanens rå data for alle andre end SuperAdmin.
-Optimerings-API'et afviser lokale faktoroverskrivninger og returnerer ikke vægte
-eller beregningsstadier til lokal Admin. Faktorstandarder og hjælpetekster hentes
-fra serveren for SuperAdmin, frem for at være indlejret i de fælles faktorformularer.
-Almindelige kampresultater, validering og kampscorer er fortsat en del af klubdriften.
-ChatGPT-prompten ligger bag et SuperAdmin-kontrolleret API og findes ikke længere
-som en offentlig fil.
+## Provisioning
 
-Dette indfører ikke datamæssig isolation mellem flere klubber i samme database.
-Den eksisterende app er fortsat én klub pr. installation. Brug separate
-installationer/databaser, indtil en egentlig flerklubmodel er implementeret.
+Public registration always creates a player, even in an empty database. For a new environment, an operator must verify the intended account, assign the initial admin role through authorized database administration, and configure its internal ID.
 
-## Drift og kontrol
+For local development, set the verified local ID in `.dev.vars` and restart. Do not assume a production membership number has the same internal ID in a separately seeded Sandbox.
 
-Den lokale `.dev.vars` konfigureres for den verificerede konto. Filen og dens backup
-er ignoreret af Git. Produktionsmiljøet er ikke ændret eller publiceret; dér skal
-driftsansvarlig sætte `SUPERADMIN_PLAYER_ID` efter at have verificeret kontoen.
-Der kræves ingen databaseændring for rolleopdelingen.
+For Production, the deployment wrapper supports:
 
-API-regressionen kontrollerer begge adgangsniveauer, beskyttelse af ejerkontoen,
-fravær af faktorværdier for lokal Admin og optimeringens eksisterende funktion.
-Ingen rigtige mails sendes under testen.
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Deploy.ps1 -SuperAdminMemberNo <verified-number>
+```
+
+This is a full deployment command, not merely a lookup. The script verifies the production account and stores its internal ID as a Worker secret. Later deployments without the option require and preserve an existing binding. Secret-name listings do not reveal the stored ID. See [deployment](DEPLOYMENT.md).
+
+## Protected data
+
+Optimizer configuration and factor metadata are filtered on the server. Ordinary administrators use stored factors when calculating; they cannot submit their own factor overrides. The protected ChatGPT prompt is generated through a SuperAdmin-only endpoint.
+
+All administrators require MFA. See [administrator MFA](docs/admin-2fa.md) for setup/recovery and [security controls](docs/security-controls.md) for sessions and PIN confirmation.
+
+This capability does not create isolation between clubs. Use separate installations/databases until a tenant model exists.

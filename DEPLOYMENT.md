@@ -1,166 +1,75 @@
-# Lokal udvikling og udgivelse
+# Deployment
 
-Admin → Indstillinger → CPU og tid for optimering gemmer antal solvertråde
-(1–32, standard 4) og tidsgrænse (1–900 sekunder, standard 600).
-Værdierne indlæses fra databasen ved hvert kampforslag og sendes til CP-SAT.
-Ændringen kræver opdatering af både hjemmeside og beregningstjeneste.
+Use the checked release workflow for `aabenbaneaften.dk`. This guide describes what the scripts do; it does not establish the currently deployed version or authorize a production change.
 
-Standard for tilmelding anvendes nu også, når en eksisterende kalenderdato bliver
-den næste runde, så gamle åbningstider kl. 12:00 erstattes af den gemte standard
-(normalt 2 dage før kl. 06:00 dansk tid). Kun kommende automatiske kladderunder,
-hvis tilmelding endnu ikke er startet, opdateres. Test- og offentliggjorte runder
-samt manuel åbning/lukning bevares. Ny eksplicit redigering af rundens tidsplan
-markeres med `registration_schedule_custom` og tilsidesætter standarden.
-Migrationen med dette felt skal anvendes før hjemmesideudgivelse.
+## Prerequisites
 
-Admin → Tilmeldinger → Spillerlister har en blyant til højre for Status.
-Dialogen retter ønskede timer og mulige starttider for en eksisterende tilmelding
-i den aktuelle runde, også efter tilmeldingslukning og offentliggørelse. Den anvender de
-konfigurerede spilletider og den normale validering. Status, oprettelsestidspunkt
-og eksisterende kønummer bevares. En eksisterende kampplan ændres først ved en ny
-beregning. Historiske runder kan ikke
-redigeres her, og samtidige ændringer af tilmeldingen afvises frem for at overskrives.
+- Node.js dependencies installed with `npm.cmd ci` and .NET 10 SDK available.
+- Cloudflare credentials with the permissions required by the selected operation.
+- Docker Desktop with Linux containers for a full optimizer/container release.
+- Production secrets for MFA, email, and SuperAdmin verified through the preflight.
+- A reviewed migration diff and a protected location for database backups.
 
-Admin → Indstillinger indeholder nu “Hele timer rækkefølge” (standard 4, 3, 2, 1)
-og “Halve timer rækkefølge” (standard 5, 6, 7). Listerne bestemmer både tilladte
-baner og deres prioritet; andre positive banenumre og kortere lister er tilladt.
-Nederst angives “Hele timer tider” og “Halve timer tider” som kommaseparerede
-starttider (hh:00/hh:30). De styrer medlemstilmelding, algoritme, manuel baneredigering
-og ledige baner. En tom gruppe deaktiveres. Der må højst være 32 banetider i alt.
-Ændringer gælder straks; tidligere spilleønsker og planer ændres ikke automatisk.
-Nye algoritmeforslag placeres efter rækkefølgen ved hvert
-starttidspunkt; låste kampe beholder deres bane. Eksisterende planer flyttes ikke.
-Indstillingerne gemmes sammen med algoritmestandarderne uden databasemigration.
+Local `.dev.vars` is never uploaded as production configuration. Read [MFA setup](docs/admin-2fa.md), [roles](SUPERADMIN.md), and [Cloudflare boundaries](CLOUDFLARE.md).
 
-`FactorOpponentThisWeek` giver fradrag for hvert ekstra møde mellem samme to
-modstandere i én kampplan (både single og double). Første møde er gratis; hvert
-efterfølgende møde koster faktoren én gang pr. modstanderpar. Standard er 5,
-0 slår fradraget fra. Faktoren kan ændres sammen med de andre faktorer og gemmes
-under Admin → Indstillinger. Ældre gemte standarder får automatisk værdien 5.
-Fradraget vises på den senere kamps score, også ved manuel redigering.
-Ingen databasemigration kræves. Både beregningstjenesten og hjemmesiden skal
-udgives; containerkontrollen kræver nu `scoringVersion = configurable-courts-v7`.
+## Choose the operation
 
-Migration `0013_wise_echo.sql` tilføjer gemte standarder for tilmelding under Admin →
-Indstillinger. Uden gemte ændringer åbnes 2 dage før kl. 06:00 og lukkes 1 dag før kl. 12:00.
-Standarderne bruges ved oprettelse og ved valg af næste automatiske spillerunde,
-indtil tilmeldingen starter. Alle tidspunkter fortolkes som dansk tid med minutpræcision.
+Run from the project root:
 
-Hvert makkerpar må kun optræde én gang i samme kampplan. Kun par med Spouse No.
-og “Spille sammen med” (type 2) er undtaget. Reglen gælder også manuel gemning og
-låste kampe; den ændrer ikke historikfradrag på tværs af spilledage.
+| Command | Effect |
+| --- | --- |
+| `npm.cmd run release:check` | Local build and tests; no production commands |
+| `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Deploy.ps1 -CheckOnly` | Windows wrapper for local release checks |
+| `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Deploy.ps1 -WhatIf` | Describe the full deployment without executing it |
+| `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Deploy.ps1` | Full website and optimizer release, including remote migration |
+| `npm.cmd run release` | Website release and remote migrations; does not deploy the optimizer |
+| `npm.cmd run release -- --with-optimizer` | Release including the optimizer |
 
-Migration `0012_worried_misty_knight.sql` tilføjer de valgfrie heltalsfelter `spouse_no`
-(medlemsnummer) og `spouse_mode` (1 = samtidigt, 2 = samme hold). Kun administratorer
-kan se og ændre dem under Medlemmer → Ret medlem, under CR. Det er nok at registrere
-relationen på ét medlem. Hvis begge har registreret relationen, gælder det strengeste krav.
-Kravet gælder alle kampe, når begge har en gyldig tilmelding med timeønsker; ellers spiller
-den tilmeldte normalt. Forskellige timeønsker kan derfor medføre færre tildelte timer.
-Niveaugrænser og CR-fradrag mellem de to faste makkere bortfalder ved type 2. Øvrige
-spillerkombinationer, holdbalance, historik, mixed-regler og forbudte par er uændrede.
-Flere relationer håndhæves samtidigt; modstridende krav kan forhindre kampe.
-Ved sletning af et medlem ryddes referencer til dets medlemsnummer.
-Både hjemmeside og beregningstjeneste skal udgives. Containerkontrollen kræver
-`scoringVersion = unique-partners-v4`, så en ældre beregningstjeneste ikke godkendes.
+`ExecutionPolicy Bypass` applies to that PowerShell process. The wrapper resolves its own project directory, writes a transcript, and temporarily stops/restarts this project's development server and local optimizer when necessary. Direct npm release commands do not provide that process-management wrapper.
 
-Migration `0011_lively_trish_tilby.sql` tilføjer `email_visible` og `phone_visible` med TRUE
-som standard for eksisterende og nye medlemmer. Medlemmer og administratorer kan ændre
-de to valg under profilredigering. Kampplanens kontaktdata filtreres på serveren, og
-kontaktikonet skjules, hvis der ikke er nogen synlige kontaktoplysninger. Administratorer
-beholder adgang til oplysningerne under Medlemmer. Migrationen skal anvendes før udgivelse
-af den nye kode; den normale releaseprocedure håndterer dette.
+For the initial production SuperAdmin binding, use `Deploy.ps1 -SuperAdminMemberNo <verified-number>`. This reads the production member, verifies an open administrator, and stores its internal ID as a Worker secret. Subsequent releases preserve an existing binding. See [SUPERADMIN.md](SUPERADMIN.md).
 
-## PowerShell-script
+## What the release verifies
 
-`Deploy.ps1` kører build og alle release-tests før produktionsændringer. Derefter
-kontrolleres SuperAdmin-konfigurationen, og databasebackup gendannes og migrationer
-afprøves lokalt. Først derefter udgives optimizer, database og hjemmeside.
-Backupkontrollen sammenligner alle oprindelige kolonner og rækker før og efter
-migrationen. Nye kolonner accepteres; ændrede værdier, slettede rækker og fjernede
-kolonner stopper udgivelsen.
+[scripts/release.mjs](scripts/release.mjs) is the authoritative sequence:
 
-Ved første SuperAdmin-opsætning bruges `Deploy.ps1 -SuperAdminMemberNo <medlemsnummer>`.
-Scriptet slår medlemsnummeret op i produktionsdatabasen, kræver en åben administratorkonto
-og sætter dens interne ID som Cloudflare-secret `SUPERADMIN_PLAYER_ID`.
-Efterfølgende kan `Deploy.ps1` køres uden parameteren; det kræver, at secreten findes,
-og bevarer den eksisterende kontobinding. Secretens værdi kan ikke læses via secret-listen.
-`-CheckOnly` foretager ingen produktionskald. Lokale `.dev.vars` kopieres ikke til produktion.
+1. Acquire a release lock and validate Cloudflare configuration.
+2. For real releases, preflight MFA/email secret presence and SuperAdmin configuration. Local check mode skips production calls.
+3. Build/test the .NET optimizer, create a new release UUID, and build the OpenNext artifact.
+4. Run the Node test suite serially. Check mode stops here.
+5. Export Production D1 and restore it to isolated SQLite. Check integrity, foreign keys, migration compatibility, and data preservation.
+6. Apply pending remote migrations. Export again and compare original table content.
+7. For a full release, deploy/check/connect the optimizer after database migration.
+8. Apply the verified SuperAdmin binding when needed, then deploy the website.
+9. Poll `/api/health` for the expected release UUID. Recheck the optimizer on a full release and write the receipt.
 
-Kør `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Deploy.ps1` fra projektmappen.
-Med `-CheckOnly` køres lokale kontroller uden udgivelse.
-Scriptet gemmer terminalens output i `.data/deploy-<tidspunkt>.log`.
-OpenNext-advarslen om Windows er ikke i sig selv en fejl. Under release vises det aktive
-trin og tidsforbruget hvert 30. sekund. Hvert release-trin har en tidsgrænse på 15 minutter;
-ved overskridelse stoppes processens træ på Windows, og de efterfølgende trin afbrydes.
-Fejl viser kommando og exitkode eller timeout. Produktionsændringer fra tidligere trin
-rulles ikke automatisk tilbage.
+Do not run optimizer deployment ahead of a required database migration: its cron and Workflow use D1. Changes to match rules usually require both website and optimizer deployment.
 
-Kampfordelingen tillader højst 30 minutters pause mellem en spillers på hinanden følgende
-kampe. Kampene varer en time, så starttidspunkterne må højst ligge 90 minutter fra hinanden.
-Reglen gælder også ved manuel gemning og for låste kampe i den færdige plan.
+## Migration workflow
 
-## CR til gennemgang
+Edit the appropriate schema source and generate a new migration where applicable:
 
-Migration `0010_cr_review.sql` tilføjer `players.cr_reviewed_at` og markerer de eksisterende medlemmer som gennemgået uden at ændre deres CR. Nye profiler får som standard ingen godkendelsesdato og vises øverst under Medlemmer med “CR skal gennemgås”. Kun administratorer kan gemme og godkende CR. Det kan gøres på ethvert tidspunkt, uanset tilmeldingens og kampplanens status. Godkendelsen påvirker ikke adgangen til tilmelding.
-
-Ændres CR via den almindelige medlemsredigering, kræver den nye værdi en ny godkendelse. Ændringer af navn, kontaktoplysninger og selvvalgt niveau nulstiller ikke i sig selv godkendelsen. Gennemgang fungerer også uden kommende spilledage. Kør migrationen før den nye Worker udgives; den eksisterende releaseprocedure gør dette automatisk. `/api/health` kontrollerer nu også, at den nye kolonne findes.
-
-Appen bruger Cloudflare D1 både lokalt og i produktion. Lokal D1 er simuleret på computeren og ligger i `.wrangler/local-dev/v3`. Den har ingen forbindelse til produktionsdata.
-
-## Arbejd lokalt
-
-```sh
-npm run dev
+```powershell
+npm.cmd run db:generate
+npm.cmd run db:setup
 ```
 
-Åbn http://localhost:3000. Første start tager backup af `.data/app.db` i `.data/backups` og kopierer data til den nye lokale D1. Senere starter genbruger D1 og anvender nye migrationer. Den gamle SQLite-fil bliver bevaret, men appen skriver ikke længere til den. Der kopieres aldrig lokale data til produktion under udgivelse.
+Review generated SQL before use. Custom SQL tables are not fully modeled in Drizzle; maintain custom migrations, journal/snapshot metadata, and `drizzle/checksums.json` consistently. Never rewrite an applied migration or replace this process with schema push. Prefer additive changes; destructive changes require a specific data migration/recovery plan.
 
-E-mail kræver `RESEND_API_KEY` i det relevante miljø. Lokalt kan den sættes i `.dev.vars`; uden nøgle returnerer e-mailfunktionen en fejl og sender intet. Produktionsnøglen forbliver en Cloudflare-secret og må ikke lægges i kildekoden.
+The release comparison preserves original columns and rows while permitting additions. Keep member changes quiet during the before/after export interval: a legitimate concurrent write can otherwise stop verification.
 
-## Ændringer i databasestrukturen
+## Output and failures
 
-Ret `db/schema.ts` og kør:
+Artifacts are private under `.data/releases/`, including SQL exports, isolated restore files, logs, and a successful `receipt.json`. Exports contain personal data and authentication material. Git ignore rules do not prevent cloud-folder synchronization.
 
-```sh
-npm run db:generate
-npm run db:setup
-```
+A failed step stops later steps. Each child step has a 15-minute timeout and periodic progress output. Optimizer rollout waiting is configurable with `-ContainerWaitMinutes` (1–60, default 15).
 
-Gennemgå den genererede SQL i `drizzle` før udgivelse. Brug additive migrationer; sletning af kolonner/data kræver en særskilt plan. Eksisterende migrationer må ikke omskrives, når de er anvendt. Gem SQL og Drizzle-metadata sammen med kodeændringerne.
+There is no automatic database rollback. If migration succeeds and deployment fails, the database has already changed. Inspect logs, completed steps, and backups before retrying. Use the [recovery procedure](GDPR_BACKUP.md) when data restoration is actually necessary.
 
-## Kontroller uden at udgive
+`release.lock` prevents concurrent releases. Remove a stale lock only after verifying that no release is running. A successful local check does not prove that credentials or remote services will work later.
 
-Stop udviklingsserveren med Ctrl+C først, så build og server ikke skriver samtidigt til `.next`.
+## Commands that bypass checks
 
-```sh
-npm run release:check
-```
+`cf:deploy`, manual remote SQL, and individual optimizer deploy/connect commands bypass parts of the coordinated release. They are not substitutes for the normal workflow. `optimizer:check` performs authenticated remote health/solver checks with synthetic input; it is not an offline test.
 
-Dette bygger den rigtige Worker og kører tests mod en isoleret lokal D1, inklusive login, rettigheder, profiler, tilmeldinger og sundhedskontrol. Ingen fjernmigration, backup eller deployment køres. Start derefter `npm run dev` igen, hvis du vil fortsætte lokalt.
-
-## Udgiv til aabenbaneaften.dk
-
-Når du ønsker at offentliggøre ændringerne:
-
-```sh
-npm run cf:login
-npm run release
-```
-
-Login kræves kun, hvis Cloudflare-sessionen er udløbet. Release bygger og tester igen, eksporterer produktionsdatabasen til `.data/releases/<tidspunkt>/database.sql`, anvender manglende D1-migrationer og udgiver Worker. Til sidst kontrolleres `/api/health`, inklusive det unikke versionsnummer og adgang til de nye databasefelter. En kvittering gemmes ved succes.
-
-Fejl stopper de efterfølgende trin. Hvis migrationen lykkes, men deployment fejler, er databasen allerede opdateret. Der foretages ingen automatisk tilbagerulning af data. Undersøg fejlen og backup, før du genkører kommandoen. Backup indeholder persondata og skal opbevares privat. En bestået lokal kontrol beviser ikke, at Cloudflare-login og produktionsrettigheder stadig er gyldige.
-
-`release.lock` forhindrer to samtidige releases. Hvis processen bliver tvangsafbrudt, fjern kun låsen i `.data/releases`, efter du har kontrolleret, at ingen release stadig kører.
-
-De lave `cf:deploy`-kommandoer springer kontrollerne over; brug normalt `npm run release`.
-
-## Tilmeldingsrækkefølge
-
-`signups.signup_order` er et kønummer pr. spilledag. Databasetriggere tildeler nummeret, også når en ældre Worker opretter tilmeldingen uden at kende feltet. `created_at` bevares som oprindeligt oprettelsestidspunkt. Migration 0005 giver eksisterende rækker numre efter `created_at` og derefter `id`, hvis tidspunktet er ens. Den tidligere historik kan ikke fortælle den præcise rækkefølge inden for samme sekund ud over disse ID'er.
-
-Ændringer i timer eller mulige tider bevarer kønummeret. Afmelding eller 0 timer ophæver pladsen; gentil­melding med positive timer giver et nyt nummer bagest. Venteliste/aktiv-status alene flytter ikke en tilmelding. Kønumre kan have huller og er derfor ikke nødvendigvis lig den aktuelle placering blandt aktive tilmeldinger.
-
-Feltet registrerer prioriteten; automatisk fordeling af første, anden og tredje time implementeres særskilt. Administrator kan se feltet i den lokale spillerliste. Visning på hjemmesiden kræver senere udgivelse af Worker, men selve registreringen virker straks efter databaseændringen.
-
-Migrationerne indeholder komplette SQL-statementer adskilt med `--> statement-breakpoint`; de må ikke opdeles på semikolon, da triggere indeholder flere semikoloner. Bevar triggerne ved fremtidige ændringer af tilmeldingstabellen.
+Local checks change build outputs and `lib/release-info.json`, even though they do not change Production. Stop local development before invoking full builds directly.

@@ -1,29 +1,66 @@
-# Administrator-2FA
+# Administrator MFA
 
-Admin og Super Admin skal bekræfte PIN-login med TOTP (SHA-1, 6 cifre, 30 sekunder), fx Microsoft Authenticator eller Google Authenticator. Der bruges ingen betalt 2FA-tjeneste. QR-koden dannes i browseren; hemmeligheden sendes ikke til en QR-tjeneste.
+Administrators and SuperAdmin must complete PIN login plus TOTP: SHA-1, six digits, 30-second steps. Authenticator apps such as Microsoft Authenticator can enroll using the locally generated QR code or manual key. The QR secret is not sent to an external QR service.
 
-## Før første deployment
+## Encryption configuration
 
-1. Generér en kryptografisk tilfældig nøgle på 32 bytes, gengivet som 64 hex-tegn. Gem den i driftsansvarliges passwordmanager sammen med backupinstruktionerne. Brug fx `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` på en betroet computer. Del eller commit aldrig nøglen.
-2. Kør `npx.cmd wrangler secret put MFA_ENCRYPTION_KEY --config wrangler.jsonc` i Windows PowerShell, og indsæt nøglen i Wranglers prompt. Brug en anden nøgle end til lokal udvikling. `.dev.vars` overføres ikke automatisk til produktion.
-3. Kontrollér med `node scripts/setup-mfa.mjs --check-remote`, og kør den almindelige deploy. Release-scriptet kontrollerer, at hemmeligheden findes, før build og tests starter. Migration `0021_admin_mfa.sql` tilføjer tabeller og sessionsmarkering. Eksisterende adminsessioner uden 2FA-markering afvises; administratorerne skal logge ind og opsætte 2FA.
+`MFA_ENCRYPTION_KEY` is a cryptographically random 32-byte key represented by 64 hexadecimal characters. TOTP secrets are encrypted with AES-256-GCM and tied to the account. Store the key in the environment's secret store and retain a protected recovery copy.
 
-Ved lokal udvikling: `node scripts/setup-mfa.mjs --local`, derefter den sædvanlige lokale databasemigrering og genstart af udviklingsserveren. Scriptet gemmer kun en ny lokal nøgle, hvis ingen findes; det udskriver aldrig nøglen.
+For local development:
 
-**Udskift ikke krypteringsnøglen vilkårligt.** Eksisterende TOTP-hemmeligheder i databasen er AES-256-GCM-krypteret med denne nøgle. En databasebackup kræver den samme nøgle ved gendannelse. Ændring af nøglen kræver en særskilt kontrolleret genkryptering eller genopsætning af alle admin-konti.
+```powershell
+node scripts/setup-mfa.mjs --local
+npm.cmd run db:setup
+```
 
-## Brugerforløb
+The setup script creates a missing local key without printing it. Restart the app after configuration changes.
 
-- Først PIN; dernæst en 10-minutters 2FA-udfordring uden adgang til appdata. Første gang vises QR-kode og manuel opsætningsnøgle. Opsætning aktiveres først efter en gyldig appkode.
-- Ti tilfældige gendannelseskoder vises én gang. Hver kode kan bruges én gang i stedet for appkoden. Serveren gemmer kun hashes. Koderne skal gemmes, før brugeren fortsætter.
-- “Husk denne enhed i 14 dage” er fravalgt som standard. En HttpOnly/Secure/SameSite-cookie og et servergemt tokenhash godkender kun anden faktor for den pågældende konto/browser. PIN kræves stadig. Udløbet forlænges ikke af brug.
-- Profil → “Glem alle huskede enheder” tilbagekalder alle browsergodkendelser. Aktuelle login-sessioner fortsætter til logout/udløb; “Log ud på alle enheder” tilbagekalder både sessioner og huskede browsere.
-- PIN-, rolle- og e-mailændringer tilbagekalder sessioner, igangværende udfordringer og huskede browsere på databaseniveau. PIN-nulstilling fjerner **ikke** 2FA-kravet.
-- Profil → “Skift authenticator / få nye gendannelseskoder” kræver PIN og nuværende appkode/gendannelseskode. Når ny opsætning bekræftes, tilbagekaldes gamle sessioner, browsergodkendelser og gendannelseskoder.
-- En appkode/tidscyklus accepteres kun én gang. Vent på næste kode, hvis den netop er brugt. Kodeforsøg begrænses både pr. konto/IP og pr. udfordring.
+For an authorized Production setup, generate the key in a trusted secret-management environment and enter it at the prompt:
 
-## Mistet adgang
+```powershell
+npx.cmd wrangler secret put MFA_ENCRYPTION_KEY --config wrangler.jsonc
+node scripts/setup-mfa.mjs --check-remote
+```
 
-Brug en gendannelseskode til login, og opsæt derefter en ny authenticator under Profil. Behold mindst én ekstra gendannelseskode til bekræftelsen af skiftet. Hvis en anden Admin har mistet både telefon og alle gendannelseskoder, kan Super Admin bruge SuperAdmin → Nulstil en anden Admins 2FA. Vælg personen, kontrollér identiteten via en uafhængig kanal, og bekræft med Super Admins egen PIN og en frisk 2FA-kode eller gendannelseskode. Nulstillingen tilbagekalder personens sessioner, huskede browsere, 2FA, gendannelseskoder og igangværende login-/PIN-nulstillingsforsøg. PIN og rolle bevares. Næste login kræver ny opsætning. Tidspunkt, aktør, mål og bekræftet identitetskontrol gemmes atomisk i security_mfa_events; PIN og koder logges aldrig. Super Admin kan ikke nulstille sin egen 2FA med denne funktion. Hvis Super Admin selv mister al adgang, kræves driftsansvarlig med databaseadgang og uafhængig identitetskontrol. Der er bevidst ingen anonym e-mail-genvej, der fjerner 2FA. Driftsansvarlig skal i én database-transaktion slette kontoens `sessions`, `trusted_devices`, `mfa_challenges` og `admin_mfa`, efter at kontoens interne ID er verificeret. Næste PIN-login kræver ny opsætning. Udfør aldrig dette på baggrund af en ubekræftet henvendelse.
+These commands target Production. Use a separate local key; `.dev.vars` is not uploaded automatically. The release preflight checks that the production secret exists. Presence does not prove that it matches encrypted database records.
 
-Automatiske tests dækker RFC 6238-testvektorer, isoleret D1, opsætning, kontobinding, genbrug og samtidige forsøg, tidsgrænser, PIN-nulstilling, skift af authenticator og tilbagekaldelse. En fysisk scanning med Microsoft Authenticator bør indgå i driftsansvarliges accepttest før udrulning til alle administratorer.
+Migration `0021_admin_mfa.sql` supplies MFA tables and the session credential-version field. Existing administrator sessions without valid MFA proof require a fresh login.
+
+Do not replace an encryption key arbitrarily. Existing secrets and database backups require their original key, or a controlled re-encryption/re-enrollment procedure.
+
+## Enrollment and normal use
+
+1. Enter membership number and PIN. A ten-minute challenge permits setup/verification, not access to application data.
+2. On first enrollment, scan the QR code and submit a valid current code. Enrollment is committed only after verification.
+3. Save the ten one-use recovery codes shown once. Only their hashes are stored.
+4. Optionally choose “Husk denne enhed i 14 dage”. This trusts the second factor in that browser; PIN remains required, and the deadline does not slide.
+
+An already consumed TOTP step cannot be reused. Wait for the next code. Attempts are limited by account/IP and challenge.
+
+“Glem alle huskede enheder” revokes browser trust without ending current sessions. “Log ud på alle enheder” revokes both. Changes to PIN, role, or email revoke sessions, challenges, and trusted devices; resetting a PIN does not remove MFA.
+
+Changing authenticator/recovery codes requires PIN plus current TOTP or a recovery code. Successful replacement revokes the old sessions, trust, and codes.
+
+## Lost access
+
+Use a recovery code to sign in and enroll a new authenticator. Keep another unused recovery code available for confirming the change.
+
+SuperAdmin can reset another administrator through the dedicated UI after independent identity confirmation and their own PIN/MFA proof. The atomic operation removes the target's enrollment/recovery codes, sessions, trust, challenges, and PIN-reset tokens, and writes `security_mfa_events`. The member's PIN and role remain. SuperAdmin cannot use this UI to reset themselves.
+
+If no authorized administrator can perform recovery, an operator with database access must verify the requested environment and account independently. Resolve the internal ID from the membership number; never use a remembered ID from another environment. Back up and reset the account's rows in `admin_mfa`, `sessions`, `trusted_devices`, `mfa_challenges`, and `pin_reset_tokens` in one transaction. Verify that other accounts and profile fields are unchanged. Record the operation without storing secrets. The next PIN login must require enrollment.
+
+There is intentionally no anonymous email route that removes MFA.
+
+## Production data copied to Sandbox
+
+An exact copy includes MFA ciphertext, recovery hashes, sessions, and trusted-device rows. Local configuration is separate. If Sandbox uses a different `MFA_ENCRYPTION_KEY`, the copied enrollment cannot be decrypted.
+
+The usual local remedy is an explicitly authorized Sandbox-only reset for the affected administrator, followed by enrollment with the Sandbox key. Do not change Production or rotate the production key to solve a local mismatch. Label the Sandbox authenticator entry distinctly so its codes are not confused with Production.
+
+The standard sanitized refresh already omits production authentication data. See [Sandbox refresh](sandbox-refresh.md) for the distinction.
+
+## Verification
+
+Coverage includes RFC 6238 vectors, isolated D1 enrollment, account binding, replay/concurrent attempts, expiry, PIN reset, authenticator replacement, and administrator reset auditing. Relevant tests include `tests/totp.test.mjs`, `tests/admin-mfa-api.test.mjs`, and `tests/admin-mfa-reset.test.mjs`.
+
+A real-device enrollment test remains useful before a broad rollout; automated tests do not establish that a particular phone was enrolled correctly.

@@ -1,94 +1,65 @@
-# Backup, migration og gendannelse
+# Backup, migrations, and recovery
 
-## Kendt miljø og adgang
+Backups are private operational data. They can contain member details, credential hashes, sessions, and encrypted MFA secrets. A Git-ignored path is not an access-control or retention policy, particularly in a cloud-synchronized workspace.
 
-Projektet er konfigureret til Cloudflare Worker `aabenbaneaften`, domænet
-`aabenbaneaften.dk` og D1-bindingen `DB`. Lokal D1 er adskilt og ligger under
-`.wrangler/local-dev/v3`. Ældre `.data/app.db` er en tidligere SQLite-kilde.
-Den lokale arbejdsmappe ligger under en OneDrive-mappe; faktisk synkronisering,
-adgangsrettigheder, kryptering, retention og cloudkopier er ikke verificeret.
+## Scope and prerequisites
 
-Faktisk D1-region/jurisdiktion, Cloudflare-plan, Time Travel-periode, Resend-region,
-databehandleraftaler og overførselsgrundlag skal bekræftes af ejeren. En dansk
-webadresse dokumenterer ikke dansk opbevaring.
+Production uses Cloudflare D1 for `aabenbaneaften.dk`; local D1 lives under `.wrangler/local-dev/v3`. The legacy `.data/app.db` is not the normal active database. Confirm which source is being backed up and where artifacts will be stored.
 
-## Backup og migrationsprøve
+Account jurisdiction, provider agreements, actual retention, access permissions, synchronization, and key custody are operational facts that source code cannot establish. The owner must maintain them separately.
 
-Luk lokal udviklingsserver før ændringer. Brug fra projektmappen:
+## Export and restore rehearsal
 
-```sh
+Stop local development before a local backup/rehearsal:
+
+```powershell
 node scripts/backup-privacy.mjs --local
 ```
 
-Til en særskilt, autoriseret produktionsbackup:
+For a separately authorized Production export:
 
-```sh
+```powershell
 node scripts/backup-privacy.mjs --remote
 ```
 
-Lokalt bruger scriptet samme eksportfunktion i D1-motoren som den installerede
-Wrangler, fordi dens CLI ikke understøtter valg af den særlige persistenssti.
-Fjernbackup bruger Wranglers officielle `d1 export --remote`.
-Scriptet laver en D1 SQL-eksport i `.data/privacy-backups/<UTC-tid>/`, gendanner
-til `restored-rehearsal.sqlite`, kontrollerer integritet og fremmednøgler,
-afprøver manglende migrationer og gentager dem. Optællinger og hashes af alle
-oprindelige tabeller sammenlignes; personoplysninger og hemmeligheder udskrives
-ikke. Eksportlog og databasefiler er private. Hashene dokumenterer konsistens,
-ikke at en administrator med skriveadgang ikke kan ændre både data og manifest.
+The local path uses the D1 engine export interface against the configured persistence directory. Remote export uses Wrangler's D1 export command and does not import or mutate production table data.
 
-`drizzle/checksums.json` fastlægger de forventede migrationsfiler. Versionerede
-SQL-filer må ikke ændres efter anvendelse. Migration 0016 er en Drizzle custom
-migration med journal/snapshot; privatlivstabellerne vedligeholdes med custom
-SQL, ikke med `drizzle-kit push`. D1 anvender versionslisten `d1_migrations`.
-Muterende funktioner bruger atomiske D1-batches med kontroller inde i batchen.
+Artifacts are written to `.data/privacy-backups/<timestamp>/`. The script restores the export into isolated SQLite, checks integrity and foreign keys, rehearses pending migrations, and verifies repeatability and preservation using counts/content hashes. It does not print member records or credentials. Logs and database files remain private.
 
-Den almindelige releaseprocedure bygger og tester, eksporterer en backup,
-verificerer gendannelse og afprøver migrationen, før den ændrer produktion.
-Efter migration foretages ny eksport og sammenligning inden Worker-udgivelse.
-Hold medlemsændringer i ro i dette interval; ellers kan en legitim samtidig
-ændring få sammenligningen til at afbryde udgivelsen. Der foretages ingen
-automatisk tilbagerulning. Lokal D1-opgradering kræver tilsvarende verificeret
-backup, når der findes data og manglende migrationer.
+Hashes demonstrate consistency, not protection against an operator modifying both a file and its manifest. Preserve a protected independent copy where required.
 
-Backups er ignoreret af Git. Fastlæg ejer, ACL, kryptering, rotation, slettefrist
-og en ekstern beskyttet kopi før drift; implementeringen gætter ikke på disse
-organisatoriske beslutninger og sletter ikke eksisterende backups automatisk.
-Historiske, allerede versionsstyrede eksportfiler eller kopier i Git-historik
-fjernes ikke af en ny `.gitignore` og kræver særskilt gennemgang.
+## Migration preservation
 
-## Gendannelse må ikke ophæve nyere valg
+`drizzle/checksums.json` records expected SQL content. Applied migration files are immutable; new schema changes require new migrations. Custom privacy tables are maintained through SQL rather than schema push.
 
-En gammel backup må aldrig importeres direkte og genåbnes som normal drift.
+The normal [release](DEPLOYMENT.md) exports and rehearses before remote migration, exports again afterwards, and compares original columns/rows. Quiesce legitimate writes during the comparison window to avoid false conflicts. No automatic rollback follows a failed release.
 
-1. Luk al brugertrafik og afsendelse, også eksisterende servicemails, under
-   driftsarbejdet. Sæt `NEWSLETTER_ENABLED=false`. Stop baggrundsarbejde.
-2. Tag en **ny, konsistent fuld eksport af den seneste database efter frysning**.
-   Sikr desuden kontaktanmodninger og ændringer modtaget uden for appen.
-3. Gendan både den gamle backup og den nyeste eksport isoleret, og bring begge
-   kopier til det aktuelle skema med den verificerede migrationsprøve.
-4. Fremstil en ny offline-kopi:
+## Recovery without undoing later privacy choices
 
-```sh
-node scripts/privacy-restore.mjs GAMMEL.sqlite SENESTE-FROSNE.sqlite NY-KOPI.sqlite
+An old backup is not automatically safe to reopen as the live application.
+
+1. Stop user traffic, background work, and all mail sending for the target environment. `NEWSLETTER_ENABLED=false` alone does not stop transactional email.
+2. Capture a consistent latest database after the freeze. Preserve requests and changes received outside the app separately.
+3. Restore both the old backup and latest frozen copy in isolation; bring them to the supported schema using verified migrations.
+4. Produce a new reconciled copy:
+
+```powershell
+node scripts/privacy-restore.mjs OLD.sqlite LATEST-FROZEN.sqlite NEW-OUTPUT.sqlite
 ```
 
-5. Scriptet genanvender den seneste privatlivstilstand, kontolukninger, valg,
-   pauser og revisionsdata. Gamle adresser med mismatch kræver nyt samtykke.
-   Alle sessioner, resetkoder og nyhedsbrevslinks tilbagekaldes. Gamle ventende
-   udsendelser udelukkes fra afsendelse. Output skal være en ny fil.
-6. Manglende/ændrede profilidentiteter eller gamle relationer til en senere
-   lukket profil stopper processen til manuel vurdering. Der importeres aldrig
-   automatisk til produktion. Kopien kan være oprettet selv ved fejl og må da
-   ikke bruges. Den seneste kopi indeholder kun bevis for registrerede ændringer;
-   uden denne eller et komplet eksternt revisionsgrundlag kan sikker gendannelse
-   ikke dokumenteres, og normal drift skal forblive lukket.
-7. Kontrollér konkrete sletningssager, match-/mailarkiver, noter, eksportfiler,
-   eventuelle økonomiske forhold uden for appen, nye medlemmer efter backup og
-   leverandørkopier. Afklar reintroducerede profilændringer fra backupen.
-8. Importér kun efter godkendt operativ kontrol. Kontrollér optællinger, login,
-   roller, historik, samtykke og fravær af genopståede oplysninger. Aktivér
-   trafik og mail særskilt efter kontrollen.
+5. The script reapplies recorded privacy state, closures, preferences, pauses, and audit evidence. It revokes sessions, reset codes, and newsletter links and excludes old queued dispatches from sending. Email identity mismatches require renewed consent.
+6. Identity conflicts or historical references that could reidentify a later-closed member stop automatic reconciliation. Output may exist after failure; do not use it as a verified restore. Without the latest copy or equivalent complete evidence, later changes cannot be established automatically.
+7. Review name replacements, free text, mail/plan archives, exports, new members, and external records. The helper does not resolve every external or historical relationship.
+8. Validate roles, counts, authentication, playing history, consent, and closure behavior in isolation before an authorized production import. Enable traffic and email separately afterwards.
 
-Den automatiske offline-genanvendelse er testet med syntetisk kontolukning og
-pause. Den er ikke en gennemført produktionsgendannelse eller en fuldstændig
-organisatorisk backupordning.
+The reconciliation helper never imports into Production. Its synthetic tests are not proof that an end-to-end disaster recovery has been completed on a new provider account.
+
+## Encryption keys and authentication
+
+Recovering encrypted operational backups needs `BACKUP_ENCRYPTION_KEY`. Recovering usable TOTP enrollment needs the original `MFA_ENCRYPTION_KEY`; these are different keys. Preserve historical keys until their backups expire.
+
+A full Production-to-Sandbox copy is not a disaster restore. Local MFA re-enrollment may be preferable to copying the production key. See [Sandbox refresh](docs/sandbox-refresh.md) and [MFA](docs/admin-2fa.md).
+
+## Scheduled backups
+
+GitHub Actions defines an encrypted daily export with a restore rehearsal and artifact retention. See [operational security](docs/operations-security.md) for schedules, secret names, failure detection, and decryption commands. A workflow file existing in Git is not evidence that scheduling, credentials, uploads, or recovery-key access work in the live account.

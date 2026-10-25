@@ -1,41 +1,58 @@
-# Sikkerhedsalarmer og backup
+# Operational security and encrypted backups
 
-## Aktivering
+The repository defines scheduled GitHub Actions for monitoring and backups. Configuration and a successful manual run must be verified in the actual GitHub/provider accounts; source files alone do not prove active operations.
 
-1. Udgiv migration `0020_security_monitoring.sql` og appkoden via projektets normale releaseforløb. Migrationen tilføjer kun tabeller.
-2. Tilføj følgende GitHub Actions secrets i repositoryet (aldrig i Git):
-   - `CLOUDFLARE_ACCOUNT_ID`.
-   - `OPERATIONS_CLOUDFLARE_API_TOKEN`: separat token med D1-læse/skriveadgang til den relevante konto; ingen Workers-deploy-, DNS- eller kontoadministration. Cloudflare begrænser ikke nødvendigvis D1-tokenet til én database: kontrollér tokenets faktiske rækkevidde.
-   - `OPERATIONS_RESEND_API_KEY`: separat send-only nøgle til afsenderdomænet.
-   - `BACKUP_ENCRYPTION_KEY`: 32 kryptografisk tilfældige bytes som 64 hextegn. Generér i en password manager og opbevar en separat recovery-kopi uden for GitHub/Cloudflare. Bevar gamle nøgler, indtil deres backups er udløbet.
-3. Merge workflows til default branch. Kør først **Operations backup**, derefter **Security monitor** manuelt. Kontrollér, at begge er grønne, og at backup-artifact kan downloades og dekrypteres med recovery-kopien af nøglen.
-4. Slå GitHub-notifikationer om fejlede Actions til for SuperAdmin. Workflows sender fejlalarmer til `christinsommer@me.com`, men kan ikke sende mail, hvis GitHub slet ikke starter dem, eller mailtjenesten fejler. Brug en uafhængig dead-man/heartbeat-monitor ved krav om garanteret opdagelse af total scheduler-nedetid. GitHub schedules kan være forsinkede; de er ikke realtidsalarmer.
+## Activation and secrets
 
-## Overvågning
+Apply the relevant migrations and application code through the normal [release](../DEPLOYMENT.md). Monitoring tables originate in migration `0020_security_monitoring.sql`.
 
-Kontrol planlagt hvert 15. minut, syv dages efterslæb opsamles. Kun afsluttede 15-minutters perioder behandles. En samlet mail pr. periode ved mindst:
+Configure these GitHub Actions secrets without putting values in Git:
 
-- 10 mislykkede loginforsøg samlet på tværs af konti/IP'er.
-- 1 blokering fra login-/PIN-nulstillingsbegrænsningen.
-- 100 mails accepteret af mailtjenesten. Dette er en aktivitetsalarm, ikke en automatisk blokering. Genforsøg kan tælle igen.
-- 1 administratorrolleændring; alarmen indeholder interne aktør-/mål-ID'er og ny rolle.
+| Secret | Use |
+| --- | --- |
+| `CLOUDFLARE_ACCOUNT_ID` | Target account |
+| `OPERATIONS_CLOUDFLARE_API_TOKEN` | Operations D1 access; passed to scripts as `CLOUDFLARE_API_TOKEN` |
+| `OPERATIONS_RESEND_API_KEY` | Operations alert sending |
+| `BACKUP_ENCRYPTION_KEY` | 32 random bytes represented by 64 hex characters |
 
-Der gemmes ingen PINs, sessionstokens, mailadresser eller rå IP-adresser i sikkerhedstabellerne. Tællere beholdes i otte dage, rollehistorik og alarmkvitteringer i 30 dage. Sletning udføres af monitoren. Efter en pause over syv dage skal Cloudflare-logs gennemgås særskilt. Alarmer genforsøges efter fejl; D1-kvitteringer og Resends idempotens begrænser dubletter. En crash mellem levering og kvittering kan stadig give dublet efter udbyderens idempotensfrist.
+Use dedicated credentials with the required scope rather than deployment/DNS/account-administration rights. Verify the actual D1 token scope; do not assume it is restricted to one database. Keep a recovery copy of the backup encryption key outside the services being recovered, and retain older keys until their backups expire.
 
-Loggen `security_record_failed` i Cloudflare betyder, at registrering fejlede. Appens brugerhandling fortsætter for at undgå dobbelt afsendelse. Denne fejl kan derfor medføre manglende sikkerhedshændelser; overvåg også Worker-fejl. Lokale udviklingsdata overvåges ikke af workflows.
+After workflows reach the default branch, manually run Operations backup, then Security monitor. Verify artifact download and decryption with the recovery key. Enable failed-workflow notifications. Alert recipient routing is currently defined in `scripts/operations-lib.mjs`; changing it is a code/configuration task, not a consequence of editing this document.
 
-## Backup
+## Monitoring behavior
 
-Dagligt kl. 02:23 UTC (03:23 dansk vintertid / 04:23 sommertid). D1 eksporteres, krypteres med AES-256-GCM, læses og dekrypteres igen og gendannes i isoleret SQLite. Integritet, fremmednøgler, migrationsbevarelse og gentagelighed kontrolleres af de eksisterende backupværktøjer. Kun den krypterede SQL-fil uploades som GitHub artifact, opbevaret 30 dage. Midlertidige SQL-/SQLite-filer fjernes efter kørslen.
+[security-monitor.yml](../.github/workflows/security-monitor.yml) schedules checks at minutes 7, 22, 37, and 52. The monitor processes completed 15-minute buckets and catches up over seven days.
 
-Backup markeres først som lykkedes efter artifact-upload. Monitoren alarmerer ved manglende succes i 36 timer. Den daglige kopi giver op til ca. ét døgn mellem kopier; undersøg D1 Time Travel for kortere gendannelsesintervaller. Artifact og recovery-nøgle skal begge være tilgængelige ved et Cloudflare-kontotab. Dette er en databaserecovery-test, ikke en fuld prøve af appen på en ny Cloudflare-konto.
+| Threshold per bucket | Meaning |
+| --- | --- |
+| 10 failed logins | Aggregate across accounts/IPs |
+| 1 authentication limit block | Rate-limiter activity |
+| 100 accepted emails | Activity alert, not an automatic sending block |
+| 1 administrator role change | Includes internal actor/target IDs and new role |
 
-## Gendannelsesøvelse og hændelse
+Counters are retained for eight days; role history and alert receipts for 30 days. The monitor performs this cleanup. After a longer outage, inspect provider logs separately. Delivery receipts and provider idempotency reduce duplicates but cannot guarantee exactly-once email across all crash windows.
 
-1. Download en krypteret artifact til en beskyttet lokal mappe. Sæt `BACKUP_ENCRYPTION_KEY` sikkert i miljøet.
-2. Kør `node scripts/decrypt-backup.mjs INPUT.enc NEW-OUTPUT.sql`. Eksisterende output overskrives aldrig.
-3. Kør `node scripts/verify-backup.mjs NEW-OUTPUT.sql NEW-REHEARSAL.sqlite`. Dette importerer intet i produktion.
-4. Ved reel recovery: stop trafik og mailafsendelse; gem også den seneste frosne database. Brug `scripts/privacy-restore.mjs BACKUP.sqlite LATEST-FROZEN.sqlite NEW-OUTPUT.sqlite` til at medtage senere lukninger/afmeldinger og tilbagekalde sessioner og nulstillingstokens. Scriptet stopper ved identitetskonflikter eller historik, som kan genidentificere lukkede medlemmer. Hvis den seneste kopi mangler, kræves manuel afklaring af senere ændringer; genindlæs ikke ukritisk en gammel backup.
-5. Afprøv den afstemte kopi i et isoleret miljø, kontrollér roller, medlemsdata, kampplaner og samtykker. Godkend først derefter en produktionsimport. Ingen af de nye workflows importerer eller ruller produktion tilbage.
+Security tables do not store raw IP addresses, PINs, session tokens, or recipient addresses. A `security_record_failed` application log means event recording failed while the user action continued; monitoring can therefore miss that event. Observe Worker errors as well.
 
-Ved sikkerhedsalarm: vurder rolleændringer og mailaktivitet, tilbagekald berørte sessioner, beskyt kompromitterede konti og roter berørte nøgler. Undgå at slette spor, før hændelsen er undersøgt.
+GitHub scheduling can be delayed or fail to start. Email cannot report a scheduler that never runs or a completely unavailable mail service. An independent heartbeat monitor is needed if that failure mode must be detected. Local Sandbox data is not monitored by these production workflows.
+
+## Daily encrypted backup
+
+[operations-backup.yml](../.github/workflows/operations-backup.yml) runs at 02:23 UTC. It exports D1, encrypts using AES-256-GCM, decrypts and restores in isolated SQLite, and verifies integrity, foreign keys, migrations, and preservation. Only encrypted SQL is uploaded as an artifact, with 30-day retention configured. Temporary plaintext files are removed by the workflow tooling.
+
+The backup heartbeat is recorded after artifact upload. The monitor alerts when no success is recorded for 36 hours. The heartbeat is a deliberate production D1 write: this workflow is not a read-only production operation even though its export reads data.
+
+A daily backup can leave approximately a day's changes between snapshots. Actual provider recovery options and retention require account verification. A database restore rehearsal is not a complete application recovery on a new account.
+
+## Decrypt and rehearse
+
+Download the artifact to protected storage and supply `BACKUP_ENCRYPTION_KEY` securely in the process environment:
+
+```powershell
+node scripts/decrypt-backup.mjs INPUT.enc NEW-OUTPUT.sql
+node scripts/verify-backup.mjs NEW-OUTPUT.sql NEW-REHEARSAL.sqlite
+```
+
+These commands require new output paths and do not import into Production. For actual recovery, freeze writes/sending and reconcile later closure/consent changes using [GDPR_BACKUP.md](../GDPR_BACKUP.md).
+
+Investigate security alerts before deleting evidence. Revoke affected sessions and rotate compromised credentials through the applicable account-recovery procedure. Keep secrets and member content out of incident summaries committed to the repository.

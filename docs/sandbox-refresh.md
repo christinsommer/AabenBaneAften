@@ -1,56 +1,78 @@
-# Production til lokal Sandbox
+# Production data and local Sandbox
 
-Kør fra projektmappen på Windows. Node.js, projektets npm-afhængigheder og Cloudflare-login med adgang til D1-eksport skal være tilgængelige. Scriptet bruger den installerede Wrangler og kalder kun **eksport** mod Production. Det deployer ikke og ændrer ikke Production.
+The source and destination must be explicit before copying. Production is remote D1 for `aabenbaneaften.dk`. This repository's normal Sandbox is local D1 under `.wrangler/local-dev/v3`, not a second remote database named Sandbox.
 
-Stop først den lokale udviklingsserver med Ctrl+C. Scriptet afviser overførslen, hvis det finder en kørende udviklingsserver for projektet eller en aktiv deployment-lås.
+## Choose the copy contract
+
+| Operation | Data | Authentication | Local configuration |
+| --- | --- | --- | --- |
+| `Refresh-Sandbox.ps1` | Selected tables/fields, pseudonymized | Removes live credentials/state; creates test accounts | Changes selected settings, including mail and optimizer configuration |
+| Full exact copy | All requested application tables and row values | Includes MFA, sessions, reset tokens, trusted devices, and job/mail state | Preserved unless explicitly included in the task |
+
+The supplied refresh script is not an exact copy. Do not use it for a request to copy all tables without changing values. A full-copy procedure must be reviewed separately; the repository currently has no maintained general-purpose exact-copy command. One-off ignored workspace scripts/reports are not a supported public interface.
+
+Neither operation should import into Production. A production export is read-only with respect to table data, though the provider can temporarily make queries unavailable while exporting. Use direct export tooling for a read-only source; app pages may write activity or event defaults.
+
+## Standard sanitized refresh
+
+Stop the local development server first. The script refuses to run while it detects the project's development process or a conflicting deployment lock.
 
 ```powershell
-# Vis handlingen uden eksport eller ændringer
+# Describe the operation without exporting or replacing data.
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Refresh-Sandbox.ps1 -WhatIf
 
-# Eksporter, rens og verificer i en separat mappe; behold nuværende Sandbox
+# Export, sanitize, and verify in staging; do not activate.
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Refresh-Sandbox.ps1 -PrepareOnly
 
-# Lav en ny, verificeret kopi og erstat Sandbox
+# Export a fresh snapshot, sanitize, verify, and replace local Sandbox.
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Refresh-Sandbox.ps1
-
-# Start bagefter
-npm.cmd run dev
 ```
 
-`ExecutionPolicy Bypass` gælder kun denne PowerShell-proces. `-PrepareOnly` aktiverer ikke kopien; næste normale kørsel tager en frisk eksport.
+Requirements: installed Node dependencies and Cloudflare login/export access. `ExecutionPolicy Bypass` is scoped to that PowerShell invocation.
 
-## Hvad kopieres?
+The script preserves selected playing records and registration/default settings. Names become `Testspiller <id>`, membership numbers are remapped, emails become invalid test addresses, and phones are removed. Related spouse numbers, exclusions, and imported plan names are rewritten. Ambiguous historical names stop the copy.
 
-- Medlemmer, tilmeldinger, kampe, udskiftninger, feedback uden kommentartekst og registreringsindstillinger.
-- Navne bliver til `Testspiller <id>`, medlemsnumre erstattes, mailadresser bliver ugyldige testadresser og telefonnumre fjernes. Spouse-referencer og par, som ikke må spille sammen, følger de nye numre. Historiske kampplaners navne omskrives også. Tvetydige historiske navne stopper kopieringen.
-- Globale algoritmevægte, bane- og tidsindstillinger bevares. Beregningsressourcer, særlige vægte pr. arrangement og ekstra kampplansmetadata nulstilles.
-- Produktions-PIN-koder, sessioner, 2FA, betroede enheder, nulstillingslinks, nyhedsbrevssamtykker, mailkøer, beregningsjob og øvrige ikke eksplicit tilladte tabeller kopieres ikke. Lukkede profiler forbliver lukkede.
+Production PINs, sessions, MFA, trusted devices, reset links, newsletter consent/send state, optimizer jobs, and tables outside the allowlist are not copied. Feedback comments and certain optimizer metadata/settings are cleared. Closed profiles remain closed. See the exact allowlist in [scripts/sandbox-copy.mjs](../scripts/sandbox-copy.mjs).
 
-Dette er **pseudonymiserede testdata**, ikke fuldt anonyme data: interne ID'er, fødselsår og spillehistorik bevares. Beskyt derfor stadig den lokale kopi.
+The result is pseudonymized, not anonymous: IDs, birth years, and playing relationships can remain identifying.
 
-## Lokale login og indstillinger
+### Test accounts and configuration
 
-Der oprettes to ekstra testkonti: `90000001` er Super Admin, og `90000002` er almindeligt medlem. De tilfældige firecifrede PIN-koder ligger i `.data/sandbox-refresh/test-logins.json` og genbruges ved næste overførsel. Super Admin skal tilmelde lokal 2FA igen efter hver overførsel.
+The script creates test members `90000001` (SuperAdmin) and `90000002` (member). Their random PINs are kept privately in `.data/sandbox-refresh/test-logins.json` and reused on later sanitized refreshes. The test administrator enrolls in local MFA after each refresh.
 
-Scriptet sætter lokalt `RESEND_API_KEY=""`, `NEWSLETTER_ENABLED="false"`, testadministratorens `SUPERADMIN_PLAYER_ID` og `OPTIMIZER_URL="http://127.0.0.1:5117"`. Det opretter en lokal MFA-krypteringsnøgle, hvis den mangler. Øvrige indstillinger bevares. Lokal optimering kræver, at den lokale optimizer-tjeneste kører med den tilsvarende API-nøgle. Mail er bevidst slået fra efter overførslen.
+The script clears `RESEND_API_KEY`, sets `NEWSLETTER_ENABLED=false`, binds the test SuperAdmin ID, and sets `OPTIMIZER_URL=http://127.0.0.1:5117`. It generates a local MFA encryption key if necessary. Other settings are preserved. Starting the local solver still requires its matching API key.
 
-## Backup og fejl
+### Backup, activation, and interruption
 
-Hver kørsel får sin egen mappe i `.data/sandbox-refresh/`. Rapporten er `verification.json`. Ved aktivering flyttes den gamle, stoppede Sandbox i sin helhed til `local-dev.before`, og eksisterende `.dev.vars` gemmes som `dev.vars.before`. Scriptet forsøger automatisk at gendanne disse ved fejl under udskiftningen.
+Each run uses its own `.data/sandbox-refresh/` directory. `verification.json` describes the verified staging copy. Activation moves the old stopped local state to `local-dev.before` and saves existing settings as `dev.vars.before`. Handled activation failures attempt to restore both.
 
-Rå Production-SQL ligger midlertidigt under Windows' TEMP-mappe og slettes ved normal afslutning og håndterede fejl. Hvis computeren slukkes eller processen dræbes, kan en `aabenbane-export-*`-mappe være tilbage dér. Slet den efter fejlafklaring. Ved strømsvigt midt i udskiftningen kan manuel gendannelse være nødvendig: stop Sandbox, flyt den nuværende `.wrangler/local-dev` til side, gendan den ønskede `local-dev.before` til `.wrangler/local-dev`, og gendan tilhørende `dev.vars.before` som `.dev.vars`. Den oprindelige konfiguration kan genaktivere mail.
+Raw Production SQL is temporarily placed in a uniquely named Windows TEMP directory and removed during normal completion/error handling. A forced process termination can leave that directory behind. Inspect and remove only the verified temporary directory after diagnosis.
 
-Backups, test-PIN-koder og konfigurationskopier er Git-ignorerede, men kan stadig blive synkroniseret af OneDrive. Backups kan indeholde tidligere persondata og hemmeligheder. Opbevar dem beskyttet, og fjern gamle kopier, når de ikke længere er nødvendige. Scriptet sletter ikke gamle backups automatisk.
+For interrupted activation, stop local services, preserve the failed state, and restore the selected `local-dev.before` and matching configuration backup. Restoring settings may re-enable email. Verify the environment before restarting.
 
-## Ugentlig kørsel
+A `.data/sandbox-refresh/paused` file pauses the script. No scheduled task is installed automatically. A scheduled `-PrepareOnly` run creates staging data; it does not activate that data on a later run, which exports again.
 
-Der oprettes ingen planlagt opgave automatisk. Opret eventuelt en ugentlig opgave i Windows Opgavestyring under din egen bruger med `powershell.exe` og argumenterne:
+## Requirements for an exact copy
 
-```text
--NoProfile -ExecutionPolicy Bypass -File "C:\Users\hytof\OneDrive\Active Supply\Programming\AabenBaneHIK\Refresh-Sandbox.ps1"
-```
+For a specifically authorized full copy:
 
-Laptoppens strøm/netværk og Cloudflare-adgang skal være tilgængelige. Brug indstillingen om at køre en oversprunget opgave senere og undgå samtidige kørsler. En åben udviklingsserver får opgaven til at fejle sikkert; luk serveren og kør igen. Scriptet genstarter ikke serveren automatisk.
+1. Confirm remote source identity and resolve the local destination path. Avoid remote write commands entirely.
+2. Export the source and inspect the table/schema inventory without printing row data or secrets.
+3. Stop local writers and background workers; take a consistent destination backup.
+4. Check compatible schemas. Replace table content transactionally, preserving row values and preventing triggers from transforming imported data. Restore any temporarily suspended local triggers before committing. Do not casually disable constraints in the running app.
+5. Verify every copied table using row counts and deterministic content hashes. Check integrity and foreign keys, and verify that unrelated metadata/configuration is unchanged.
+6. Store a private report and backup. Treat starting the app or queued-job dispatcher as a separate step that can immediately change the copied snapshot.
 
-Pause ugentlig overførsel ved at oprette filen `.data/sandbox-refresh/paused`; fjern den for at genoptage. Brug gerne `-PrepareOnly` i den planlagte opgave, hvis ugentlige kopier ikke automatisk skal overskrive igangværende testarbejde.
+This is an operational checklist, not a promise that arbitrary schemas or future tables can be copied without adaptation. Engine metadata is not interchangeable with application data.
+
+## MFA after an exact copy
+
+`admin_mfa.secret` is encrypted by the source environment's `MFA_ENCRYPTION_KEY`. An exact table copy carries ciphertext but does not copy that key. If Sandbox uses its own key, copied MFA enrollment cannot be decrypted there.
+
+Prefer an explicitly authorized reset of the affected Sandbox administrator followed by local enrollment. Preserve the production key and enrollment. Copying production secrets into local settings is not necessary to fix local login. See [administrator MFA](admin-2fa.md#production-data-copied-to-sandbox).
+
+A complete copy also includes sessions, trusted devices, pending jobs, and newsletter state. Preserve these when an exact copy is required; any cleanup or sending/configuration change is a separate, explicit operation.
+
+## Storage of private artifacts
+
+Backups and exports are Git-ignored, but that does not prevent OneDrive synchronization or access by other users. Protect access and retention for the actual storage location. Never put member rows, MFA secrets, recovery codes, or signed export download URLs into committed documentation.

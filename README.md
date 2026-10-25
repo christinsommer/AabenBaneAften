@@ -1,24 +1,51 @@
-﻿# HIK Åben Bane
+# HIK Open Court Evening
 
-Next.js-webapp på Cloudflare Workers med D1.
+A Danish-language club application for member registration, playing preferences, match planning, replacements, and administration. The website runs on Next.js and Cloudflare Workers with D1 storage. A separate .NET service uses Google OR-Tools CP-SAT to calculate match plans.
 
-- Lokal udvikling: `npm run dev` (http://localhost:3000).
-- Kontrol uden udgivelse: `npm run release:check`.
-- Udgivelse med test, databasebackup og migrationer: `npm run release`.
+This documentation describes the repository implementation, not proof of what is currently deployed. Documentation is in English; quoted Danish labels match the application interface.
 
-Se [DEPLOYMENT.md](./DEPLOYMENT.md) for opsætning, databaseændringer og fejlhåndtering.
-Se [optimeringsalgoritmen](./optimizer-service/README.md) for OR-Tools-tjenesten, lokal opsætning og prioritering af kampe. Kontroller kræver nu også .NET 10 SDK.
-Brug `npm.cmd` i PowerShell, hvis maskinens scriptpolitik blokerer `npm`.
+## Start here
 
-På Windows frigør `npm run dev` automatisk port 3000 ved at stoppe den proces,
-der lytter på porten, inklusive dens underprocesser. Gamle Next.js-servere fra
-dette projekt stoppes også, hvis de kører på andre porte og låser projektet. Derefter klargøres den lokale
-database, og appen starter på http://localhost:3000. Brug samme kommando til at
-genstarte en tidligere kørende version. Opstarten afbrydes, hvis porten ikke kan
-frigøres; den skifter ikke automatisk til port 3001.
+| Task | Guide |
+| --- | --- |
+| Set up the local application | [Development](docs/development.md) |
+| Understand components and data flow | [Architecture](docs/architecture.md) |
+| Understand registration and match rules | [Business rules](docs/business-rules.md) |
+| Understand tables and migrations | [Data model](DATAMODEL.md) |
+| Build, verify, and publish | [Deployment](DEPLOYMENT.md) |
+| Refresh local data from Production | [Sandbox refresh](docs/sandbox-refresh.md) |
+| Configure or recover administrator MFA | [Administrator MFA](docs/admin-2fa.md) |
+| Understand administrator permissions | [Admin and SuperAdmin](SUPERADMIN.md) |
+| Find operational guides | [Documentation index](docs/README.md) |
 
-Node.js skal være mindst 22.13. Installer afhængigheder med `npm ci` ved første opsætning.
-Lokale data ligger i `.wrangler/local-dev/v3`. Den oprindelige `.data/app.db` bevares.
+## Local quick start
 
-## Privatliv og nyhedsmails
-Se [slutrapporten](./GDPR_SLUTRAPPORT.md), [administratorvejledningen](./GDPR_ADMIN.md) og [backup/gendannelse](./GDPR_BACKUP.md). Migration 0016 skal anvendes før udgivelse. Nyhedsbrevsafsendelse kræver særskilt aktivering; der sendes intet under test.
+Prerequisites: Node.js 22.13 or later, npm, Windows PowerShell for the supplied launcher, and .NET 10 SDK for optimizer builds and the full test suite. Run from the repository root:
+
+```powershell
+npm.cmd ci
+# First setup only: do not overwrite an existing .dev.vars.
+Copy-Item .dev.vars.example .dev.vars
+node scripts/setup-mfa.mjs --local
+npm.cmd run dev
+```
+
+Open <http://localhost:3000>. The development command frees port 3000 and applies local database migrations before starting Next.js. Read the [development guide](docs/development.md) before using it alongside another local server.
+
+A new database has no administrator or production members. Public registration creates ordinary members only. See [administrator provisioning](SUPERADMIN.md). For production data, explicitly choose a sanitized refresh or full copy in the [Sandbox guide](docs/sandbox-refresh.md).
+
+Local D1 lives under `.wrangler/local-dev/v3`. Production is a separate remote database. `.dev.vars` is local configuration and is not uploaded during deployment.
+
+## Verification
+
+```powershell
+npx.cmd tsc --noEmit
+npm.cmd run optimizer:test
+npm.cmd run release:check
+```
+
+`release:check` builds the Cloudflare artifact and runs release tests without production calls. It writes local build outputs and a new release identifier. Stop the development server first. See [development checks](docs/development.md#verification) for focused tests and lint.
+
+## Contributing
+
+Read [AGENTS.md](AGENTS.md). Update relevant documentation when behavior changes, preserve migration history, and keep credentials, database exports, and real member data out of Git. Third-party license text in `vendor/` is retained verbatim.
