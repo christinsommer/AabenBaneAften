@@ -66,6 +66,10 @@ Some integration tests require the Cloudflare artifact and solver binary. Inspec
 
 Use synthetic accounts or isolated fixtures for browser checks. `scripts/check-plan-editor.mjs` exercises a fake-data page in Windows Edge without production/database access.
 
+For login presentation changes, follow the [login design verification checklist](login-design.md#verification). Mock `/api/**` before navigation to avoid database activity and real reset/registration emails. Check narrow mobile and desktop layouts, registration, PIN recovery, MFA, and legal links. A viewport test is not a test on a physical iPhone.
+
+Regenerate approved app icon sizes with `node scripts/generate-app-icons.mjs`; it reads the committed source in `public/brand/`, not a machine-specific design file. Do not replace the approved artwork with generated alternatives.
+
 ## Troubleshooting
 
 | Symptom | Next check |

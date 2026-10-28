@@ -1,6 +1,8 @@
-# HIK Open Court Evening
+# Åben Bane
 
 A Danish-language club application for member registration, playing preferences, match planning, replacements, and administration. The website runs on Next.js and Cloudflare Workers with D1 storage. A separate .NET service uses Google OR-Tools CP-SAT to calculate match plans.
+
+The app is named **Åben Bane**. This installation serves HIK and may be presented as **Åben Bane HIK**; it is not an official HIK app. Its values are *Spilleglæde · Gode kampe · Fællesskab*. See the [approved login design and branding](docs/login-design.md).
 
 This documentation describes the repository implementation, not proof of what is currently deployed. Documentation is in English; quoted Danish labels match the application interface.
 

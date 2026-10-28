@@ -44,6 +44,7 @@ import {
   Check,
   Clock3,
   Download,
+  FileText,
   Lock,
   LogOut,
   Mail,
@@ -292,47 +293,16 @@ function AuthScreen({ mode, setMode, act, busy, error, event, resetToken }: any)
   }
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,#dfe4ee,transparent_42%),#f7f8fb] px-2 py-8 sm:px-4 sm:py-14">
-      <div className="mx-auto grid max-w-5xl overflow-hidden rounded-[2rem] border border-[#cfe1d7] bg-white shadow-[0_24px_80px_rgba(19,55,94,.18)] md:grid-cols-[.9fr_1.1fr]">
-        <section className="relative overflow-hidden bg-[#13375e] p-8 text-white sm:p-12">
-          <div className="tennis-court-bg" aria-hidden="true">
-            <span className="court-singles court-singles-left" />
-            <span className="court-singles court-singles-right" />
-            <span className="court-service court-service-top" />
-            <span className="court-service court-service-bottom" />
-            <span className="court-center-service" />
-            <span className="court-net-bg" />
-          </div>
-          <div className="relative z-10">
-            <img
-              src="/hik-logo-clean.png"
-              alt="Tennis"
-              className="hik-logo-image mb-4 h-24 w-auto object-contain"
-            />
-            <p className="mb-10 flex max-w-sm flex-wrap items-center gap-x-2 gap-y-1 text-sm font-bold uppercase tracking-[.08em] text-white/90">
-              <span>Glæde</span>
-              <span aria-hidden="true">★</span>
-              <span>Udvikling</span>
-              <span aria-hidden="true">★</span>
-              <span>Fællesskab</span>
-              <span aria-hidden="true">★</span>
-              <span>Vilje</span>
-            </p>
-            <p className="text-sm font-bold uppercase tracking-[.22em] text-[#d5dbea]">
-              Åben Bane
-            </p>
-            <h1 className="mt-3 text-4xl font-semibold leading-tight sm:text-5xl">
-              Tætte kampe
-              <br />
-              Enkel tilmelding
-            </h1>
-            <p className="mt-5 max-w-sm text-lg leading-7 text-white/80">
-              Tennisaften med niveau, mix og gode kampe i centrum.
-            </p>
-            <RulesDialog light />
-          </div>
+    <main className={`login-page login-mode-${mode}`}>
+      <div className="login-shell">
+        <section className="login-brand" aria-label="Åben Bane HIK">
+          <h1 className="sr-only">Åben Bane</h1>
+          <img src="/brand/login-hero.webp" width="464" height="426" fetchPriority="high"
+            alt="Åben Bane · HIK Tennis. Spilleglæde · Gode kampe · Fællesskab."
+            className="login-hero" />
         </section>
-        <section className="p-6 sm:p-12">
+        <div className="login-content">
+        <section className="login-card" aria-label="Login og profil">
           {notice && (
             <p className="mb-4 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800">{notice}</p>
           )}
@@ -384,11 +354,8 @@ function AuthScreen({ mode, setMode, act, busy, error, event, resetToken }: any)
           {mode !== "forgot" && mode !== "reset" && (
             <div>
               <h2 className="text-2xl font-bold">
-                {mode === "login" ? "Log ind" : "Opret login"}
+                {mode === "login" ? "Log ind" : "Opret profil"}
               </h2>
-              <p className="mt-1 text-slate-500">
-                Brug dit HIK-medlemsnummer og en pinkode.
-              </p>
               <form onSubmit={submit} onKeyDown={e => {
                 if (mode !== 'login' || e.key !== 'Enter' || e.nativeEvent.isComposing || !(e.target instanceof HTMLInputElement)) return;
                 e.preventDefault();
@@ -411,10 +378,11 @@ function AuthScreen({ mode, setMode, act, busy, error, event, resetToken }: any)
                     </div>
                   </>
                 )}
-                <Field key={mode} name="memberNo" label="HIK-medlemsnummer" autoComplete="username" autoFocus={mode === "login"} inputMode={mode === "login" ? loginConfig.memberNoInputMode : undefined} />
+                <Field key={mode} name="memberNo" label="HIK-medlemsnummer" autoComplete="username" placeholder="Dit HIK-medlemsnummer" inputMode={mode === "login" ? loginConfig.memberNoInputMode : undefined} />
                 <Field
                   name="pin"
                   label="Pinkode (4–8 cifre)"
+                  placeholder="Din pinkode"
                   type="password"
                   inputMode={mode === "login" ? loginConfig.pinInputMode : "numeric"}
                   autoComplete={mode === "login" ? "current-password" : "new-password"}
@@ -425,44 +393,52 @@ function AuthScreen({ mode, setMode, act, busy, error, event, resetToken }: any)
                     {error}
                   </p>
                 )}
+                <Button
+                  type="submit"
+                  disabled={busy}
+                  className="login-submit"
+                >
+                  {busy ? "Vent…" : mode === "login" ? "Log ind" : "Opret profil"}<span aria-hidden="true">→</span>
+                </Button>
                 {mode === "login" && (
                   <button
                     type="button"
-                    className="text-left text-sm font-medium text-[#13375e] underline underline-offset-2"
+                    className="login-forgot"
                     onClick={() => { setMode("forgot"); setNotice(""); }}
                   >
                     Glemt pinkode?
                   </button>
                 )}
-                <Button
-                  type="submit"
-                  disabled={busy}
-                  className="mt-2 h-12 bg-[#13375e] text-base hover:bg-[#0d2947]"
-                >
-                  {busy ? "Vent…" : mode === "login" ? "Log ind" : "Opret login"}
-                </Button>
               </form>
-              <p className="mt-6 text-center text-sm text-slate-600">
-                {mode === "login" ? "Har du ikke en profil? " : "Har du allerede en profil? "}
-                <button
-                  type="button"
-                  disabled={busy}
-                  className="font-bold text-[#13375e] underline underline-offset-2 disabled:opacity-50"
-                  onClick={() => { setMode(mode === "login" ? "register" : "login"); setNotice(""); }}
-                >
-                  {mode === "login" ? "Opret login" : "Log ind"}
-                </button>
-              </p>
-              {mode === "login" && (
-                <p className="mt-2 text-center text-sm leading-6 text-slate-600">
-                  Du skal oprette en særskilt profil til aabenbaneaften.dk, også selvom du allerede booker baner på hik.halbooking.dk.
-                </p>
-              )}
+              {mode === "register" && <p className="mt-6 text-center text-sm">
+                Har du allerede en profil? <button type="button" disabled={busy} className="underline underline-offset-4"
+                  onClick={() => { setMode("login"); setNotice(""); }}>Log ind</button>
+              </p>}
             </div>
           )}
         </section>
+        {mode === "login" && <section className="login-register">
+          <h2>Ny på Åben Bane?</h2>
+          <p>Din profil er separat fra dit login til Halbooking.</p>
+          <Button type="button" variant="outline" disabled={busy} onClick={() => {
+            setMode("register"); setNotice("");
+            document.querySelector('.login-card')?.scrollIntoView({block:'start'});
+          }}>Opret profil <span aria-hidden="true">→</span></Button>
+        </section>}
+        <div className="login-bottom">
+        <RulesDialog login />
+        <footer className="login-footer">
+          <p>Ikke en officiel HIK-app</p>
+          <nav aria-label="Information og kontakt">
+            <a href="/privacy">Privatliv</a><span aria-hidden="true">·</span>
+            <a href="/cookies">Cookies</a><span aria-hidden="true">·</span>
+            <a href="mailto:aabenbaneaften@hik.dk">Kontakt</a>
+          </nav>
+        </footer>
+        </div>
+        </div>
       </div>
-      <Disclaimer />
+
     </main>
   );
 }
@@ -483,19 +459,19 @@ function Disclaimer() {
   );
 }
 
-function RulesDialog({ light = false }: { light?: boolean }) {
+function RulesDialog({ light = false, login = false }: { light?: boolean; login?: boolean }) {
   return (
     <Dialog>
       <DialogTrigger asChild>
         <Button
           variant="outline"
           className={
-            light
+            login ? "login-rules" : light
               ? "mt-7 border-white/50 bg-white/10 text-white hover:bg-white/20 hover:text-white"
               : "border-[#aebbd0] text-[#13375e]"
           }
         >
-          Forklaring og regler
+          {login ? <><FileText aria-hidden="true" className="login-rules-icon"/><span><strong>Forklaring og regler</strong><small>Læs mere om Åben Bane, spilleregler og hvordan du kommer i gang.</small></span><span aria-hidden="true">›</span></> : "Forklaring og regler"}
         </Button>
       </DialogTrigger>
       <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-2xl">
@@ -637,9 +613,9 @@ function Dashboard({ data, act, busy, error, openProfile, refresh, refreshing }:
         <div className="mx-auto flex max-w-7xl items-center justify-between px-2 py-3 sm:px-6">
           <div className="flex items-center gap-3">
             <img
-              src="/hik-logo-clean.png"
-              alt="HIK"
-              className="hik-logo-image h-11 w-11 rounded-md object-cover"
+              src="/brand/icon-192.png"
+              alt="Åben Bane"
+              className="h-11 w-11 rounded-xl object-cover"
             />
             <div>
               <p className="font-bold leading-tight">Åben Bane</p>

@@ -38,6 +38,12 @@ The website owns authentication, registration, validation, and publishing. The s
 
 Authorization is action-specific inside each handler; this table is not a permission grant.
 
+## Login presentation and app identity
+
+The unauthenticated view in `app/open-bane-app.tsx` uses the approved Åben Bane artwork and styles scoped under `.login-page` in `app/globals.css`. Members and administrators share the same membership-number/PIN form; administrator MFA continues in `app/mfa-screen.tsx`. “Opret profil” opens the existing registration flow, not a separate account system.
+
+`app/layout.tsx` supplies browser and Apple touch icons, and `app/manifest.ts` supplies the installation name, colors, and icons. Approved assets live in `public/brand/`. The member header also uses the approved app icon. See [login design and branding](login-design.md) for provenance and maintenance constraints.
+
 ## Storage and jobs
 
 Drizzle and custom SQL share D1; [DATAMODEL.md](../DATAMODEL.md) covers both. `matches` stores stable player IDs. `events.imported_kampplan` stores spreadsheet-compatible rows and optional optimizer metadata. Imported names must resolve unambiguously when converted to IDs.

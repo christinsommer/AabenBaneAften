@@ -9,6 +9,7 @@ These guides describe repository behavior. Live configuration, deployment versio
 | [Project overview](../README.md) | Starting point |
 | [Development](development.md) | Setup, configuration, tests, and troubleshooting |
 | [Architecture](architecture.md) | Runtime boundaries, APIs, and source map |
+| [Login design and branding](login-design.md) | Approved artwork, responsive login, app icons, and verification |
 | [Data model](../DATAMODEL.md) | Table inventory, relationships, and migrations |
 | [Business rules](business-rules.md) | Registration, ranking, spouse rules, and replacements |
 | [Optimizer](../optimizer-service/README.md) | Solver objectives, scoring, and service setup |
