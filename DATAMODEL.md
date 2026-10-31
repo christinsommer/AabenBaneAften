@@ -76,6 +76,8 @@ Normal members do not receive administrator-only ranking fields or raw spouse co
 
 `events.date` is a date without a time. Registration deadlines represent instants and are calculated in `Europe/Copenhagen`, including daylight-saving transitions. `registration_override` is `auto`, `open`, or `closed`; cancelled events remain closed. `registration_schedule_custom` distinguishes an explicitly edited schedule from defaults.
 
+`events.planning_in_progress` is a non-null boolean integer, default false, exposed as `planningInProgress`. Migration [0024](drizzle/0024_planning_in_progress.sql) adds it and the custom `optimizer_jobs_start_planning` trigger. Inserting a queued/running job sets the event flag in the same transaction; rolling back the insert also rolls back the flag. Existing queued/running jobs are backfilled. Publication clears it; solver completion/failure does not. Member writes check the flag atomically. See [registration rules](docs/business-rules.md#calendar-and-registration).
+
 `is_test` marks a test event; `test_active` selects it for the home page. `archived` hides a date without deleting its registrations/history. Re-adding an archived date reuses its original record. The app selects existing dates; it does not generate a new season automatically.
 
 `signups.availability` is a JSON array of start-time strings. `requested_hours` is 0–3 at the application boundary. The API also exposes derived `nHours`, `nPossible`, and `szPossible`; it does not store a redundant availability count.

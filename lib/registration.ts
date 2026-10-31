@@ -26,6 +26,7 @@ export function registrationSchedule(input: Record<string, unknown>) {
 }
 
 type RegistrationWindow = {
+  planningInProgress?: boolean;
   registrationOverride: "auto" | "open" | "closed";
   registrationOpensAt: string;
   registrationClosesAt: string;
@@ -33,10 +34,20 @@ type RegistrationWindow = {
 };
 
 export function registrationIsOpen(event: RegistrationWindow, now = Date.now()) {
-  if (event.status === "cancelled") return false;
+  if (event.status === "cancelled" || event.planningInProgress) return false;
   if (event.registrationOverride === "open") return true;
   if (event.registrationOverride === "closed") return false;
   return now >= Date.parse(event.registrationOpensAt) && now <= Date.parse(event.registrationClosesAt);
+}
+
+export const planningMessage = 'Planlægning af kampe er i gang. Afvent venligst, til den endelige kampplan er klar.';
+
+export function canEditSignup(event: RegistrationWindow, signup: {status:string;requestedHours:number}|null|undefined, now = Date.now()) {
+  if (event.planningInProgress || event.status === 'cancelled') return false;
+  if (registrationIsOpen(event, now)) return true;
+  return event.status === 'draft'
+    && (event.registrationOverride === 'closed' || now > Date.parse(event.registrationClosesAt))
+    && !!signup && ['active','waitlist'].includes(signup.status) && signup.requestedHours > 0;
 }
 
 export function firstMatchInstant(date: string, starts: readonly string[]) {
@@ -48,6 +59,6 @@ export function firstMatchInstant(date: string, starts: readonly string[]) {
 }
 
 export function waitlistIsOpen(event: RegistrationWindow, firstMatchAt: string, now = Date.now()) {
-  return event.status !== 'cancelled' && !registrationIsOpen(event, now)
+  return !event.planningInProgress && event.status !== 'cancelled' && !registrationIsOpen(event, now)
     && now > Date.parse(event.registrationClosesAt) && now < Date.parse(firstMatchAt);
 }

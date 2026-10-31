@@ -6,11 +6,17 @@ This guide describes implemented behavior. Danish labels identify the correspond
 
 The home page selects an active test event, otherwise the next non-archived, non-cancelled date from today in Copenhagen. Dates come from `events`; administrators add them explicitly. An empty future calendar does not remove access to profiles or privacy administration.
 
-Registration defaults open two days before play at 06:00 and close one day before at 12:00, interpreted in `Europe/Copenhagen`. Stored settings can override these defaults. Automatic draft events refresh their schedule until registration has started; manually customized schedules, test events, and published rounds are preserved. The event override can force open or closed; cancellation always closes registration.
+Registration defaults open two days before play at 06:00 and close one day before at 12:00, interpreted in `Europe/Copenhagen`. Stored settings can override these defaults. Automatic draft events refresh their schedule until registration has started; manually customized schedules, test events, and published rounds are preserved. The event override can force open or closed; cancellation and planning in progress always close member registration.
 
 Members request 0–3 hours and choose distinct configured start times. Zero hours means no participation. For positive requests, validation requires at least twice as many possible starts as requested hours, and enough non-overlapping one-hour starts to fulfill the request. Selecting adjacent times can include configured intermediate starts; gaps are not bridged. See `lib/signup.ts`.
 
 Queue order is assigned per event by database triggers. Editing preferences keeps the position. Cancellation or zero hours gives it up; rejoining receives a new position. Active and waitlist status alone does not reset priority. Administrators can edit current registrations after closure/publication, but doing so does not automatically recalculate the plan. Conflicting concurrent edits are rejected.
+
+After registration closes and before planning starts, existing active or waitlisted members with positive requested hours can still edit their wishes or select **Fjern mine ønsker**. Edits retain status and queue position; removal sets **Afbud** (`cancelled`), clears hours/times, and relinquishes the queue position. This does not allow new active registrations or active re-registration after cancellation. Late waitlist entry follows its existing deadline/first-match window.
+
+Accepting **Algoritme foreslå kampe** creates a durable job and atomically sets the event's `planningInProgress` flag. Members see **Planlægning af kampe er i gang. Afvent venligst, til den endelige kampplan er klar.** Self-service wish edits/removal and waitlist entry are blocked, including from stale browser pages. Administrators cannot add members to the waitlist while the flag is set. Other authorized administrative corrections remain available.
+
+The flag stays set when a calculation completes or fails, until **Offentliggør kampplan** clears it. Publication restores normal late-waitlist eligibility but does not reopen active wish editing. A new calculation sets the flag again. Rejected startup requests that never create a job do not set it.
 
 ## Ranking and age
 

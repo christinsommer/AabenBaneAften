@@ -22,5 +22,6 @@
   "0020_security_monitoring.sql": "203bc7836fd30131c9c5751bd0afdd03ae2397f34eedd45b87da42f8094b471f",
   "0021_admin_mfa.sql": "01d7e965c1b2d9d67ec34a753aaf646d75d1edac8d85eddd14c248738d006dc5",
   "0022_admin_mfa_reset_audit.sql": "9446d57b52e6a853156fb7b210fbfa73c5f5ff729358c33b5da6bb42490f84ea",
-  "0023_forbidden_pairs.sql": "20515d44b6f70730410ff54836ac00f0f2ae6995322a9348dab37262ab0d1eb9"
+  "0023_forbidden_pairs.sql": "20515d44b6f70730410ff54836ac00f0f2ae6995322a9348dab37262ab0d1eb9",
+  "0024_planning_in_progress.sql": "aec7baca9a80893904aff83c76d9e3958851f798817147f74f3ff6e21940f30a"
 }

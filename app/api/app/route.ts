@@ -18,7 +18,7 @@ import { ensureEvent } from "../../../lib/schedule";
 import { sendEmail } from "../../../lib/email";
 import { EmailDeliveryError } from '../../../lib/resend-delivery';
 import { sendWelcomeEmail } from "../../../lib/welcome-email";
-import { firstMatchInstant, waitlistIsOpen, registrationIsOpen, registrationSchedule } from "../../../lib/registration";
+import { firstMatchInstant, waitlistIsOpen, registrationIsOpen, registrationSchedule, canEditSignup, planningMessage } from "../../../lib/registration";
 import { spouseSettings } from '../../../lib/spouse-settings';
 import {findSpouses,selectedSpouse,currentSpouse} from '../../../lib/member-spouse';
 import { profileValues } from "../../../lib/profile";
@@ -348,7 +348,9 @@ export async function POST(request:Request){
         const [signup]=await db.select().from(signups).where(eq(signups.id,signupId)).limit(1);
         if(!signup)return Response.json({error:"Tilmeldingen findes ikke."},{status:404});
         if(body.status!=="cancelled" && (signup.requestedHours<1 || JSON.parse(signup.availability).length<signup.requestedHours))return Response.json({error:"Medlemmet skal først angive timer og mulige tider."},{status:400});
-        await db.update(signups).set({status:body.status}).where(eq(signups.id,signupId));
+        const changed=await db.update(signups).set({status:body.status}).where(and(eq(signups.id,signupId),
+          body.status==='waitlist'?sql`EXISTS (SELECT 1 FROM events WHERE id=${signup.eventId} AND planning_in_progress=0)`:undefined)).returning({id:signups.id});
+        if(!changed.length)return Response.json({error:planningMessage},{status:409});
         return NextResponse.json(await state());
       }
       if(action==="delete_member"&&user.role!=="admin")return Response.json({error:"Kun administratorer har adgang."},{status:403});
@@ -582,7 +584,20 @@ export async function POST(request:Request){
         return NextResponse.json(await state());
       }
       const registrationOpen=registrationIsOpen(event);
-      if(["signup","cancel_signup","request_match","accept_match_request","lookup_member"].includes(action)&&!registrationOpen)return Response.json({error:event.registrationOverride==="closed"?"Tilmeldingen er lukket af administratoren.":`Tilmeldingen er lukket. Tidsplan: ${new Date(event.registrationOpensAt).toLocaleDateString('da-DK',{timeZone:'Europe/Copenhagen'}) + ' kl. ' + new Date(event.registrationOpensAt).toLocaleTimeString('en-GB',{timeZone:'Europe/Copenhagen',hour:'2-digit',minute:'2-digit',hourCycle:'h23'})} til ${new Date(event.registrationClosesAt).toLocaleDateString('da-DK',{timeZone:'Europe/Copenhagen'}) + ' kl. ' + new Date(event.registrationClosesAt).toLocaleTimeString('en-GB',{timeZone:'Europe/Copenhagen',hour:'2-digit',minute:'2-digit',hourCycle:'h23'})}.`},{status:400});
+      if(['signup','cancel_signup'].includes(action) && body.eventId!==undefined && Number(body.eventId)!==event.id)
+        return Response.json({error:'Spillerunden er ændret. Genindlæs siden.'},{status:409});
+      if(event.planningInProgress && ['signup','cancel_signup','join_waitlist','request_match','accept_match_request','lookup_member'].includes(action))
+        return Response.json({error:planningMessage},{status:400});
+      const [ownSignup]=['signup','cancel_signup'].includes(action)
+        ? await db.select().from(signups).where(and(eq(signups.eventId,event.id),eq(signups.playerId,user.id))).limit(1) : [];
+      if(['signup','cancel_signup'].includes(action) && !canEditSignup(event,ownSignup))
+        return Response.json({error:'Du kan kun rette eller fjerne eksisterende ønsker efter tilmeldingsfristen og indtil planlægningen starter.'},{status:400});
+      // Recheck the event inside each write, so an already-open member page
+      // cannot race the atomic planning lock set when a job is inserted.
+      const memberWriteGuard=sql`EXISTS (SELECT 1 FROM events WHERE id=${event.id} AND planning_in_progress=0
+        AND status=${event.status} AND registration_override=${event.registrationOverride}
+        AND registration_opens_at=${event.registrationOpensAt} AND registration_closes_at=${event.registrationClosesAt})`;
+      if(["request_match","accept_match_request","lookup_member"].includes(action)&&!registrationOpen)return Response.json({error:event.registrationOverride==="closed"?"Tilmeldingen er lukket af administratoren.":`Tilmeldingen er lukket. Tidsplan: ${new Date(event.registrationOpensAt).toLocaleDateString('da-DK',{timeZone:'Europe/Copenhagen'}) + ' kl. ' + new Date(event.registrationOpensAt).toLocaleTimeString('en-GB',{timeZone:'Europe/Copenhagen',hour:'2-digit',minute:'2-digit',hourCycle:'h23'})} til ${new Date(event.registrationClosesAt).toLocaleDateString('da-DK',{timeZone:'Europe/Copenhagen'}) + ' kl. ' + new Date(event.registrationClosesAt).toLocaleTimeString('en-GB',{timeZone:'Europe/Copenhagen',hour:'2-digit',minute:'2-digit',hourCycle:'h23'})}.`},{status:400});
       if(action === 'join_waitlist') {
         if (Number(body.eventId) !== event.id) return Response.json({error:'Spillerunden er ændret. Genindlæs siden.'},{status:409});
         const [existingSignup] = await db.select({status:signups.status}).from(signups).where(and(eq(signups.eventId,event.id),eq(signups.playerId,user.id))).limit(1);
@@ -591,8 +606,11 @@ export async function POST(request:Request){
         let input;
         try { input = signupInput(body,(await loadPlaySchedule()).times); if (input.nHours < 1) throw new Error('Vælg mindst 1 time.'); }
         catch(error) { return Response.json({error:error instanceof Error ? error.message : 'Kontrollér dine ønsker.'},{status:400}); }
-        await db.insert(signups).values({eventId:event.id,playerId:user.id,availability:JSON.stringify(input.szPossible),requestedHours:input.nHours,status:'waitlist'})
-          .onConflictDoUpdate({target:[signups.eventId,signups.playerId],set:{availability:JSON.stringify(input.szPossible),requestedHours:input.nHours,status:'waitlist'},setWhere:sql`${signups.status} <> 'active'`});
+        const changed=await db.all(sql`INSERT INTO signups(event_id,player_id,availability,requested_hours,status)
+          SELECT ${event.id},${user.id},${JSON.stringify(input.szPossible)},${input.nHours},'waitlist' WHERE ${memberWriteGuard}
+          ON CONFLICT(event_id,player_id) DO UPDATE SET availability=excluded.availability,requested_hours=excluded.requested_hours,status='waitlist'
+          WHERE signups.status <> 'active' RETURNING id`);
+        if(!changed.length)return Response.json({error:'Planlægning eller tilmelding er ændret. Genindlæs siden.'},{status:409});
         await activity(user.id,'booking');
         return NextResponse.json(await state());
       }
@@ -607,9 +625,20 @@ export async function POST(request:Request){
         let input;
         try {input=signupInput(body,(await loadPlaySchedule()).times);} catch(error) {return Response.json({error:error instanceof Error?error.message:"Kontrollér dine tidsønsker."},{status:400});}
         const availability=input.szPossible,requestedHours=input.nHours;
-        await db.insert(signups).values({eventId:event.id,playerId:user.id,availability:JSON.stringify(availability),requestedHours,status:"active"}).onConflictDoUpdate({target:[signups.eventId,signups.playerId],set:{availability:JSON.stringify(availability),requestedHours,status:"active"}});
+        const changed=registrationOpen
+          ? await db.all(sql`INSERT INTO signups(event_id,player_id,availability,requested_hours,status)
+              SELECT ${event.id},${user.id},${JSON.stringify(availability)},${requestedHours},'active' WHERE ${memberWriteGuard}
+              ON CONFLICT(event_id,player_id) DO UPDATE SET availability=excluded.availability,requested_hours=excluded.requested_hours,status='active' RETURNING id`)
+          : await db.update(signups).set({availability:JSON.stringify(availability),requestedHours})
+              .where(and(eq(signups.id,ownSignup!.id),eq(signups.status,ownSignup!.status),eq(signups.requestedHours,ownSignup!.requestedHours),eq(signups.availability,ownSignup!.availability),memberWriteGuard)).returning({id:signups.id});
+        if(!changed.length)return Response.json({error:'Planlægning eller tilmelding er ændret. Genindlæs siden.'},{status:409});
         await activity(user.id,"booking");
-      }else if(action==="cancel_signup")await db.insert(signups).values({eventId:event.id,playerId:user.id,status:"cancelled",requestedHours:0,availability:'[]'}).onConflictDoUpdate({target:[signups.eventId,signups.playerId],set:{status:"cancelled",requestedHours:0,availability:'[]'}});
+      }else if(action==="cancel_signup") {
+        const changed=await db.all(sql`INSERT INTO signups(event_id,player_id,status,requested_hours,availability)
+          SELECT ${event.id},${user.id},'cancelled',0,'[]' WHERE ${memberWriteGuard}
+          ON CONFLICT(event_id,player_id) DO UPDATE SET status='cancelled',requested_hours=0,availability='[]' RETURNING id`);
+        if(!changed.length)return Response.json({error:'Planlægning eller tilmelding er ændret. Genindlæs siden.'},{status:409});
+      }
       else if(action==="request_match"){
         const invited=Array.from(new Set((body.memberNos??[]).map((x:unknown)=>String(x).trim()).filter(Boolean))) as string[]; if(invited.length!==3||invited.includes(user.memberNo))return Response.json({error:"Angiv tre forskellige medlemsnumre."},{status:400});
         for(const memberNo of invited){
@@ -662,7 +691,7 @@ export async function POST(request:Request){
         else if(action==="generate"){
           return Response.json({error:'Brug “Algoritme foreslå kampe” under Kampplan Admin.'},{status:400});
         }
-        else if(action==="publish")await db.update(events).set({status:"published",publishedAt:new Date().toISOString()}).where(eq(events.id,event.id));
+        else if(action==="publish")await db.update(events).set({status:"published",publishedAt:new Date().toISOString(),planningInProgress:false}).where(eq(events.id,event.id));
         else if(action==="set_level")await db.update(players).set({adminLevel:body.level||null}).where(eq(players.id,Number(body.playerId)));
         else if(action==="set_admin"){
           const playerId=Number(body.playerId),makeAdmin=Boolean(body.makeAdmin);

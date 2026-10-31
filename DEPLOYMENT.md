@@ -49,6 +49,8 @@ For the configurable-priority rollout, let queued/running jobs finish before dep
 
 ## Migration workflow
 
+The planning-state feature requires migration `0024_planning_in_progress.sql` before the updated website is served. It adds the event flag and the job-insertion trigger, including a backfill for existing queued/running jobs. Use the coordinated migration/deployment workflow; documentation and isolated tests do not apply this migration to Sandbox or Production.
+
 Edit the appropriate schema source and generate a new migration where applicable:
 
 ```powershell

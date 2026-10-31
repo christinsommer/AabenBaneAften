@@ -1,6 +1,24 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {firstMatchInstant, waitlistIsOpen, registrationIsOpen, registrationSchedule, registrationDateParts} from '../lib/registration.ts';
+import {firstMatchInstant, waitlistIsOpen, registrationIsOpen, registrationSchedule, registrationDateParts, canEditSignup} from '../lib/registration.ts';
+
+test('only existing signups can change wishes between closure and planning; planning closes all member entry points',()=>{
+ const event={registrationOverride:'auto',registrationOpensAt:'2026-10-20T10:00:00Z',registrationClosesAt:'2026-10-21T10:00:00Z',status:'draft',planningInProgress:false};
+ const now=Date.parse('2026-10-21T11:00:00Z'), first='2026-10-22T16:00:00Z';
+ for(const status of ['active','waitlist']) {
+  const signup={status,requestedHours:1};
+  assert.equal(canEditSignup(event,signup,now),true);
+  assert.equal(canEditSignup({...event,planningInProgress:true},signup,now),false);
+  assert.equal(canEditSignup({...event,status:'published'},signup,now),false);
+  assert.equal(canEditSignup({...event,status:'cancelled'},signup,now),false);
+ }
+ for(const signup of [null,{status:'cancelled',requestedHours:1},{status:'active',requestedHours:0}])assert.equal(canEditSignup(event,signup,now),false);
+ assert.equal(canEditSignup(event,{status:'active',requestedHours:1},Date.parse('2026-10-19T10:00:00Z')),false);
+ assert.equal(canEditSignup({...event,registrationOverride:'closed'},{status:'active',requestedHours:1},Date.parse('2026-10-20T11:00:00Z')),true);
+ assert.equal(waitlistIsOpen({...event,planningInProgress:true},first,now),false);
+ assert.equal(registrationIsOpen({...event,planningInProgress:true,registrationOverride:'open'},now),false);
+ assert.equal(waitlistIsOpen({...event,status:'published'},first,now),true);
+});
 
 test('late waitlist requires passed deadline, closed registration and a future first match',()=>{
   const event={registrationOverride:'auto',registrationOpensAt:'2026-09-16T10:00:00Z',registrationClosesAt:'2026-09-17T10:00:00Z',status:'draft'};

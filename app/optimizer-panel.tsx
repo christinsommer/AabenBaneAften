@@ -55,6 +55,7 @@ export function OptimizerPanel({event, rows, wishes, isOpen, busy, refresh}: {
       const data=await response.json() as {job:Job|null;error?:string};
       if(!response.ok)throw new Error(data.error||'Beregningen kunne ikke startes.');
       setJob(data.job);
+      void refreshRef.current();
     } catch(e) {setError(e instanceof Error?e.message:'Opstart kunne ikke bekræftes. Status kontrolleres automatisk.');}
     finally {setStarting(false);}
   }

@@ -8,7 +8,8 @@ export function optimizerSignupsSql(eventId: number) {
   return sql`(SELECT json_group_array(json_array(id,player_id,availability,requested_hours,signup_order,status)) FROM (SELECT * FROM signups WHERE event_id=${eventId} ORDER BY id))`;
 }
 
-// Member and signup edits are allowed; plan/settings changes and member deletion are not.
+// Admin member/signup edits are allowed; plan/settings changes and member deletion are not.
+// planning_in_progress is intentionally excluded: the job INSERT sets it after snapshot creation.
 export function optimizerScheduleSql() {
   return sql`json_array(
     (SELECT json_group_array(json_array(member_a,member_b)) FROM (SELECT * FROM forbidden_pairs ORDER BY member_a,member_b)),

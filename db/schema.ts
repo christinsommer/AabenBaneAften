@@ -74,6 +74,7 @@ export const events = sqliteTable("events", {
   registrationScheduleCustom: integer('registration_schedule_custom', {mode:'boolean'}).notNull().default(false),
   status: text("status", { enum: ["draft", "published", "cancelled"] }).notNull().default("draft"),
   publishedAt: text("published_at"),
+  planningInProgress: integer('planning_in_progress', {mode:'boolean'}).notNull().default(false),
   registrationOverride: text("registration_override", { enum: ["auto", "open", "closed"] }).notNull().default("auto"),
   importedKampplan: text("imported_kampplan").notNull().default(""),
   isTest: integer("is_test", { mode: "boolean" }).notNull().default(false),

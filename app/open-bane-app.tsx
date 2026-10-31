@@ -36,7 +36,7 @@ import { isPlayersImportedMatch } from "../lib/kampplan-filter";
 import { useEffect, useRef, useState } from "react";
 import { appRequest, requireLoginSession } from "../lib/app-request";
 import { loginConfig } from "../lib/login-config";
-import { firstMatchInstant, registrationIsOpen, waitlistIsOpen, registrationDateParts } from "../lib/registration";
+import { firstMatchInstant, waitlistIsOpen, registrationDateParts, canEditSignup, planningMessage } from "../lib/registration";
 import { InstallApp } from "../components/install-app";
 import { levelScore } from '../lib/ranking';
 import { RankingField } from '../components/ranking-field';
@@ -1023,7 +1023,7 @@ function SignupPanel({ data, act, busy }: any) {
   const ownRequests = (data.requests ?? []).filter(
     (request: any) => request.isCreator,
   );
-  const canEdit = registrationIsOpen(data.event, now);
+  const canEdit = canEditSignup(data.event, current ? {status:current.status,requestedHours:current.nHours} : null, now);
   const roundStart = data.firstMatchAt ?? firstMatchInstant(data.event.date, data.times);
   const roundDate = new Date(`${data.event.date}T12:00:00Z`);
   const roundTime = new Date(roundStart).toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit', hourCycle:'h23', timeZone:'Europe/Copenhagen'});
@@ -1054,6 +1054,7 @@ function SignupPanel({ data, act, busy }: any) {
     if (
       await act({
         action: "signup",
+        eventId: data.event.id,
         szPossible: expanded,
         nPossible: expanded.length,
         nHours: hours,
@@ -1068,7 +1069,7 @@ function SignupPanel({ data, act, busy }: any) {
   }
   async function removeSignup() {
     setSaved(false);
-    if (await act({ action: "cancel_signup" })) {
+    if (await act({ action: "cancel_signup", eventId:data.event.id })) {
       setSelected([]);
       setHours(1);
       setRemoved(true);
@@ -1124,6 +1125,7 @@ function SignupPanel({ data, act, busy }: any) {
           </CardDescription>
         </CardHeader>
         <CardContent className="px-4">
+          {data.event.planningInProgress && <p role="status" className="mb-4 rounded-lg border border-blue-200 bg-blue-50 p-3 font-medium text-[#13375e]">{planningMessage}</p>}
           <div className="mb-4">
             <h3 className="text-base font-semibold">Hvor mange timer?</h3>
             <div className="mt-2 grid grid-cols-3 gap-2">

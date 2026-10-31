@@ -169,6 +169,13 @@
       "when": 1792218169531,
       "tag": "0023_forbidden_pairs",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1793451469793,
+      "tag": "0024_planning_in_progress",
+      "breakpoints": true
     }
   ]
 }

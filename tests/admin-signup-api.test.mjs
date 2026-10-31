@@ -71,7 +71,7 @@ test('admin edits current signup wishes after closing registration, preserving s
     const activeSignup=await read();
     for (const mode of ['closed','auto']) {
       await db.prepare('UPDATE events SET registration_override=? WHERE id=100').bind(mode).run();
-      for (const action of ['join_waitlist','cancel_signup']) {
+      for (const action of ['join_waitlist']) {
         assert.equal((await post({action})).status,400,`${action} must fail when registration is ${mode}`);
         assert.deepEqual(await read(),activeSignup);
       }

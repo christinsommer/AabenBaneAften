@@ -47,9 +47,11 @@ test('durable optimization warns on member and signup edits, preserves current s
     assert.equal((await start()).status,403);
     assert.equal((await status()).status,403);
     globalThis.__optimizerJobs.user={id:1,role:'admin'};
+    assert.equal((await db.prepare('SELECT planning_in_progress AS flag FROM events WHERE id=100').first()).flag,0);
     const started=await start();
     assert.equal(started.status,202,JSON.stringify(await started.clone().json()));
     const first=(await started.json()).job;
+    assert.equal((await db.prepare('SELECT planning_in_progress AS flag FROM events WHERE id=100').first()).flag,1,'accepted job atomically locks member wishes');
     assert.equal((await (await start()).json()).job.id,first.id,'double click reuses durable job');
     assert.equal((await db.prepare('SELECT count(*) AS n FROM optimizer_jobs').first()).n,1);
     const stored=await db.prepare('SELECT * FROM optimizer_jobs WHERE id=?').bind(first.id).first();
@@ -80,6 +82,7 @@ test('durable optimization warns on member and signup edits, preserves current s
     assert.equal(saved.status,'completed',saved.error);assert.match(saved.warning,/Medlemsoplysninger/);assert.equal(saved.snapshot,'');
     const event=await db.prepare('SELECT * FROM events WHERE id=100').first();
     assert.equal(event.status,'draft');assert.equal(event.published_at,null);
+    assert.equal(event.planning_in_progress,1,'calculation completion does not unlock wishes before publication');
     assert.equal(JSON.parse(event.imported_kampplan)[0].D,'Player 1');
     assert.deepEqual(JSON.parse(event.imported_kampplan)[0]._optimizerPriorities,defaultOptimizerPriorities,'saved plan retains its priority audit');
     const matches=(await db.prepare('SELECT * FROM matches WHERE event_id=100').all()).results;
@@ -126,6 +129,7 @@ test('durable optimization warns on member and signup edits, preserves current s
     const fifth=(await (await start()).json()).job;
     await runOptimizerJob({DB:db,OPTIMIZER:{getByName:()=>({fetch:async()=>Response.json({error:'offline'},{status:503})})}},fifth.id,step);
     assert.equal((await db.prepare('SELECT status FROM optimizer_jobs WHERE id=?').bind(fifth.id).first()).status,'failed','exhausted workflow step persists failure');
+    assert.equal((await db.prepare('SELECT planning_in_progress AS flag FROM events WHERE id=100').first()).flag,1,'failure does not reopen member changes');
     assert.match((await db.prepare('SELECT error FROM optimizer_jobs WHERE id=?').bind(fifth.id).first()).error,/HTTP 503.*offline/);
     const outdated=(await (await start()).json()).job;
     await runOptimizerJob({DB:db,OPTIMIZER:{getByName:()=>({fetch:async()=>Response.json({...result,priorityProtocol:undefined})})}},outdated.id,step);
@@ -156,6 +160,12 @@ test('durable optimization warns on member and signup edits, preserves current s
     await finishOptimizerJob(signupRaceDb,sixth.id,result);
     const combined=(await (await status()).json()).job;
     assert.equal(combined.status,'completed');assert.match(combined.warning,/Medlemsoplysninger/);assert.match(combined.warning,/Tilmeldingerne/);
+    const publishedDuringRun=(await (await start()).json()).job;
+    const beforePublish=await db.prepare('SELECT imported_kampplan FROM events WHERE id=100').first();
+    await db.prepare('UPDATE events SET planning_in_progress=0 WHERE id=100').run();
+    await finishOptimizerJob(db,publishedDuringRun.id,result);
+    assert.equal((await db.prepare('SELECT status FROM optimizer_jobs WHERE id=?').bind(publishedDuringRun.id).first()).status,'failed','publication releases lock and prevents a late result from replacing the plan');
+    assert.deepEqual(await db.prepare('SELECT imported_kampplan FROM events WHERE id=100').first(),beforePublish);
     globalThis.fetch=async()=>Response.json({error:'old worker'},{status:404});
     assert.equal((await start()).status,503,'old deployment cannot accept undeliverable jobs');
   } finally {

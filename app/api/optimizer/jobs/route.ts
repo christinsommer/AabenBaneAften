@@ -52,7 +52,9 @@ export async function POST(request: Request) {
     const [revisions] = await db.all<{scheduleRevision:string;membersRevision:string;signupsRevision:string}>(sql`SELECT ${optimizerScheduleSql()} AS scheduleRevision, ${optimizerMembersSql()} AS membersRevision, ${optimizerSignupsSql(eventId)} AS signupsRevision`);
     const snapshot = JSON.stringify({input:loaded.input,names:[...loaded.names],courtOrder:loaded.courtOrder,...revisions});
     const id = crypto.randomUUID();
-    // Persist the outbox record before replying. Cron dispatches even if this browser disconnects.
+    // Persist the outbox record before replying. Its INSERT trigger also sets
+    // planning_in_progress atomically, after this signup-revision check.
+    // Cron dispatches even if this browser disconnects.
     const inserted = await db.all(sql`INSERT INTO optimizer_jobs(id,event_id,status,snapshot,created_at)
       SELECT ${id},${eventId},'queued',${snapshot},${new Date().toISOString()}
       WHERE ${optimizerRevisionSql(eventId)}=${loaded.revision}

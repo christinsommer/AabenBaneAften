@@ -37,7 +37,7 @@ export async function finishOptimizerJob(binding: D1Database, id: string, result
   const saved = sql`${active} AND EXISTS (SELECT 1 FROM events WHERE id=${job.eventId} AND imported_kampplan=${serialized})`;
   const queries = [
     db.update(events).set({importedKampplan:serialized,status:'draft',publishedAt:null})
-      .where(and(eq(events.id,job.eventId),active,sql`${optimizerScheduleSql()}=${snapshot.scheduleRevision}`)).returning({id:events.id}).toSQL(),
+      .where(and(eq(events.id,job.eventId),eq(events.planningInProgress,true),active,sql`${optimizerScheduleSql()}=${snapshot.scheduleRevision}`)).returning({id:events.id}).toSQL(),
     db.delete(feedback).where(sql`${saved} AND match_id IN (SELECT id FROM matches WHERE event_id=${job.eventId} AND locked=0)`).toSQL(),
     db.delete(substitutions).where(sql`${saved} AND match_id IN (SELECT id FROM matches WHERE event_id=${job.eventId} AND locked=0)`).toSQL(),
     db.delete(matches).where(and(eq(matches.eventId,job.eventId),eq(matches.locked,false),saved)).toSQL(),
