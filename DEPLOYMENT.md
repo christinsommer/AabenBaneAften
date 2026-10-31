@@ -45,6 +45,8 @@ For the initial production SuperAdmin binding, use `Deploy.ps1 -SuperAdminMember
 
 Do not run optimizer deployment ahead of a required database migration: its cron and Workflow use D1. Changes to match rules usually require both website and optimizer deployment.
 
+For the configurable-priority rollout, let queued/running jobs finish before deploying the optimizer Worker/container and website together. The settings revision format changes, and an older solver cannot honor the new configuration. The application requires `priorityProtocol: 1` in solver responses for configured priorities. This feature stores configuration in existing JSON settings and requires no new database migration. See [optimizer objectives](optimizer-service/README.md#configurable-objectives).
+
 ## Migration workflow
 
 Edit the appropriate schema source and generate a new migration where applicable:

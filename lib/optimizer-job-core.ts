@@ -19,7 +19,8 @@ export async function finishOptimizerJob(binding: D1Database, id: string, result
   const snapshot = JSON.parse(job.snapshot) as OptimizerSnapshot;
   if (!['OPTIMAL','FEASIBLE'].includes(result.status)) throw new Error('Beregningen fandt ingen gyldig løsning.');
   const validated = validateProposal(result.matches,snapshot.input);
-  const plan = validateProposal(applyCourtOrder(validated,snapshot.input,snapshot.courtOrder),snapshot.input);
+  // Explicit priorities belong to the solver; do not silently apply a disabled court objective.
+  const plan = validateProposal(snapshot.input.optimizerPriorities ? validated : applyCourtOrder(validated,snapshot.input,snapshot.courtOrder),snapshot.input);
   if (!plan.length) throw new Error('Beregningen fandt ingen kampe.');
   const scores = plan.map(m=>scoreMatch(m,snapshot.input,plan).score);
   if (scores.reduce((a,b)=>a+b,0)!==result.score) throw new Error('Kontrol af kampscore fejlede.');
@@ -29,7 +30,7 @@ export async function finishOptimizerJob(binding: D1Database, id: string, result
       requested:p.requestedHours,assigned:plan.filter(m=>[...m.team1,...m.team2].includes(p.id)).length})),
   };
   const rows = proposalRows(plan,new Map(snapshot.names)).map((row,index)=>({...row,_optimizerScore:scores[index],
-    ...(index===0?{_optimizerRevision:id,_optimizerWeights:snapshot.input.weights,_optimizerSummary:summary}:{}),
+    ...(index===0?{_optimizerRevision:id,_optimizerWeights:snapshot.input.weights,_optimizerPriorities:snapshot.input.optimizerPriorities,_optimizerSummary:summary}:{}),
   }));
   const serialized = JSON.stringify(rows);
   const active = sql`EXISTS (SELECT 1 FROM optimizer_jobs WHERE id=${id} AND status IN ('queued','running'))`;

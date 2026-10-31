@@ -11,7 +11,7 @@ The stored roles are `player` and `admin`. SuperAdmin is an additional server-de
 | Member administration, registration management, plans | No | Yes | Yes |
 | Privacy review and newsletter administration | No | Yes | Yes |
 | Calculate, edit, export, and publish plans | No | Yes | Yes |
-| Optimizer factors, defaults, and resources | No | No | Yes |
+| Optimizer factors, defaults, resources, and priorities | No | No | Yes |
 | Forbidden pairs and protected prompt | No | No | Yes |
 | Grant/revoke administrator roles | No | No | Yes, with current PIN |
 | Reset another administrator's MFA | No | No | Yes, with identity confirmation and authentication proof |
@@ -39,6 +39,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Deploy.ps1 -SuperAdmin
 This is a full deployment command, not merely a lookup. The script verifies the production account and stores its internal ID as a Worker secret. Later deployments without the option require and preserve an existing binding. Secret-name listings do not reveal the stored ID. See [deployment](DEPLOYMENT.md).
 
 ## Protected data
+
+The **Prioritering af optimeringen** panel contains all 12 [optimizer goals](optimizer-service/README.md#configurable-objectives). Drag a handle or use the up/down buttons to reorder them. Each goal has an information button and an enabled checkbox. **Gendan standardrækkefølge** restores the default order and enables every goal; press **Gem prioritering** to persist either edits or a reset. Only SuperAdmin can save this configuration, enforced by the server.
+
+The highest enabled goal runs first. Later goals preserve earlier achieved values. Changes apply to the next calculation, including when an existing job is queued or running. Turning every goal off requests feasibility only and can yield no games. Hard playing rules cannot be disabled here.
 
 Optimizer configuration and factor metadata are filtered on the server. Ordinary administrators use stored factors when calculating; they cannot submit their own factor overrides. The protected ChatGPT prompt is generated through a SuperAdmin-only endpoint.
 

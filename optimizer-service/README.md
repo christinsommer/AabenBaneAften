@@ -35,19 +35,34 @@ Solver input contains internal IDs, membership numbers, CR, gender, optional der
 
 Resources are configurable: 1–32 search workers, default 4; 1–900 seconds, default 600. CPU threads share the host's resources. Inputs are limited to 200 players and 32 court/time slots. Cold start, transport, and model construction add overhead beyond the search budget.
 
-## Objectives, in priority order
+## Configurable objectives
 
 Later stages may improve an earlier stage's achieved value but may not reduce it. They can rearrange times and teams while preserving those bounds.
 
-1. Maximize active members receiving a first hour, then a second, then a third, within requests.
-2. Favor earlier active signup positions when hour coverage is equal.
-3. Apply the same hour-coverage and queue priorities to waitlisted members. They may already be used as partners to help active members.
-4. Maximize match count.
-5. Maximize total score.
-6. Favor player-hours at earlier start times.
-7. Apply configured court preference order as a final tie-break.
+SuperAdmin can reorder and enable/disable these 12 independent goals. All are enabled by default, in this order:
 
-For each status group, first/second/third-hour weights use `(n+1)^2`, `n+1`, and `1`; lower-priority hours cannot compensate for losing a first hour. Up to seven start times use one weighted early-time objective; larger sets use separate objectives to avoid integer overflow.
+| ID | Objective |
+| --- | --- |
+| `active:1` | Active members receiving at least one hour |
+| `active:2` | Active members receiving at least two hours |
+| `active:3` | Active members receiving three hours |
+| `active:signupOrder` | Earlier active signup positions |
+| `waitlist:1` | Waitlisted members receiving at least one hour |
+| `waitlist:2` | Waitlisted members receiving at least two hours |
+| `waitlist:3` | Waitlisted members receiving three hours |
+| `waitlist:signupOrder` | Earlier waitlist signup positions |
+| `matches` | Match count |
+| `score` | Total quality score |
+| `early` | Player-hours at earlier start times |
+| `courts` | Configured court preference order |
+
+Hour goals count members reaching each threshold, always within their requests. Each threshold is a separate stage. Waitlisted members may still partner active members during earlier stages. Queue goals maximize weighted player-hours, with weights `n, n-1, ..., 1` in signup order; they apply to both first and additional hours. Total quality is not average quality: placing it before coverage or match count can exclude negative-scoring games.
+
+Up to seven start times use one weighted early-time objective; larger sets use separate stages within the same goal to avoid integer overflow. Court preference ranks courts within each start time without implicitly prioritizing earlier times. No court remapping runs after solving an explicitly configured priority list.
+
+The optional `optimizerPriorities` input is an ordered array of `{id, enabled}` objects. It must contain each ID exactly once with a boolean flag; omission uses the defaults for older callers. Disabled goals are skipped. With every goal disabled, only feasibility is solved, which may produce no matches; the application retains the existing plan if the result is empty. Availability, requested-hour limits, overlaps, spouse rules, exclusions, locked matches and all other hard constraints remain mandatory.
+
+The application snapshots priorities when creating each job. Later changes affect only subsequent jobs. The saved plan retains `_optimizerPriorities` as private audit metadata after the temporary job snapshot is cleared. Solver responses declare `priorityProtocol: 1`; the application rejects older services that could silently ignore the configuration.
 
 Search stages share the total budget, can use multiple randomized starts, and retain a complete incumbent. Only a result with all stages proven optimal is labeled `OPTIMAL`; a valid unproven result is `FEASIBLE`. Repeated search is not a guarantee of global optimality. See [Scheduler.cs](Scheduler.cs) for exact budget allocation.
 
@@ -75,7 +90,7 @@ For doubles, the known-age expression is `abs(A-B) + abs(C-D) + abs(A+B-C-D)`. A
 
 Spouse mode 2 exempts only that pair from CR-distance constraints and the partner CR-difference term; other constraints and penalties remain. Mode 1 allows a one-to-one correspondence of assigned starts within 30 minutes. See [spouse rules](../docs/business-rules.md#spouse-choices).
 
-Default values and score formulas are defined in [lib/optimizer.ts](../lib/optimizer.ts), with help text in [lib/optimizer-settings.ts](../lib/optimizer-settings.ts). SuperAdmin manages factors/resources; ordinary administrators calculate with stored settings.
+Default values and score formulas are defined in [lib/optimizer.ts](../lib/optimizer.ts), with help text in [lib/optimizer-settings.ts](../lib/optimizer-settings.ts). SuperAdmin manages factors, resources, and objective priorities; ordinary administrators calculate with stored settings. Goal IDs, labels, descriptions, and default order are defined in [lib/optimizer-priorities.ts](../lib/optimizer-priorities.ts).
 
 ## Saving and editing
 
@@ -87,7 +102,7 @@ The unfulfilled-wishes report is calculated from the displayed plan and current 
 
 ## Deployment
 
-Use the coordinated [deployment workflow](../DEPLOYMENT.md), which migrates/verifies D1 before deploying the optimizer and then the website. Updating only one side of a rule change can make solver proposals fail application validation.
+Use the coordinated [deployment workflow](../DEPLOYMENT.md), which migrates/verifies D1 before deploying the optimizer and then the website. Updating only one side of a rule change can make solver proposals fail application validation. For the configurable-priority rollout, allow existing jobs to finish before updating the optimizer Worker/container and website: the settings revision format changes. No database migration is required; the configuration uses existing JSON settings.
 
 The lower-level `optimizer:deploy`, `optimizer:check`, and `optimizer:connect` commands are operational tools, not local tests. Connect sets website Worker secrets after checking the service. Production key material is kept in ignored `.data/optimizer-production/key`; do not delete or disclose it during ordinary cleanup.
 

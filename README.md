@@ -18,6 +18,7 @@ This documentation describes the repository implementation, not proof of what is
 | Refresh local data from Production | [Sandbox refresh](docs/sandbox-refresh.md) |
 | Configure or recover administrator MFA | [Administrator MFA](docs/admin-2fa.md) |
 | Understand administrator permissions | [Admin and SuperAdmin](SUPERADMIN.md) |
+| Configure optimization priorities | [Optimizer objectives](optimizer-service/README.md#configurable-objectives) |
 | Find operational guides | [Documentation index](docs/README.md) |
 
 ## Local quick start

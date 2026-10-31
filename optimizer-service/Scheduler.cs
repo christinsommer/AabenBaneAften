@@ -10,12 +10,15 @@ public record HistoryMatch(int[] Team1, int[] Team2);
 public record Round(string Date, HistoryMatch[] Matches);
 public record Weights(int FactorMatchDifference = 40, int FactorSameTeamLastWeek = 20, int FactorSameTeam3Weeks = 10, int FactorOpponentLastWeek = 5, int FactorDoubleSameSex = 5, int FactorSingle = 10, int Factor3OfAKind = 30, int FactorAge = 0, int FactorSameTeamDifference = 15, int FactorDistanceSameTeamA = 2, int FactorOpponentThisWeek = 5);
 public record OptimizerResources(int Cpu = 4, int Seconds = 600);
-public record Input(Player[] Players, Slot[] Slots, Round[] History, Match[] Locked, Weights Weights, OptimizerResources? OptimizerResources = null, string[][]? ForbiddenMemberPairs = null);
+public record OptimizerPriority(string Id, bool? Enabled);
+public record Input(Player[] Players, Slot[] Slots, Round[] History, Match[] Locked, Weights Weights, OptimizerResources? OptimizerResources = null, string[][]? ForbiddenMemberPairs = null, OptimizerPriority[]? OptimizerPriorities = null);
 public record Stage(string Name, long Value, string Status);
-public record Result(Match[] Matches, string Status, Stage[] Stages, long Score, double Seconds);
+public record Result(Match[] Matches, string Status, Stage[] Stages, long Score, double Seconds, int PriorityProtocol = 1);
 
 public static class Scheduler
 {
+    public static readonly string[] PriorityIds = ["active:1", "active:2", "active:3", "active:signupOrder", "waitlist:1", "waitlist:2", "waitlist:3", "waitlist:signupOrder", "matches", "score", "early", "courts"];
+    public static OptimizerPriority[] DefaultPriorities() => PriorityIds.Select(id => new OptimizerPriority(id, true)).ToArray();
     static int Minutes(string time) => TimeOnly.ParseExact(time, "HH:mm").Hour * 60 + TimeOnly.ParseExact(time, "HH:mm").Minute;
     static string Pair(int a, int b) => a < b ? $"{a}:{b}" : $"{b}:{a}";
     static bool PointsTo(Player a, Player b) => a.SpouseNo is not null && long.TryParse(b.MemberNo, out var number) && a.SpouseNo == number;
@@ -43,6 +46,9 @@ public static class Scheduler
 
     static Result SolveWithResources(Input input, double seconds, int cpu, CancellationToken cancellation)
     {
+        var priorities = input.OptimizerPriorities ?? DefaultPriorities();
+        if (priorities.Length != PriorityIds.Length || priorities.Any(p => p is null || p.Enabled is null || !PriorityIds.Contains(p.Id)) || priorities.Select(p => p.Id).Distinct().Count() != PriorityIds.Length)
+            throw new ArgumentException("Prioriteringen skal indeholde alle 12 mål præcis én gang med til/fra-værdier.");
         if (input.Players is null || input.Slots is null || input.History is null || input.Locked is null || input.Weights is null)
             throw new ArgumentException("Ufuldstændige beregningsdata.");
         var players = input.Players;
@@ -235,38 +241,41 @@ public static class Scheduler
             model.Add(doubles[s] == (locked.Team1.Length == 2 ? 1 : 0));
         }
 
-        // Successive objectives preserve earlier results without freezing the actual assignments.
-        var objectives = new List<(string name, LinearExpr value)>();
+        // Build independently selectable goals, then execute the immutable input order.
+        var goals = new Dictionary<string, List<(string name, LinearExpr value)>>();
         foreach (string status in new[] { "active", "waitlist" })
         {
             var ordered = Enumerable.Range(0, players.Length).Where(p => players[p].Status == status).OrderBy(p => players[p].SignupOrder).ThenBy(p => players[p].Id).ToArray();
-            if (ordered.Length == 0) continue;
-            // A first hour outweighs ALL second/third hours. Search the whole vector
-            // together instead of freezing an unproven first-hour count after 8 seconds.
-            long radix = ordered.Length + 1;
-            var coverage = LinearExpr.NewBuilder();
             for (int h = 0; h < 3; h++)
-                coverage.AddTerm(LinearExpr.Sum(ordered.Select(p => reached[p, h])), h == 0 ? radix * radix : h == 1 ? radix : 1);
-            objectives.Add(($"{status}:hours", coverage));
-            objectives.Add(($"{status}:signupOrder", LinearExpr.WeightedSum(ordered.Select(p => hours[p]), Enumerable.Range(0, ordered.Length).Select(i => ordered.Length - i))));
+            {
+                string id = $"{status}:{h + 1}";
+                goals[id] = [(id, LinearExpr.Sum(ordered.Select(p => reached[p, h])))];
+            }
+            string queue = $"{status}:signupOrder";
+            goals[queue] = [(queue, LinearExpr.WeightedSum(ordered.Select(p => hours[p]), Enumerable.Range(0, ordered.Length).Select(i => ordered.Length - i)))];
         }
-        objectives.Add(("matches", LinearExpr.Sum(used)));
-        objectives.Add(("score", score));
-        // One early-time objective avoids repeating presolve seven times. Each earlier
-        // player-hour outweighs all later ones. Limit the exponent for int64 safety.
+        goals["matches"] = [("matches", LinearExpr.Sum(used))];
+        goals["score"] = [("score", score)];
         var startTimes = slots.Select(s => s.StartTime).Distinct().ToArray();
         LinearExpr AtTime(string time) => LinearExpr.Sum(Enumerable.Range(0, slots.Length)
             .Where(s => slots[s].StartTime == time).SelectMany(s => Enumerable.Range(0, players.Length).Select(p => present[p, s])));
+        goals["early"] = [];
         if (startTimes.Length <= 7)
         {
             long radix = slots.Length * 4 + 1, weight = 1;
             var early = LinearExpr.NewBuilder();
             foreach (var time in startTimes.Reverse()) { early.AddTerm(AtTime(time), weight); weight *= radix; }
-            objectives.Add(("early:all", early));
+            goals["early"].Add(("early:all", early));
         }
-        else foreach (var time in startTimes) objectives.Add(($"early:{time}", AtTime(time)));
-        // Input order within each start time is the administrator's court priority.
-        objectives.Add(("courts", LinearExpr.WeightedSum(used, Enumerable.Range(0, slots.Length).Select(s => slots.Length - s))));
+        else foreach (var time in startTimes) goals["early"].Add(($"early:{time}", AtTime(time)));
+        // Rank courts within each start time; this objective must not silently
+        // restore the early-time objective when it is disabled or ranked lower.
+        int maxCourts = slots.GroupBy(s => s.StartTime).Select(g => g.Count()).DefaultIfEmpty(0).Max();
+        goals["courts"] = [("courts", LinearExpr.WeightedSum(used, Enumerable.Range(0, slots.Length)
+            .Select(s => maxCourts - slots.Take(s).Count(previous => previous.StartTime == slots[s].StartTime))))];
+        var objectives = priorities.Where(p => p.Enabled == true).SelectMany(p => goals[p.Id]).ToList();
+        // No optional goal is implicitly re-enabled. Still solve the hard constraints.
+        if (objectives.Count == 0) objectives.Add(("feasibility", LinearExpr.Constant(0)));
         var validation = model.Validate();
         if (validation.Length > 0) throw new ArgumentException($"Ugyldig CP-SAT-model: {validation}");
         var stages = new List<Stage>();
@@ -279,7 +288,7 @@ public static class Scheduler
             double remaining = seconds - timer.Elapsed.TotalSeconds;
             if (remaining < 0.1) break;
             model.Maximize(objective.value);
-            double stageSeconds = objective.name == "score" ? 40 : objective.name.EndsWith(":hours") ? 20 : objective.name == "early:all" ? 10 : objective.name.StartsWith("early:") ? 2 : 5;
+            double stageSeconds = objective.name == "score" ? 40 : PriorityIds.Take(8).Contains(objective.name) && !objective.name.EndsWith("signupOrder") ? 10 : objective.name == "early:all" ? 10 : objective.name.StartsWith("early:") ? 2 : 5;
             stageSeconds *= Math.Max(1, seconds / 100);
             var stageEnd = Math.Min(seconds, timer.Elapsed.TotalSeconds + stageSeconds);
             CpSolver? solver = incumbent;

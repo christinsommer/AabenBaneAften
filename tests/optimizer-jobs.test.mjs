@@ -7,6 +7,7 @@ import {build} from 'esbuild';
 import {getPlatformProxy} from 'wrangler';
 import {migrationStatements} from '../scripts/migration-statements.mjs';
 import {scoreMatch} from '../lib/optimizer.ts';
+import {defaultOptimizerPriorities} from '../lib/optimizer-priorities.ts';
 
 test('durable optimization warns on member and signup edits, preserves current signups, and rejects plan conflicts',{timeout:120000},async()=>{
   const directory=mkdtempSync(join(process.cwd(),'.optimizer-jobs-test-'));
@@ -53,12 +54,15 @@ test('durable optimization warns on member and signup edits, preserves current s
     assert.equal((await db.prepare('SELECT count(*) AS n FROM optimizer_jobs').first()).n,1);
     const stored=await db.prepare('SELECT * FROM optimizer_jobs WHERE id=?').bind(first.id).first();
     const snapshot=JSON.parse(stored.snapshot);
+    assert.deepEqual(snapshot.input.optimizerPriorities,defaultOptimizerPriorities);
+    const nextPriorities=[...defaultOptimizerPriorities].reverse().map(p=>({...p,enabled:p.id!=='courts'}));
+    await db.prepare("INSERT INTO optimizer_defaults(id,weights) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET weights=json_patch(weights,excluded.weights)").bind(JSON.stringify({optimizerPriorities:nextPriorities})).run();
     assert.equal((await db.prepare('SELECT count(*) n FROM players').first()).n,220);
     assert.deepEqual(snapshot.input.players.map(p=>p.id).sort((a,b)=>a-b),[1,2,3,4,6],
       'only eligible active/waitlist signups enter automatic solving, even with over 200 profiles');
     assert.equal(snapshot.input.players.some(p=>p.manualCandidate),false);
     const plan=[{court:4,startTime:'18:00',team1:[1,2],team2:[3,4]}];
-    const result={matches:plan,status:'OPTIMAL',score:scoreMatch(plan[0],snapshot.input,plan).score};
+    const result={matches:plan,status:'OPTIMAL',score:scoreMatch(plan[0],snapshot.input,plan).score,priorityProtocol:1};
     let dispatched;
     await recoverJobs({DB:db,OPTIMIZER_JOBS:{create:async options=>{dispatched=options;}}});
     assert.equal(dispatched.id,first.id,'cron dispatches without a browser request');
@@ -68,14 +72,16 @@ test('durable optimization warns on member and signup edits, preserves current s
     const step={do:async(name,...args)=>{steps.push(name);return args.at(-1)();}};
     await runOptimizerJob({DB:db,OPTIMIZER_API_KEY:'test-key',OPTIMIZER:{getByName:()=>({fetch:async request=>{
       const input=await request.json();assert.equal(input.players[0].cr,5,'original member snapshot');
+      assert.deepEqual(input.optimizerPriorities,defaultOptimizerPriorities,'running job retains original priorities');
       return Response.json(result);
     }})}},first.id,step);
     assert.deepEqual(steps,['calculate','save draft']);
     const saved=await db.prepare('SELECT * FROM optimizer_jobs WHERE id=?').bind(first.id).first();
-    assert.equal(saved.status,'completed');assert.match(saved.warning,/Medlemsoplysninger/);assert.equal(saved.snapshot,'');
+    assert.equal(saved.status,'completed',saved.error);assert.match(saved.warning,/Medlemsoplysninger/);assert.equal(saved.snapshot,'');
     const event=await db.prepare('SELECT * FROM events WHERE id=100').first();
     assert.equal(event.status,'draft');assert.equal(event.published_at,null);
     assert.equal(JSON.parse(event.imported_kampplan)[0].D,'Player 1');
+    assert.deepEqual(JSON.parse(event.imported_kampplan)[0]._optimizerPriorities,defaultOptimizerPriorities,'saved plan retains its priority audit');
     const matches=(await db.prepare('SELECT * FROM matches WHERE event_id=100').all()).results;
     await finishOptimizerJob(db,first.id,result);
     assert.deepEqual((await db.prepare('SELECT * FROM matches WHERE event_id=100').all()).results,matches,'repeat completion is idempotent');
@@ -85,6 +91,7 @@ test('durable optimization warns on member and signup edits, preserves current s
     assert.equal(displayed.snapshot,undefined);
     await db.prepare('UPDATE players SET christin_ranking=5 WHERE id=1').run();
     const second=(await (await start()).json()).job;
+    assert.deepEqual(JSON.parse((await db.prepare('SELECT snapshot FROM optimizer_jobs WHERE id=?').bind(second.id).first()).snapshot).input.optimizerPriorities,nextPriorities);
     await db.prepare("UPDATE signups SET requested_hours=2,availability='[\"19:00\",\"20:00\"]' WHERE player_id=1").run();
     await db.prepare("UPDATE signups SET status='cancelled' WHERE player_id=2").run();
     await db.prepare('DELETE FROM signups WHERE player_id=3').run();
@@ -120,6 +127,10 @@ test('durable optimization warns on member and signup edits, preserves current s
     await runOptimizerJob({DB:db,OPTIMIZER:{getByName:()=>({fetch:async()=>Response.json({error:'offline'},{status:503})})}},fifth.id,step);
     assert.equal((await db.prepare('SELECT status FROM optimizer_jobs WHERE id=?').bind(fifth.id).first()).status,'failed','exhausted workflow step persists failure');
     assert.match((await db.prepare('SELECT error FROM optimizer_jobs WHERE id=?').bind(fifth.id).first()).error,/HTTP 503.*offline/);
+    const outdated=(await (await start()).json()).job;
+    await runOptimizerJob({DB:db,OPTIMIZER:{getByName:()=>({fetch:async()=>Response.json({...result,priorityProtocol:undefined})})}},outdated.id,step);
+    const outdatedJob=await db.prepare('SELECT status,error FROM optimizer_jobs WHERE id=?').bind(outdated.id).first();
+    assert.equal(outdatedJob.status,'failed');assert.match(outdatedJob.error,/opdateres/,'old solver cannot silently ignore priorities');
     for(const response of [()=>Response.json({error:'Ugyldigt antal spillere, banetider eller historikrunder.'},{status:400}),()=>new Response('<html>Bad request</html>',{status:400})]) {
       const rejected=(await (await start()).json()).job;
       const before=await db.prepare('SELECT imported_kampplan,status FROM events WHERE id=100').first();

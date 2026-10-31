@@ -6,6 +6,7 @@ import {pathToFileURL} from 'node:url';
 import {build} from 'esbuild';
 import {getPlatformProxy} from 'wrangler';
 import {migrationStatements} from '../scripts/migration-statements.mjs';
+import {defaultOptimizerPriorities} from '../lib/optimizer-priorities.ts';
 
 test('admin court orders persist independently of factor defaults and reject unauthorized or invalid changes',{timeout:120000},async()=>{
   const directory=mkdtempSync(join(process.cwd(),'.court-order-test-'));
@@ -30,17 +31,25 @@ test('admin court orders persist independently of factor defaults and reject una
     const {POST,GET}=await import(pathToFileURL(outfile).href);
     const post=body=>POST(new Request('https://app.test/api/app',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}));
     const courtOrder={whole:[2,4,1,3],half:[7,5,6]};
+    const optimizerPriorities=[...defaultOptimizerPriorities].reverse().map(p=>({...p,enabled:p.id!=='score'}));
+    assert.equal((await post({action:'set_optimizer_priorities',optimizerPriorities})).status,401);
     assert.equal((await post({action:'set_court_order',courtOrder})).status,401);
     globalThis.__courtOrderTest.user={id:1,role:'player'};
+    assert.equal((await post({action:'set_optimizer_priorities',optimizerPriorities})).status,403);
     assert.equal((await post({action:'set_optimizer_resources',optimizerResources:{cpu:2,seconds:30}})).status,403);
     assert.equal((await post({action:'set_court_order',courtOrder})).status,403);
     globalThis.__courtOrderTest.user={id:2,role:'admin'};
+    assert.equal((await post({action:'set_optimizer_priorities',optimizerPriorities})).status,403);
+    assert.equal((await (await GET()).json()).optimizerPriorities,undefined);
     assert.equal((await (await GET()).json()).optimizerResources,undefined);
     assert.equal((await post({action:'set_optimizer_resources',optimizerResources:{cpu:2,seconds:30}})).status,403);
     assert.equal((await post({action:'set_optimizer_defaults',weights:{FactorOpponentThisWeek:17}})).status,403);
     assert.equal((await post({action:'set_court_order',courtOrder})).status,200);
     assert.equal((await post({action:'set_court_order',courtOrder:{whole:[4,3,2,1],half:[5,6,7]}})).status,200);
     globalThis.__courtOrderTest.user={id:1,role:'admin'};
+    assert.deepEqual((await (await GET()).json()).optimizerPriorities,defaultOptimizerPriorities);
+    assert.equal((await post({action:'set_optimizer_priorities',optimizerPriorities:[]})).status,400);
+    assert.equal((await post({action:'set_optimizer_priorities',optimizerPriorities})).status,200);
     assert.deepEqual((await (await GET()).json()).optimizerResources,{cpu:4,seconds:600});
     for(const optimizerResources of [{cpu:0,seconds:600},{cpu:33,seconds:600},{cpu:2.5,seconds:600},{cpu:4,seconds:0},{cpu:4,seconds:901},{cpu:4,seconds:null}])
       assert.equal((await post({action:'set_optimizer_resources',optimizerResources})).status,400);
@@ -60,6 +69,7 @@ test('admin court orders persist independently of factor defaults and reject una
     assert.deepEqual(state.courtOrder,courtOrder);
     assert.equal(state.optimizerDefaults.FactorOpponentThisWeek,17);
     assert.deepEqual(state.optimizerResources,{cpu:2,seconds:30});
+    assert.deepEqual(state.optimizerPriorities,optimizerPriorities,'other settings preserve priorities');
     const summerCourts={whole:[12,8],half:[10]};
     assert.equal((await post({action:'set_court_order',courtOrder:summerCourts})).status,200);
     const playTimes={whole:['18:00','19:00'],half:['17:30','18:30']};

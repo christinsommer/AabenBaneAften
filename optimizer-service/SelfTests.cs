@@ -10,6 +10,30 @@ public static class SelfTests
     public static void Run()
     {
         var oneCourt = new[] { new Slot(1, "18:00") };
+        var priorityInput = Data([P(1, status:"active"), P(2, status:"active"), P(3, status:"active"), P(4, status:"active"), P(5, status:"waitlist"), P(6, status:"waitlist"), P(7, status:"waitlist"), P(8, status:"waitlist")], oneCourt);
+        var defaults = Scheduler.DefaultPriorities();
+        var activeFirst = Scheduler.Solve(priorityInput with {OptimizerPriorities=defaults}, 20);
+        Check(Enumerable.Range(1,4).All(id=>Count(activeFirst,id)==1), "Default priorities put active first hours before waitlist");
+        var waitlistFirst = defaults.OrderBy(p=>p.Id=="waitlist:1"?0:1).ToArray();
+        var promoted = Scheduler.Solve(priorityInput with {OptimizerPriorities=waitlistFirst},20);
+        Check(Enumerable.Range(5,4).All(id=>Count(promoted,id)==1), "Configured waitlist-first priority changes allocation");
+        Check(promoted.Stages.First().Name=="waitlist:1", "Stages execute configured order");
+        var qualityInput=Data(Enumerable.Range(1,6).Select(id=>P(id,cr:id==4?3:1)).ToArray(),oneCourt);
+        var queueFirst=Scheduler.Solve(qualityInput with {OptimizerPriorities=defaults},20);
+        var qualityOrder=defaults.Where(p=>p.Id!="score").ToList();qualityOrder.Insert(1,defaults.Single(p=>p.Id=="score"));
+        var qualityFirst=Scheduler.Solve(qualityInput with {OptimizerPriorities=qualityOrder.ToArray()},20);
+        Check(Count(queueFirst,4)==1 && Count(qualityFirst,4)==0 && qualityFirst.Score>queueFirst.Score,
+            "Moving quality ahead of queue improves quality while retaining first-hour coverage");
+        Check(qualityFirst.Matches.Sum(m=>m.Team1.Length+m.Team2.Length)==4,"Later quality stage preserves first-hour coverage");
+        var onlyMatches=defaults.Select(p=>p with {Enabled=p.Id=="matches"}).ToArray();
+        var selective=Scheduler.Solve(priorityInput with {OptimizerPriorities=onlyMatches},20);
+        Check(selective.Matches.Length==1 && selective.Stages.Length==1 && selective.Stages[0].Name=="matches", "Disabled objectives are not solved");
+        var noGoals=Scheduler.Solve(priorityInput with {OptimizerPriorities=defaults.Select(p=>p with {Enabled=false}).ToArray(),Locked=[new(1,"18:00",[1,2],[3,4])]},20);
+        Check(noGoals.Matches.Length==1 && noGoals.Stages.Single().Name=="feasibility", "All-off still respects locked matches and hard constraints");
+        foreach(var invalid in new[] {defaults[..11], defaults.Select(p=>p with {Id="score"}).ToArray(), defaults.Select(p=>p with {Enabled=null}).ToArray()}) {
+            bool rejected=false;try {Scheduler.Solve(priorityInput with {OptimizerPriorities=invalid},5);}catch(ArgumentException){rejected=true;}
+            Check(rejected,"Malformed priority configuration must fail");
+        }
         var resourceInput = Data(Enumerable.Range(1,4).Select(i=>P(i)).ToArray(),oneCourt) with {OptimizerResources=new(1,10)};
         Check(Scheduler.Solve(resourceInput).Matches.Length==1,"Configured CPU and time can solve a round");
         Check(Scheduler.Solve(resourceInput with {OptimizerResources=new(1,900)}).Matches.Length==1,"900 second limit is accepted");

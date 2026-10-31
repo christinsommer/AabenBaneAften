@@ -1,4 +1,5 @@
 import {parseForbiddenPairs} from './forbidden-pairs.ts';
+import {parseOptimizerPriorities,type OptimizerPriority} from './optimizer-priorities.ts';
 
 export const algorithmWeightDefaults = {
   FactorMatchDifference: 40, FactorSameTeamDifference: 15, FactorDistanceSameTeamA: 2, FactorSameTeamLastWeek: 20, FactorSameTeam3Weeks: 10,
@@ -14,6 +15,7 @@ export type OptimizerPlayer = {
 export type ProposedMatch = { court: number; startTime: string; team1: number[]; team2: number[] };
 export type HistoryRound = { date: string; matches: { team1: number[]; team2: number[] }[] };
 export type OptimizerInput = {
+  optimizerPriorities?: OptimizerPriority[];
   forbiddenMemberPairs?: [string, string][];
   optimizerResources?: {cpu:number;seconds:number};
   players: OptimizerPlayer[]; slots: { court: number; startTime: string }[];
@@ -108,6 +110,7 @@ export function scoreMatch(match: ProposedMatch, input: OptimizerInput, plan: re
 }
 
 export function validateOptimizerInput(input: OptimizerInput) {
+  if(input.optimizerPriorities!==undefined)parseOptimizerPriorities(input.optimizerPriorities);
   parseForbiddenPairs(input.forbiddenMemberPairs ?? []);
   parseAlgorithmWeights(input.weights);
   if (input.players.length > 200) throw new Error('Der kan højst beregnes for 200 spillere ad gangen.');

@@ -12,7 +12,7 @@ These guides describe repository behavior. Live configuration, deployment versio
 | [Login design and branding](login-design.md) | Approved artwork, responsive login, app icons, and verification |
 | [Data model](../DATAMODEL.md) | Table inventory, relationships, and migrations |
 | [Business rules](business-rules.md) | Registration, ranking, spouse rules, and replacements |
-| [Optimizer](../optimizer-service/README.md) | Solver objectives, scoring, and service setup |
+| [Optimizer](../optimizer-service/README.md) | Configurable objective order and enabled flags, scoring, and service setup |
 | [Background jobs](optimizer-background-jobs.md) | Calculation lifecycle and conflicts |
 | [Forbidden pairs](forbidden-player-pairs.md) | Same-court exclusions |
 
@@ -23,7 +23,7 @@ These guides describe repository behavior. Live configuration, deployment versio
 | [Deployment](../DEPLOYMENT.md) | Release workflow and failure handling |
 | [Cloudflare](../CLOUDFLARE.md) | Worker and database configuration |
 | [Sandbox refresh](sandbox-refresh.md) | Sanitized versus full copying |
-| [Admin and SuperAdmin](../SUPERADMIN.md) | Roles and account binding |
+| [Admin and SuperAdmin](../SUPERADMIN.md) | Roles, account binding, and optimizer priority controls |
 | [Administrator MFA](admin-2fa.md) | Enrollment, keys, and recovery |
 | [Security controls](security-controls.md) | Authentication limits and sessions |
 | [Operational security](operations-security.md) | Monitoring and encrypted backups |

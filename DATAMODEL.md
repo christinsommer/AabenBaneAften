@@ -103,6 +103,10 @@ Optimizer-created rows can include private revision, factor, score, and allocati
 
 ## Job and privacy state
 
+`optimizer_defaults.weights` also stores `optimizerPriorities`: an ordered array of 12 unique `{id, enabled}` entries. Missing configuration uses the documented default order, with all goals enabled. Priority updates patch this JSON property without replacing factors, resources, court order, or play times; no additional table or migration is needed.
+
+`optimizer_jobs.snapshot.input.optimizerPriorities` freezes the effective configuration at job creation. Priority-only settings changes are excluded from the stale-plan revision guard. Successful plans retain the copied list in the first imported row's private `_optimizerPriorities` metadata after the temporary snapshot is removed.
+
 `optimizer_jobs` allows only one queued/running job per event through a partial unique index. Snapshots are temporary; completion/failure clears them. See [job lifecycle](docs/optimizer-background-jobs.md) for expiry and stale-result handling.
 
 Profile closure is controlled pseudonymization, not a physical deletion. The internal ID, playing history, CR, and CR review timestamp remain. Contact and login data are removed; the member number becomes `closed-<id>`. Triggers block direct deletion and ordinary edits to closed profiles. See [privacy administration](GDPR_ADMIN.md).

@@ -44,7 +44,10 @@ export async function runOptimizerJob(env, id, step) {
         if (response.status >= 400 && response.status < 500 && ![408,429].includes(response.status)) return {failure:message};
         throw new Error(message);
       }
-      return await response.json();
+      const solved = await response.json();
+      if (input.optimizerPriorities && solved.priorityProtocol !== 1)
+        return {failure:'Beregningstjenesten skal opdateres for at bruge den konfigurerede prioritering.'};
+      return solved;
     });
     if (result?.failure) throw new Error(result.failure);
     if (result) await step.do('save draft',{retries:{limit:5,delay:'10 seconds',backoff:'exponential'}},()=>finishOptimizerJob(env.DB,id,result));

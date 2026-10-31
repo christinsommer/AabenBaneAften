@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, gte, lt, ne, sql } from 'drizzle-orm';
 import { getDb } from '../db';
 import { events, matches, players, signups } from '../db/schema';
-import {loadForbiddenPairs, loadOptimizerDefaults, loadPlaySchedule, loadOptimizerResources} from './optimizer-defaults-server';
+import {loadForbiddenPairs, loadOptimizerDefaults, loadPlaySchedule, loadOptimizerResources, loadOptimizerPriorities} from './optimizer-defaults-server';
 import { ensureEvent } from './schedule';
 import { registrationIsOpen } from './registration';
 import { copenhagenDate } from './calendar';
@@ -13,7 +13,7 @@ import { HISTORY_START, parseAlgorithmWeights, validateOptimizerInput, validateP
 export function optimizerRevisionSql(eventId: number) {
   return sql`json_array(
     (SELECT json_group_array(json_array(member_a,member_b)) FROM (SELECT * FROM forbidden_pairs ORDER BY member_a,member_b)),
-    (SELECT weights FROM optimizer_defaults WHERE id = 1),
+    json(COALESCE((SELECT json_remove(weights,'$.optimizerPriorities') FROM optimizer_defaults WHERE id = 1),'{}')),
     (SELECT json_group_array(player_id) FROM (SELECT player_id FROM profile_privacy WHERE closed_at IS NOT NULL ORDER BY player_id)),
     (SELECT json_group_array(json_array(id,date,status,registration_opens_at,registration_closes_at,registration_schedule_custom,registration_override,imported_kampplan,is_test,test_active,archived)) FROM (SELECT * FROM events ORDER BY id)),
     (SELECT json_group_array(json_array(id,member_no,name,christin_ranking,birth_year,gender,spouse_no,spouse_mode,suspended_event_id)) FROM (SELECT * FROM players ORDER BY id)),
@@ -66,6 +66,7 @@ export async function loadOptimizerInput(eventId: number, weights: unknown, forS
     if (history.length === 3) break;
   }
   const input: OptimizerInput = {
+    optimizerPriorities: await loadOptimizerPriorities(),
     forbiddenMemberPairs: await loadForbiddenPairs(),
     optimizerResources: await loadOptimizerResources(),
     players: registrations.filter(s => s.requestedHours > 0 && !closed.has(s.playerId) && people.get(s.playerId)?.suspendedEventId !== event.id).map(s => {

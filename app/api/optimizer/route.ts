@@ -95,10 +95,11 @@ export async function POST(request: Request) {
       const failure = await response.json().catch(() => ({})) as {error?: string};
       return Response.json({error: failure.error || 'Beregningstjenesten kunne ikke lave forslaget.'}, {status: 502});
     }
-    const result = await response.json() as {matches: unknown; status: string; score: number; stages: unknown[]};
+    const result = await response.json() as {matches: unknown; status: string; score: number; stages: unknown[]; priorityProtocol?: number};
+    if (input.optimizerPriorities && result.priorityProtocol !== 1) throw new Error('Beregningstjenesten skal opdateres for at bruge den konfigurerede prioritering.');
     if (!['OPTIMAL', 'FEASIBLE'].includes(result.status)) throw new Error('Beregningstjenesten returnerede ingen gyldig løsning.');
     const validated = validateProposal(result.matches, input);
-    const plan = validateProposal(applyCourtOrder(validated, input, loaded.courtOrder), input);
+    const plan = validateProposal(input.optimizerPriorities ? validated : applyCourtOrder(validated, input, loaded.courtOrder), input);
     const scores = plan.map(m => scoreMatch(m, input, plan));
     const score = scores.reduce((sum, s) => sum + s.score, 0);
     if (result.score !== score) throw new Error('Kontrol af kampscore fejlede. Forslaget blev afvist.');

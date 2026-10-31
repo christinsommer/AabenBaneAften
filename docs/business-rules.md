@@ -60,6 +60,8 @@ Mode 2 removes CR-distance restrictions and the partner CR-difference penalty on
 
 ## Plans, publication, and manual edits
 
+SuperAdmin configures the order and enabled state of 12 independent [optimization goals](../optimizer-service/README.md#configurable-objectives). Each calculation uses its own immutable copy. Hour coverage remains within requested hours, and all hard playing rules remain mandatory regardless of which goals are enabled or ranked first. Later stages cannot reduce earlier achieved objective values.
+
 Calculation creates a draft; publication is explicit. The durable calculation flow retains the existing plan until a new result saves successfully. A valid time-limited solution can be saved without proof of optimality; the UI distinguishes that status.
 
 Manual editing operates on eligible drafts with registration closed. Dragging or selecting a player and destination supports moves/swaps. Locked matches cannot be moved. Server review checks the result, calculates scores, and refuses conflicting or invalid saves. The reviewed partner-distance exception is highlighted separately from violations. The solver is not called for manual edits.

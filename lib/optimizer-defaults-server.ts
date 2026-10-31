@@ -1,4 +1,5 @@
 import {parseForbiddenPairs} from './forbidden-pairs';
+import {defaultOptimizerPriorities,parseOptimizerPriorities} from './optimizer-priorities';
 import {getCloudflareContext} from '@opennextjs/cloudflare';
 import {eq} from 'drizzle-orm';
 import {defaultOptimizerResources,parseOptimizerResources} from './optimizer-resources';
@@ -33,6 +34,11 @@ export async function loadEventOptimizerWeights(eventId:number) {
 export async function loadOptimizerResources() {
   const [stored]=await getDb().select().from(optimizerDefaults).where(eq(optimizerDefaults.id,1)).limit(1);
   return parseOptimizerResources((stored?JSON.parse(stored.weights).optimizerResources:undefined)??defaultOptimizerResources);
+}
+
+export async function loadOptimizerPriorities() {
+  const [stored]=await getDb().select().from(optimizerDefaults).where(eq(optimizerDefaults.id,1)).limit(1);
+  return parseOptimizerPriorities((stored?JSON.parse(stored.weights).optimizerPriorities:undefined)??defaultOptimizerPriorities);
 }
 
 export async function loadForbiddenPairs() {

@@ -9,6 +9,7 @@ import {RegistrationPrivacy,PrivacyGate,NewsletterPreferences} from './privacy-u
 import PrivacyAdmin,{PrivacyBadge} from './privacy-admin';
 import { OptimizerDefaultsForm } from './optimizer-defaults-form';
 import { CourtOrderForm } from './court-order-form';
+import { OptimizerPrioritiesForm } from './optimizer-priorities-form';
 import { OptimizerResourcesForm } from './optimizer-resources-form';
 import { PlayTimesForm } from './play-times-form';
 import { EditSignupButton } from './edit-signup-button';
@@ -2104,6 +2105,7 @@ function SuperAdminPanel({data,act,busy}:any){
         act={body=>act({...body,eventId:data.event.id})}
         busy={busy}
       />}
+      <OptimizerPrioritiesForm key={JSON.stringify(data.optimizerPriorities)} defaults={data.optimizerPriorities} act={act} busy={busy} />
       <OptimizerResourcesForm key={JSON.stringify(data.optimizerResources)} defaults={data.optimizerResources} act={act} busy={busy} />
       {data.event&&<ChatGptProposal data={data} act={act} busy={busy}/>}
       <OptimizerDefaultsForm descriptions={data.optimizerDescriptions} key={JSON.stringify(data.optimizerDefaults)} defaults={data.optimizerDefaults} act={act} busy={busy} />

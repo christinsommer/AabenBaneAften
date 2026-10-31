@@ -52,12 +52,15 @@ Some app reads have side effects: `ensureEvent()` can refresh registration deadl
 
 The durable optimizer stores an immutable input snapshot, dispatches through cron and Workflows, and saves a draft independently of the browser. The existing plan remains until a replacement saves successfully. Publishing is a separate action. See [background jobs](optimizer-background-jobs.md).
 
+SuperAdmin saves ordered optimizer goals and enabled flags through `/api/app`. The server validates all 12 unique goals and stores them in the existing `optimizer_defaults.weights` JSON. Each job copies the effective list into its input; the C# solver executes enabled goals in that order while preserving earlier achieved bounds. Priority-only changes do not invalidate running jobs. Hard match constraints remain independent of this list. See [configurable objectives](../optimizer-service/README.md#configurable-objectives).
+
 ## Source map
 
 | Location | Responsibility |
 | --- | --- |
 | `app/`, `components/` | Pages, interactive views, and shared UI |
 | `lib/optimizer.ts`, `lib/plan-review.ts` | Validation and scoring |
+| `lib/optimizer-priorities.ts`, `app/optimizer-priorities-form.tsx` | Goal definitions, configuration validation, and SuperAdmin controls |
 | `lib/optimizer-server.ts`, `lib/optimizer-job-core.ts` | Input construction and durable jobs |
 | `optimizer-service/` | C# solver, HTTP service, and self-tests |
 | `optimizer-cloudflare/` | Container, Workflow, and cron |
